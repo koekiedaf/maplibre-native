@@ -3270,6 +3270,27 @@ static void *windowScreenContext = &windowScreenContext;
   return static_cast<MLNTerrainSkirtLength>(_mbglMap->getTerrainSkirtLength());
 }
 
+- (void)setTerrainCameraMarginMeters:(CGFloat)terrainCameraMarginMeters {
+  _mbglMap->setTerrainCameraMarginMeters(terrainCameraMarginMeters);
+}
+
+- (CGFloat)terrainCameraMarginMeters {
+  return _mbglMap->getTerrainCameraMarginMeters();
+}
+
+- (NSNumber *)terrainCameraGroundRiseMeters {
+  const std::optional<double> rise = _mbglMap->getTerrainCameraGroundRiseMeters();
+  return rise ? @(*rise) : nil;
+}
+
+- (CGFloat)terrainCameraAltitudeAboveCentreMeters {
+  return _mbglMap->getTerrainCameraAltitudeAboveCentreMeters();
+}
+
+- (CGFloat)terrainCentreAltitudeMeters {
+  return _mbglMap->getTerrainCentreAltitudeMeters();
+}
+
 - (void)setFrustumOffset:(UIEdgeInsets)frustumOffset {
   _mbglMap->setFrustumOffset(MLNEdgeInsetsFromNSEdgeInsets(frustumOffset));
 }

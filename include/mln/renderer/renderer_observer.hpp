@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <exception>
 #include <functional>
+#include <optional>
 #include <string>
 
 namespace mln {
@@ -67,6 +68,16 @@ public:
     /// it - the DEM lives there - so a map that wants its centre to ride the terrain
     /// (Map::setCenterClampedToGround) learns of it here, one frame behind.
     virtual void onTerrainCenterElevationChanged(double /*elevationMeters*/) {}
+
+    /// The camera-ground RISE changed (task 2.0b): the rendered terrain height under the
+    /// camera's own ground point MINUS the rendered terrain height under the map centre, both
+    /// sampled in the same render frame. Reporting the difference rather than an absolute height
+    /// means the map thread's clamp never has to line this sample up against its own centre
+    /// altitude, which can still be catching up to the terrain at the moment the clamp runs -
+    /// the rise is already self-consistent. `std::nullopt` when there is no render terrain this
+    /// frame, meaning the camera-above-terrain clamp should be off entirely rather than clamped
+    /// to a flat sea level.
+    virtual void onTerrainCameraGroundRiseChanged(std::optional<double> /*riseMeters*/) {}
 
     /// Style is missing an image
     using StyleImageMissingCallback = std::function<void()>;

@@ -64,6 +64,7 @@ public:
     void onWillStartRenderingMap() final;
     void onDidFinishRenderingMap() final;
     void onTerrainCenterElevationChanged(double elevationMeters) final;
+    void onTerrainCameraGroundRiseChanged(std::optional<double> riseMeters) final;
     void onStyleImageMissing(const std::string&, const std::function<void()>&) final;
     void onRemoveUnusedStyleImages(const std::vector<std::string>&) final;
     void onRegisterShaders(gfx::ShaderRegistry&) final;

@@ -50,6 +50,10 @@ public:
         delegate.invoke(&RendererObserver::onTerrainCenterElevationChanged, elevationMeters);
     }
 
+    void onTerrainCameraGroundRiseChanged(std::optional<double> riseMeters) override {
+        delegate.invoke(&RendererObserver::onTerrainCameraGroundRiseChanged, riseMeters);
+    }
+
     void onStyleImageMissing(const std::string& id, const StyleImageMissingCallback& done) override {
         delegate.invoke(&RendererObserver::onStyleImageMissing, id, done);
     }

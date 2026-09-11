@@ -144,6 +144,14 @@ public:
     void setFrustumOffset(const EdgeInsets&);
     EdgeInsets getFrustumOffset();
 
+    // Terrain camera clamp (task 2.0b)
+    void setTerrainCameraMarginMeters(double metres) { state.setTerrainCameraMarginMeters(metres); }
+    double getTerrainCameraMarginMeters() const { return state.getTerrainCameraMarginMeters(); }
+    void setTerrainCameraGroundRise(std::optional<double> metres) {
+        state.setTerrainCameraGroundRise(metres);
+    }
+    std::optional<double> getTerrainCameraGroundRise() const { return state.getTerrainCameraGroundRise(); }
+
 private:
     TransformObserver& observer;
     TransformState state;

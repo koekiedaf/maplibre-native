@@ -346,6 +346,21 @@ void Map::Impl::onTerrainCenterElevationChanged(double elevationMeters) {
     onUpdate();
 }
 
+void Map::Impl::onTerrainCameraGroundRiseChanged(std::optional<double> riseMeters) {
+    if (transform.getTerrainCameraGroundRise() == riseMeters) {
+        return;
+    }
+    transform.setTerrainCameraGroundRise(riseMeters);
+    // Unlike the centre elevation, this must not be skipped while a gesture is in progress: the
+    // whole point of this channel is to stop a pinch or tilt under the user's fingers, which is
+    // exactly when the camera is closing on the terrain fastest. jumpTo(CameraOptions()) is used
+    // rather than a direct state write, so the correction runs through the same
+    // startTransition/constrainCameraAboveTerrain path (and the same observer notifications) as
+    // every other camera change, instead of a second, untested way of moving the camera.
+    transform.jumpTo(CameraOptions());
+    onUpdate();
+}
+
 void Map::Impl::jumpTo(const CameraOptions& camera) {
     cameraMutated = true;
     transform.jumpTo(camera);

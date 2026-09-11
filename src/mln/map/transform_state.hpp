@@ -259,6 +259,53 @@ public:
                                                     uint8_t atZoom,
                                                     double targetZ = 0.0) const;
 
+    /// The camera's own altitude in metres, twin of MapLibre GL JS's
+    /// `MercatorTransform.getCameraAltitude` (mercator_transform.ts:830). `getCameraToCenterDistance`
+    /// is in pixels and does not vary with zoom; multiplying it by the metres-per-pixel at the
+    /// current zoom converts the pitch-projected camera offset above the centre into metres, which
+    /// is then added to the centre's own altitude.
+    double getCameraAltitudeMeters() const;
+
+    /// The ground point directly under the camera, twin of the web's `getCameraLngLat`
+    /// (mercator_transform.ts:834). Derived from the camera position the engine already computes
+    /// (`updateCameraState`) rather than re-deriving the pitch/bearing trigonometry.
+    LatLng getCameraLatLng() const;
+
+    /// The renderer's most recent RISE: the DEM height under the camera's own ground point minus
+    /// the DEM height under the map centre, both sampled in the same render frame, exaggeration
+    /// already applied to both. `std::nullopt` means there is no render terrain this frame, so
+    /// the clamp in `constrainCameraAboveTerrain` is off entirely rather than clamped to sea
+    /// level. A rise, not an absolute altitude, is what crosses this boundary on purpose: the
+    /// map thread's own centre altitude (`getCenterAltitude`) can still be one frame behind the
+    /// terrain at the moment the clamp runs, and comparing that stale number against a fresh
+    /// absolute ground height poisons the result. The rise carries no dependency on either
+    /// thread's notion of centre altitude, so it cannot be poisoned by it.
+    void setTerrainCameraGroundRise(std::optional<double> metres) { terrainCameraGroundRise = metres; }
+    std::optional<double> getTerrainCameraGroundRise() const { return terrainCameraGroundRise; }
+
+    /// Extra clearance, in metres, `constrainCameraAboveTerrain` holds the camera above the
+    /// sampled ground. Default 0.0: the measured value (task 2.0b, section 5) becomes the built-in
+    /// default in a later commit once the gesture bench has produced it; until then the clamp
+    /// touches the raw DEM sample, same as the web.
+    void setTerrainCameraMarginMeters(double metres) { terrainCameraMarginMeters = metres; }
+    double getTerrainCameraMarginMeters() const { return terrainCameraMarginMeters; }
+
+    /// Keeps the camera's own altitude above the terrain under it. Copies the test in MapLibre GL
+    /// JS's `Camera._elevateCameraIfInsideTerrain` (src/ui/camera.ts:891-905): camera altitude
+    /// versus the DEM height at the camera's own ground point. The response differs from the web on
+    /// purpose. The web raises the camera vertically at a fixed ground position, which changes
+    /// pitch and zoom together, so a pinch would tilt the map flat under the user's fingers
+    /// mid-gesture; this clamps only the axis the caller is actually changing.
+    ///
+    /// `pitchRequested && !zoomRequested` is the two-finger tilt gesture (`MLNMapView`'s
+    /// `handleTwoFingerDragGesture` sends `jumpTo(CameraOptions().withPitch(...).withAnchor(...))`):
+    /// clamp PITCH only, leaving the zoom exactly where it is, so a tilt is answered as a tilt
+    /// rather than an unrelated zoom-out. Every other case - a zoom change (pinch), a centre
+    /// change (pan), a bare `CameraOptions()` (the terrain-elevation-changed correction), or both
+    /// at once - clamps ZOOM first, then PITCH as a backstop for when the zoom clamp ran into
+    /// `minZoom` and the camera is still under the terrain.
+    void constrainCameraAboveTerrain(bool zoomRequested, bool pitchRequested);
+
     double zoomScale(double zoom) const;
     double scaleZoom(double scale) const;
 
@@ -357,6 +404,12 @@ private:
     mutable mat4 invProjectionMatrix;
     mutable mat4 coordMatrix;
     mutable mat4 invertedMatrix;
+
+    // Terrain camera clamp (task 2.0b): the render thread's most recent rise (camera ground DEM
+    // height minus centre DEM height, same frame), and the clearance constrainCameraAboveTerrain
+    // holds above it.
+    std::optional<double> terrainCameraGroundRise;
+    double terrainCameraMarginMeters = 0.0;
 };
 
 } // namespace mln

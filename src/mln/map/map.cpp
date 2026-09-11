@@ -630,6 +630,27 @@ bool Map::getCenterClampedToGround() const {
     return impl->centerClampedToGround;
 }
 
+void Map::setTerrainCameraMarginMeters(double margin) {
+    impl->transform.setTerrainCameraMarginMeters(margin);
+}
+
+double Map::getTerrainCameraMarginMeters() const {
+    return impl->transform.getTerrainCameraMarginMeters();
+}
+
+std::optional<double> Map::getTerrainCameraGroundRiseMeters() const {
+    return impl->transform.getTerrainCameraGroundRise();
+}
+
+double Map::getTerrainCameraAltitudeAboveCentreMeters() const {
+    const auto& state = impl->transform.getState();
+    return state.getCameraAltitudeMeters() - state.getCenterAltitude();
+}
+
+double Map::getTerrainCentreAltitudeMeters() const {
+    return impl->transform.getState().getCenterAltitude();
+}
+
 void Map::setDebugAboveGroundLog(bool enabled) {
     impl->debugAboveGroundLog = enabled;
 }

@@ -574,6 +574,40 @@ MLN_EXPORT
 @property (nonatomic, assign) MLNTerrainSkirtLength terrainSkirtLength;
 
 /**
+ Extra clearance, in metres, the camera holds above the terrain surface directly beneath it.
+
+ When 3D terrain is enabled, the camera's own altitude is tested against the rendered DEM height
+ at the camera's own ground point, and a zoom or tilt that would put the camera inside the
+ terrain is stopped at this margin above it instead. The default is `0.0`, the raw terrain
+ surface with no clearance. Has no effect when terrain is not enabled.
+ */
+@property (nonatomic, assign) CGFloat terrainCameraMarginMeters;
+
+/**
+ A reading of the current camera, not a request: the render thread's most recent camera-ground
+ rise (task 2.0b) - the terrain height under the camera's own ground point minus the terrain
+ height under the map centre, both sampled in the same frame. `nil` when there is no render
+ terrain this frame. Exists so the terrain camera clamp (`terrainCameraMarginMeters`) can be
+ measured from a test harness rather than guessed.
+ */
+@property (nonatomic, readonly, nullable) NSNumber *terrainCameraGroundRiseMeters;
+
+/**
+ A reading of the current camera, not a request: how many metres of altitude the camera currently
+ holds above the centre plane, `cos(pitch) * cameraToCenterDistance * metresPerPixel(lat, zoom)` -
+ the left-hand side of the terrain camera clamp's inequality. Exists so the clamp's margin can be
+ chosen by measurement.
+ */
+@property (nonatomic, readonly) CGFloat terrainCameraAltitudeAboveCentreMeters;
+
+/**
+ A reading of the current camera, not a request: the altitude the ground-plane pin has set the
+ map centre to (`TransformState::getCenterAltitude()`). Exists so the terrain camera clamp's
+ margin can be chosen by measurement.
+ */
+@property (nonatomic, readonly) CGFloat terrainCentreAltitudeMeters;
+
+/**
  Frustum offset used to disable rendering of elements at the edge of the screen
 
  Offset applied to camera frustum and scissor rectangle. The camrea frustum is modified

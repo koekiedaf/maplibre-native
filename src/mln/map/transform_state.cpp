@@ -508,6 +508,17 @@ double TransformState::getCenterAltitude() const {
     return z * Projection::getMetersPerPixelAtLatitude(getLatLng().latitude(), getZoom());
 }
 
+double TransformState::getCameraAltitudeMeters() const {
+    return getCenterAltitude() + std::cos(getPitch()) * getCameraToCenterDistance() *
+                                     Projection::getMetersPerPixelAtLatitude(getLatLng().latitude(), getZoom());
+}
+
+LatLng TransformState::getCameraLatLng() const {
+    updateCameraState();
+    const vec3 position = camera.getPosition();
+    return latLngFromMercator(Point<double>{position[0], position[1]});
+}
+
 double TransformState::pixel_x() const {
     const double center = (size.width - Projection::worldSize(scale)) / 2;
     return center + x;
@@ -1058,6 +1069,86 @@ void TransformState::setLatLngZoom(const LatLng& latLng, double zoom) {
 void TransformState::setCenterAltitude(double alt_m) {
     z = alt_m / Projection::getMetersPerPixelAtLatitude(getLatLng().latitude(), getZoom());
     requestMatricesUpdate = true;
+}
+
+void TransformState::constrainCameraAboveTerrain(bool zoomRequested, bool pitchRequested) {
+    if (!terrainCameraGroundRise || !valid()) {
+        return;
+    }
+
+    // The requirement is cameraAltitude >= groundUnderCamera + margin, and cameraAltitude ==
+    // centerAltitude + cos(pitch) * D (D the camera-to-centre distance in metres). Substituting:
+    //   centerAltitude + cos(pitch) * D >= groundUnderCamera + margin
+    // The engine already pins centerAltitude to the terrain under the centre
+    // (Map::Impl::onTerrainCenterElevationChanged), so centerAltitude and groundUnderCentre are
+    // the same quantity up to that pinning's own lag, and the inequality reduces to:
+    //   cos(pitch) * D >= (groundUnderCamera - groundUnderCentre) + margin
+    // which contains no absolute altitude at all - only the rise, which the render thread already
+    // computes from two DEM samples taken in the same frame. That is why R is built from the rise
+    // and nothing else: an absolute groundUnderCamera compared against this thread's own
+    // getCenterAltitude() can be poisoned the instant a jumpTo changes zoom or pitch and this
+    // clamp runs before the map thread's centre altitude has caught up to the new terrain sample -
+    // measured at Gavarnie, pitch 0, where the rise is identically zero (camera sits directly over
+    // the centre, so the ground under it IS the ground under the centre) but the old absolute form
+    // still reported R as the full ~1765 m ground height and clamped a jumpTo that should never
+    // have been touched. The rise is exactly zero at pitch 0 for any terrain, by construction, so
+    // it cannot make that mistake.
+    const double R = *terrainCameraGroundRise + terrainCameraMarginMeters;
+    if (!(R > 0.0) || !std::isfinite(R)) {
+        return;
+    }
+
+    const double cosPitch = std::cos(getPitch());
+    const double C = getCameraToCenterDistance();
+    if (!(cosPitch > 0.0) || !(C > 0.0)) {
+        return;
+    }
+
+    const double lat = getLatLng().latitude();
+    const double k = Projection::getMetersPerPixelAtLatitude(lat, 0.0);
+    if (!(k > 0.0)) {
+        return;
+    }
+
+    // A pitch-only change (the two-finger tilt gesture) is answered as a tilt: clamp PITCH only
+    // and leave the zoom exactly where the caller put it. Every other case - a zoom change, a
+    // centre change, both at once, or neither (the terrain-elevation-changed correction) - clamps
+    // ZOOM first and then PITCH as a backstop, in case the zoom clamp ran into minZoom and the
+    // camera is still under the terrain.
+    const bool pitchOnly = pitchRequested && !zoomRequested;
+
+    if (!pitchOnly) {
+        // Zoom clamp: solves cos(pitch) * C * metersPerPixel(lat, zoom) == R for zoom, since
+        // metersPerPixel(lat, zoom) is k * 2^-zoom: cos(pitch) * C * k * 2^-zoom == R
+        // => zoom == log2(cos(pitch) * C * k / R).
+        const double zoomArg = cosPitch * C * k / R;
+        if (zoomArg > 0.0 && std::isfinite(zoomArg)) {
+            const double zoomMax = util::log2(zoomArg);
+            if (std::isfinite(zoomMax) && getZoom() > zoomMax) {
+                // setLatLngZoom changes zoom but not z, and getCenterAltitude() reinterprets that
+                // raw z at whatever zoom is current - so the centre altitude has to be re-pinned
+                // after a zoom change here, exactly as every other zoom-changing transition in this
+                // file already does, or R's own definition (which assumes centerAltitude fixed)
+                // stops holding the moment this clamp changes the zoom it was computed against.
+                const double centerAltitude = getCenterAltitude();
+                setLatLngZoom(getLatLng(), zoomMax);
+                setCenterAltitude(centerAltitude);
+            }
+        }
+    }
+
+    // Pitch clamp. In the zoom-first branch this runs after the zoom clamp with the (possibly
+    // just-clamped) zoom: with the zoom already holding cos(pitch) * D == R exactly, this is a
+    // no-op by construction and only bites as a backstop when the zoom clamp could not reach far
+    // enough. In the pitch-only branch this is the only clamp that runs, against the zoom the
+    // caller asked for, unchanged.
+    const double D_m = C * Projection::getMetersPerPixelAtLatitude(lat, getZoom());
+    if (D_m > 0.0 && std::isfinite(D_m)) {
+        const double pitchMax = std::acos(util::clamp(R / D_m, 0.0, 1.0));
+        if (std::isfinite(pitchMax) && getPitch() > pitchMax) {
+            setPitch(util::clamp(pitchMax, minPitch, maxPitch));
+        }
+    }
 }
 
 void TransformState::setScalePoint(const double newScale, const ScreenCoordinate& point) {

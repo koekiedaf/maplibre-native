@@ -741,9 +741,11 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         terrainCoverRetryFrames = 4;
     }
 
-    // Report the rendered terrain height under the map centre. Only the render side has the
-    // DEM, so this is the channel; whether the camera acts on it is the map's call
-    // (Map::setCenterClampedToGround). Gated so a still map does not post a message a frame.
+    // Report the rendered terrain height under the map centre, and under the camera's own ground
+    // point (task 2.0b). Only the render side has the DEM, so this is the channel; whether the
+    // camera acts on either sample is the map's call (Map::setCenterClampedToGround for the
+    // centre, always for the camera-above-terrain clamp). Gated so a still map does not post a
+    // message a frame.
     bool centerElevationSettling = false;
     {
         // Terrain switched off (or never on) has to be reported too, as a height of zero: the
@@ -753,14 +755,42 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         auto* terrain = orchestrator.getRenderTerrain();
         const double centerElevation =
             terrain ? terrain->getElevationForLatLng(updateParameters->transformState.getLatLng()) : 0.0;
-        if (std::abs(centerElevation - lastReportedCenterElevation) > 0.25) {
+        const bool centerChanged = std::abs(centerElevation - lastReportedCenterElevation) > 0.25;
+        if (centerChanged) {
             lastReportedCenterElevation = centerElevation;
             observer->onTerrainCenterElevationChanged(centerElevation);
-            // The camera only moves onto the terrain on the *next* frame, so this one was
-            // drawn from a centre that is still at the old height. Report the frame as not
-            // settled: a still render would otherwise capture the pre-clamp image, which for
-            // terrain taller than the camera is empty. Bounded so a DEM that never settles
-            // cannot spin the loop forever.
+        }
+
+        // The camera-ground rise: how much higher (or lower) the terrain under the camera's own
+        // ground point is than the terrain under the map centre, both sampled here in the same
+        // frame. Reporting the difference rather than either absolute height means the map
+        // thread's clamp never has to compare against its own (possibly still-catching-up)
+        // centre altitude - the two DEM samples that make up the rise come from the same frame,
+        // so they cannot be out of step with each other, only with what the map thread does with
+        // them next. nullopt (not zero) when there is no render terrain, so the
+        // camera-above-terrain clamp is off entirely instead of clamped to a flat sea level.
+        const std::optional<double> cameraGroundRise =
+            terrain ? std::optional<double>(
+                          terrain->getElevationForLatLng(updateParameters->transformState.getCameraLatLng()) -
+                          centerElevation)
+                    : std::nullopt;
+        const bool cameraGroundValidityChanged =
+            cameraGroundRise.has_value() != lastReportedCameraGroundRise.has_value();
+        const bool cameraGroundChanged =
+            cameraGroundValidityChanged ||
+            (cameraGroundRise && lastReportedCameraGroundRise &&
+             std::abs(*cameraGroundRise - *lastReportedCameraGroundRise) > 0.25);
+        if (cameraGroundChanged) {
+            lastReportedCameraGroundRise = cameraGroundRise;
+            observer->onTerrainCameraGroundRiseChanged(cameraGroundRise);
+        }
+
+        if (centerChanged || cameraGroundChanged) {
+            // The camera only moves onto the terrain on a following frame, so this one was
+            // drawn before either clamp caught up. Report the frame as not settled: a still
+            // render would otherwise capture the pre-clamp image, which for terrain taller than
+            // the camera is empty. One shared, bounded counter for both channels, so a DEM that
+            // never settles on either cannot spin the loop forever.
             centerElevationSettling = ++centerElevationSettleFrames <= kMaxCenterElevationSettleFrames;
         } else {
             centerElevationSettleFrames = 0;

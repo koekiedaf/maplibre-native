@@ -619,7 +619,13 @@ void Transform::startTransition(const CameraOptions& camera,
     transitionStart = Clock::now();
     transitionDuration = duration;
 
-    transitionFrameFn = [isAnimated, animation, frame, anchor, anchorLatLng, this](const TimePoint now) {
+    // Which axes this camera change actually asked for, so the terrain clamp below can answer a
+    // tilt as a tilt (pitch requested, zoom not) rather than a zoom-out.
+    const bool zoomRequested = camera.zoom.has_value();
+    const bool pitchRequested = camera.pitch.has_value();
+
+    transitionFrameFn = [isAnimated, animation, frame, anchor, anchorLatLng, zoomRequested, pitchRequested,
+                         this](const TimePoint now) {
         float t = isAnimated ? (std::chrono::duration<float>(now - transitionStart) / transitionDuration) : 1.0f;
         if (t >= 1.0) {
             frame(1.0);
@@ -629,6 +635,11 @@ void Transform::startTransition(const CameraOptions& camera,
         }
 
         if (anchor) state.moveLatLng(anchorLatLng, *anchor);
+
+        // Every camera path funnels through here (jumpTo, easeTo, flyTo, moveBy, rotateBy and
+        // every gesture), so this is the one place the camera's own altitude is tested against
+        // the terrain under it, after the frame's change and before it is drawn.
+        state.constrainCameraAboveTerrain(zoomRequested, pitchRequested);
 
         // At t = 1.0, a DidChangeAnimated notification should be sent from finish().
         if (t < 1.0) {

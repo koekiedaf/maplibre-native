@@ -236,6 +236,30 @@ public:
     void setCenterClampedToGround(bool clamped);
     bool getCenterClampedToGround() const;
 
+    /// Extra clearance, in metres, the camera holds above the terrain under it once
+    /// task 2.0b's clamp is active (`TransformState::constrainCameraAboveTerrain`). Default 0.0
+    /// until the gesture bench has measured a value. Inert when there is no render terrain.
+    void setTerrainCameraMarginMeters(double margin);
+    double getTerrainCameraMarginMeters() const;
+
+    /// Read-only measurement of the current camera, not a request: the render thread's most
+    /// recent camera-ground RISE (task 2.0b) - the terrain height under the camera's own ground
+    /// point minus the terrain height under the map centre, both sampled in the same frame.
+    /// `std::nullopt` when there is no render terrain. Exists so `constrainCameraAboveTerrain`'s
+    /// clamp can be measured from a test harness instead of guessed.
+    std::optional<double> getTerrainCameraGroundRiseMeters() const;
+
+    /// Read-only measurement of the current camera, not a request: the left-hand side of the
+    /// clamp's inequality, `cos(pitch) * cameraToCenterDistance * metresPerPixel(lat, zoom)` -
+    /// how many metres of altitude the camera currently holds above the centre plane. Exists so
+    /// the clamp's margin can be chosen by measurement.
+    double getTerrainCameraAltitudeAboveCentreMeters() const;
+
+    /// Read-only measurement of the current camera, not a request: `TransformState::getCenterAltitude()`,
+    /// the altitude the ground-plane pin has set the map centre to. Exists so the clamp's margin
+    /// can be chosen by measurement.
+    double getTerrainCentreAltitudeMeters() const;
+
     /// Debug: when enabled, RenderTerrain logs the camera eye's clearance over the terrain
     /// ("ABOVE-GROUND ...") each frame it is near/below the surface. Off by default; the
     /// per-frame elevation sampling is skipped entirely when off, so it has no cost otherwise.

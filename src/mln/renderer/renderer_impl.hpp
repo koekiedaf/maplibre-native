@@ -11,6 +11,7 @@
 
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <mln/tile/tile_id.hpp>
 
@@ -108,8 +109,14 @@ private:
     /// Last terrain height reported under the map centre, so an unchanged surface does not
     /// post an observer message every frame.
     double lastReportedCenterElevation = 0.0;
-    /// Frames spent waiting for the terrain-clamped centre to settle, and the cap that stops
-    /// a DEM whose sampled height keeps moving from holding a still render open forever.
+    /// Last camera-ground rise reported (task 2.0b): the terrain height under the camera's own
+    /// ground point MINUS the terrain height under the map centre, both sampled in the same
+    /// frame so neither side can be stale relative to the other. nullopt means "no render
+    /// terrain reported yet", distinct from a reported rise of zero.
+    std::optional<double> lastReportedCameraGroundRise;
+    /// Frames spent waiting for either terrain-clamped channel (centre or camera) to settle, and
+    /// the cap that stops a DEM whose sampled height keeps moving from holding a still render
+    /// open forever. Shared by both channels so the bounded retry still cannot spin.
     int centerElevationSettleFrames = 0;
     static constexpr int kMaxCenterElevationSettleFrames = 4;
 

@@ -198,4 +198,156 @@ modifiedReferenceSpec["layout_symbol"]["symbol-screen-space"] = {
     "doc": "Internal use only"
 };
 
+// DuckMaps fork only, not upstream: an elevated ribbon line drawn in real 3D world space on
+// the terrain surface (never draped), for trails/routes/tracks. Added the same way
+// "location-indicator" is above - as an override here rather than a hand-edit of the vendored
+// scripts/style-spec-reference/v8.json, so that file stays a clean mirror of upstream and future
+// upstream syncs never conflict with a fork-only layer type. One ribbon, one colour, one width,
+// one dash per layer (the family passes the web engine draws in one custom layer become several
+// styled instances of this layer type instead - see docs/plans/2026-09-11-engine-layer-plumbing.md).
+// All nine paint properties are non-data-driven ("data-constant": constant-or-zoom-interpolatable
+// only, PropertyValue<T>, never DataDrivenPropertyValue<T> - no paint vertex attributes/binders).
+modifiedReferenceSpec.layer.type.values["terrain-line"] = {
+  "doc": "An elevated ribbon line (trail/route/track) drawn in real 3D world space on the terrain, DuckMaps fork only."
+};
+
+modifiedReferenceSpec["layout_terrain-line"] = {
+  "visibility": {
+      "type": "enum",
+      "values": {
+        "visible": { "doc": "The layer is shown." },
+        "none": { "doc": "The layer is not shown." }
+      },
+      "default": "visible",
+      "doc": "Whether this layer is displayed.",
+      "property-type": "constant"
+  }
+};
+
+modifiedReferenceSpec["paint_terrain-line"] = {
+  "terrain-line-color": {
+      "type": "color",
+      "default": "#000000",
+      "transition": true,
+      "doc": "The ribbon colour.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "terrain-line-opacity": {
+      "type": "number",
+      "default": 1,
+      "minimum": 0,
+      "maximum": 1,
+      "transition": true,
+      "doc": "Alpha multiplier for the ribbon (shader u_alpha).",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "terrain-line-width": {
+      "type": "number",
+      "default": 1,
+      "minimum": 0,
+      "units": "pixels",
+      "transition": true,
+      "doc": "Full ribbon width in CSS pixels at the map centre; half-width in device pixels (width * pixelRatio / 2) is shader u_half_px.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "terrain-line-blur": {
+      "type": "number",
+      "default": 1,
+      "minimum": 0,
+      "units": "pixels",
+      "transition": true,
+      "doc": "Anti-aliasing edge feather in device pixels (shader u_edge_px); 1 for a crisp line, larger for a halo layer.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "terrain-line-dasharray": {
+      "type": "array",
+      "value": "number",
+      "length": 2,
+      // [0, 0] rather than [] - functionally identical (both mean "no dash pattern, draw a
+      // continuous line", the tweaker's dash_period == 0 case) but an empty default array makes
+      // the generator emit an ambiguous PropertyValue<std::array<float, 2>> constructor call
+      // (ambiguous between the constant and expression overloads) for a fixed-length array type.
+      // Not worth a generator/template change for; every other fixed-length array property in
+      // this spec (line-translate, location-indicator's location) already supplies a non-empty
+      // default for the same reason.
+      "default": [0, 0],
+      "minimum": 0,
+      "units": "line widths",
+      "transition": true,
+      "doc": "Dash on/off lengths in width units, exactly like line-dasharray. [0, 0] (the default) means a continuous line.",
+      "expression": {
+          "interpolated": false,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "terrain-line-offset": {
+      "type": "number",
+      "default": 0,
+      "units": "pixels",
+      "transition": true,
+      "doc": "Constant sideways offset in device pixels (shader u_rail_offset), for the track ladder's two rails.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "terrain-line-ghost-opacity": {
+      "type": "number",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 1,
+      "transition": true,
+      "doc": "Alpha for fragments behind the terrain, once terrain occlusion is added. Parsed and evaluated in 2.2a but has no effect in the shader yet - occlusion testing is deferred to 2.2b.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "terrain-line-fade": {
+      "type": "number",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 1,
+      "transition": true,
+      "doc": "Distance-fade amount, 0 to 1, once distance fade is added. Parsed and evaluated in 2.2a but has no effect in the shader yet - distance fade is deferred to 2.2b.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "terrain-line-fade-distance": {
+      "type": "number",
+      "default": 8000,
+      "minimum": 0,
+      "units": "meters",
+      "transition": true,
+      "doc": "Metres at which terrain-line-fade reaches full effect, once distance fade is added. Parsed and evaluated in 2.2a but has no effect in the shader yet - distance fade is deferred to 2.2b.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  }
+};
+
 export default modifiedReferenceSpec;

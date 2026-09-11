@@ -250,6 +250,13 @@
         "uses_ubos": true
     },
     {
+        "name": "TerrainLineShader",
+        "header": "terrain_line",
+        "glsl_vert": "terrain_line.vertex.glsl",
+        "glsl_frag": "terrain_line.fragment.glsl",
+        "uses_ubos": true
+    },
+    {
         "name": "WideVectorShader",
         "header": "wide_vector",
         "glsl_vert": "_empty.glsl",

@@ -45,6 +45,7 @@ enum class BuiltIn {
     SymbolTextAndIconShader,
     TerrainShader,
     TerrainDepthShader,
+    TerrainLineShader,
     WideVectorShader
 };
 

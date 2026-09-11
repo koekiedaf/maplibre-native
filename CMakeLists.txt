@@ -257,6 +257,7 @@ list(APPEND INCLUDE_FILES
     ${PROJECT_SOURCE_DIR}/include/mln/layermanager/heatmap_layer_factory.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/layermanager/hillshade_layer_factory.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/layermanager/color_relief_layer_factory.hpp
+    ${PROJECT_SOURCE_DIR}/include/mln/layermanager/terrain_line_layer_factory.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/layermanager/layer_factory.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/layermanager/layer_manager.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/layermanager/line_layer_factory.hpp
@@ -372,6 +373,7 @@ list(APPEND INCLUDE_FILES
     ${PROJECT_SOURCE_DIR}/include/mln/style/layers/heatmap_layer.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/style/layers/hillshade_layer.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/style/layers/color_relief_layer.hpp
+    ${PROJECT_SOURCE_DIR}/include/mln/style/layers/terrain_line_layer.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/style/layers/line_layer.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/style/layers/location_indicator_layer.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/style/layers/raster_layer.hpp
@@ -516,6 +518,7 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/layermanager/heatmap_layer_factory.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/layermanager/hillshade_layer_factory.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/layermanager/color_relief_layer_factory.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/layermanager/terrain_line_layer_factory.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/layermanager/layer_factory.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/layermanager/layer_manager.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/layermanager/line_layer_factory.cpp
@@ -530,6 +533,7 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/style/layers/location_indicator_layer_properties.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/style/layers/location_indicator_layer_properties.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/layout/circle_layout.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/layout/terrain_line_layout.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/layout/clip_lines.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/layout/clip_lines.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/layout/layout.hpp
@@ -561,6 +565,8 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/bucket_parameters.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/buckets/circle_bucket.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/buckets/circle_bucket.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/renderer/buckets/terrain_line_bucket.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/renderer/buckets/terrain_line_bucket.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/buckets/debug_bucket.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/buckets/debug_bucket.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/buckets/fill_bucket.cpp
@@ -601,6 +607,10 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/render_color_relief_layer.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/color_relief_layer_tweaker.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/color_relief_layer_tweaker.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/render_terrain_line_layer.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/render_terrain_line_layer.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/terrain_line_layer_tweaker.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/terrain_line_layer_tweaker.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/render_line_layer.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/render_line_layer.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/render_raster_layer.cpp
@@ -799,6 +809,11 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/style/layers/color_relief_layer_impl.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/style/layers/color_relief_layer_properties.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/style/layers/color_relief_layer_properties.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/style/layers/terrain_line_layer.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/style/layers/terrain_line_layer_impl.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/style/layers/terrain_line_layer_impl.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/style/layers/terrain_line_layer_properties.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/style/layers/terrain_line_layer_properties.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/style/layers/line_layer.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/style/layers/line_layer_impl.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/style/layers/line_layer_impl.hpp

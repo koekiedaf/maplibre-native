@@ -4,6 +4,7 @@
 #include <mln/style/conversion/json.hpp>
 #include <mln/style/conversion/layer.hpp>
 #include <mln/style/layers/background_layer_impl.hpp>
+#include <mln/style/layers/terrain_line_layer.hpp>
 
 #include <rapidjson/prettywriter.h>
 
@@ -162,4 +163,53 @@ TEST(StyleConversion, SetGenericProperties) {
     const JSValue newMaxZoom(22.0f);
     layer->setProperty("maxzoom", Convertible(&newMaxZoom));
     EXPECT_EQ(22.0f, layer->getMaxZoom());
+}
+
+// DuckMaps fork only, task 2.2a - style-parse proof (docs/plans/2026-09-11-engine-layer-plumbing.md
+// acceptance step 3): a style JSON terrain-line layer with all nine paint properties set parses
+// through the core and reads back exactly the values given.
+TEST(StyleConversion, TerrainLineProperties) {
+    auto layer = parseLayer(R"JSON({
+        "type": "terrain-line",
+        "id": "terrain-line-test",
+        "source": "outdoor",
+        "source-layer": "outdoor",
+        "filter": ["in", ["get", "class"], ["literal", ["path", "bridleway"]]],
+        "minzoom": 10,
+        "maxzoom": 18,
+        "layout": {
+            "visibility": "visible"
+        },
+        "paint": {
+            "terrain-line-color": "#ff00aa",
+            "terrain-line-opacity": 0.75,
+            "terrain-line-width": 4.5,
+            "terrain-line-blur": 1.5,
+            "terrain-line-dasharray": [4, 2],
+            "terrain-line-offset": 3,
+            "terrain-line-ghost-opacity": 0.3,
+            "terrain-line-fade": 0.6,
+            "terrain-line-fade-distance": 5000
+        }
+    })JSON");
+
+    ASSERT_NE(nullptr, layer);
+    ASSERT_STREQ("terrain-line", layer->getTypeInfo()->type);
+    EXPECT_EQ(10.0f, layer->getMinZoom());
+    EXPECT_EQ(18.0f, layer->getMaxZoom());
+    EXPECT_EQ("outdoor", layer->getSourceLayer());
+    EXPECT_EQ(parseFilter(R"FILTER(["in", ["get", "class"], ["literal", ["path", "bridleway"]]])FILTER").serialize(),
+             layer->getFilter().serialize());
+
+    auto* terrainLine = static_cast<TerrainLineLayer*>(layer.get());
+    EXPECT_EQ((PropertyValue<Color>{Color{1.0f, 0.0f, 2.0f / 3.0f, 1.0f}}), terrainLine->getTerrainLineColor());
+    EXPECT_EQ((PropertyValue<float>{0.75f}), terrainLine->getTerrainLineOpacity());
+    EXPECT_EQ((PropertyValue<float>{4.5f}), terrainLine->getTerrainLineWidth());
+    EXPECT_EQ((PropertyValue<float>{1.5f}), terrainLine->getTerrainLineBlur());
+    EXPECT_EQ((PropertyValue<std::array<float, 2>>{std::array<float, 2>{{4.f, 2.f}}}),
+             terrainLine->getTerrainLineDasharray());
+    EXPECT_EQ((PropertyValue<float>{3.0f}), terrainLine->getTerrainLineOffset());
+    EXPECT_EQ((PropertyValue<float>{0.3f}), terrainLine->getTerrainLineGhostOpacity());
+    EXPECT_EQ((PropertyValue<float>{0.6f}), terrainLine->getTerrainLineFade());
+    EXPECT_EQ((PropertyValue<float>{5000.0f}), terrainLine->getTerrainLineFadeDistance());
 }

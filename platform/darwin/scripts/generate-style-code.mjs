@@ -12,6 +12,15 @@ delete styleSpec.layer.type.values["location-indicator"];
 delete styleSpec["layout_location-indicator"]
 delete styleSpec["paint_location-indicator"];
 
+// DuckMaps fork only, task 2.2a: terrain-line has no Objective-C/Swift peer class yet (darwin
+// outcome (b) - see the task's final report). Excluded here the same way location-indicator is
+// above, rather than adding platform/darwin/bazel/files.bzl entries for a peer this task does
+// not build; registered addLayerTypeCoreOnly in MLNStyleLayerManager.mm instead of addLayerType,
+// so style JSON parses and renders it but Swift/ObjC cannot yet find or mutate it (task 2.5).
+delete styleSpec.layer.type.values["terrain-line"];
+delete styleSpec["layout_terrain-line"];
+delete styleSpec["paint_terrain-line"];
+
 import cocoaConventions from './style-spec-cocoa-conventions-v8.json' with { type: "json" };
 import styleSpecOverrides from './style-spec-overrides-v8.json' with { type: "json" };
 

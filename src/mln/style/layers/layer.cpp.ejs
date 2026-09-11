@@ -91,6 +91,12 @@ layerCapabilities['circle']         = defaults.require('Source')
                                               .set('TileKind', 'Geometry')
                                               .finalize();
 layerCapabilities['line']           = layerCapabilities['fill'];
+// DuckMaps fork only: terrain-line is a vector-tile line variant, same source requirements as
+// `line` (Source Required, Layout Required for its bucket, TileKind Geometry) - see
+// docs/plans/2026-09-11-engine-layer-plumbing.md. It does not set Pass3D: that flag selects
+// RenderPass::Pass3D (fill-extrusion/heatmap's own render-order pass), unrelated to terrain
+// elevation - circle and symbol are elevated (renderToTerrain=false) without it either.
+layerCapabilities['terrain-line']   = layerCapabilities['line'];
 layerCapabilities['heatmap']        = defaults.require('Source')
                                               .require('Pass3D')
                                               .set('TileKind', 'Geometry')

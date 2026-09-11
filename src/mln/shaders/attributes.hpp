@@ -28,6 +28,14 @@ MBGL_DEFINE_ATTRIBUTE(int16_t, 2, normal2d);
 // per building so extrusions don't shear across a slope (see fill_extrusion)
 MBGL_DEFINE_ATTRIBUTE(int16_t, 2, centroid);
 
+// terrain-line (DuckMaps fork): one independent quad per densified sub-segment, no joins - see
+// TerrainLineLayout. `other` is the opposite end of this sub-segment (both ends are elevated via
+// get_elevation() in the vertex shader); `flag` is (direction sign at start/end, side); `dist` is
+// the distance accumulated along the ORIGINAL feature line, in this tile's EXTENT units.
+MBGL_DEFINE_ATTRIBUTE(int16_t, 2, other);
+MBGL_DEFINE_ATTRIBUTE(int16_t, 2, flag);
+MBGL_DEFINE_ATTRIBUTE(float, 1, dist);
+
 #if MLN_USE_SYMBOL_INSTANCING
 MBGL_DEFINE_ATTRIBUTE(uint16_t, 1, sorted_instance);
 MBGL_DEFINE_ATTRIBUTE(int16_t, 4, pos_scale);

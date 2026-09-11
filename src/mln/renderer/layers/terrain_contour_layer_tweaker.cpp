@@ -14,6 +14,7 @@
 #include <mln/util/geo.hpp>
 #include <mln/util/math.hpp>
 #include <mln/util/projection.hpp>
+#include <mln/util/tile_coordinate.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -25,24 +26,56 @@ using namespace shaders;
 
 namespace {
 
+// The map centre's own position expressed in tileID's EXTENT-unit local coordinate space -
+// the same units a_pos carries, unclamped (the point need not fall inside this tile's own
+// footprint). Two tiles at the SAME zoom differ only by a translation in tile units, so this
+// stays exact for whichever tile's matrix the caller happens to use as the reference, not only
+// for the tile that actually contains the centre.
+Point<double> tileLocalPosition(const UnwrappedTileID& tileID, const LatLng& latLng) {
+    const TileCoordinate coord = TileCoordinate::fromLatLng(static_cast<double>(tileID.canonical.z), latLng);
+    const double tileScale = std::exp2(static_cast<double>(tileID.canonical.z));
+    return {(coord.p.x - static_cast<double>(tileID.canonical.x) - tileID.wrap * tileScale) * util::EXTENT,
+            (coord.p.y - static_cast<double>(tileID.canonical.y)) * util::EXTENT};
+}
+
 // contours3d.js's referenceClipW() (lines 896-904): the clip-space w at the ground under the
-// map centre, at the centre's own sampled elevation. This is the same computation
-// TerrainLineLayerTweaker::computeReferenceClipW makes (see that file's comment for the full
-// derivation) - duplicated rather than shared because the two tweakers are otherwise
-// independent and neither is a natural home for a shared helper this small.
-float computeReferenceClipW(const PaintParameters& parameters) {
+// map centre, at the centre's own sampled elevation.
+//
+// This MUST be computed with the exact matrix a drawable's own geometry is transformed by
+// (parameters.matrixForTile(tileID), remapped for non-GL backends exactly as this file's own
+// execute() remaps each drawable's matrix below - the remap only touches the z row, so it makes
+// no difference to w, but using the identical matrix removes any doubt). The previous version of
+// this function instead rebuilt its own world-pixel position via Projection::project(center,
+// state.getScale()) and multiplied it by state.getProjectionMatrix() directly - the SAME
+// projection matrix component matrixForTile itself composes with state.matrixFor(tileID), so
+// that part was not the defect. The real bug was the z it fed in: it converted the centre's
+// elevation from metres to world pixels by hand (dividing by
+// Projection::getMetersPerPixelAtLatitude), but Camera::getWorldToCamera (src/mln/util/camera.cpp)
+// scales whatever z it is given by pixelsPerMeter INTERNALLY, unconditionally, for every matrix
+// built off TransformState::getProjMatrix - see TransformState::latLngToScreenCoordinate's own
+// comment ("World z is metres here, not pixels") and terrain.vertex.glsl, which passes its
+// decoded elevation straight through in metres with no conversion at all. Pre-dividing by
+// metresPerPixel and then letting the matrix divide by it again shrank the z contribution to
+// clip-w by a second, spurious factor of metresPerPixel - wrong in a pitch- and
+// slope-dependent way, which is exactly the shape of both reported defects (crowding that
+// varies with the wall's own steepness, and index/minor saturating to the same look).
+//
+// Fixed by dropping the manual conversion entirely: elevationM is passed straight through, in
+// metres, exactly as the vertex shader's own `elevation` does, and multiplied by the SAME
+// per-tile matrix a drawable uses, at the centre's position expressed in that tile's own
+// EXTENT-unit local coordinates (tileLocalPosition above) rather than at a separately-computed
+// world-pixel position.
+float computeReferenceClipW(const PaintParameters& parameters, const UnwrappedTileID& tileID, const mat4& matrix) {
     const auto& state = parameters.state;
     const LatLng center = state.getLatLng();
     const double elevationM = (parameters.terrain && parameters.terrain->isEnabled())
                                   ? parameters.terrain->getElevationForLatLng(center)
                                   : 0.0;
-    const double metresPerPixel = Projection::getMetersPerPixelAtLatitude(center.latitude(), state.getZoom());
-    const Point<double> worldXY = Projection::project(center, state.getScale());
-    const double worldZ = metresPerPixel > 0.0 ? elevationM / metresPerPixel : 0.0;
+    const Point<double> local = tileLocalPosition(tileID, center);
 
-    vec4 worldPos = {{worldXY.x, worldXY.y, worldZ, 1.0}};
+    vec4 localPos = {{local.x, local.y, elevationM, 1.0}};
     vec4 clip;
-    matrix::transformMat4(clip, worldPos, state.getProjectionMatrix());
+    matrix::transformMat4(clip, localPos, matrix);
     const float w = static_cast<float>(clip[3]);
     return w > 1e-4f ? w : 1e-4f;
 }
@@ -74,7 +107,14 @@ void TerrainContourLayerTweaker::execute(LayerGroupBase& layerGroup, const Paint
     const auto debugGroup = parameters.encoder->createDebugGroup(label.c_str());
 #endif
 
-    const float referenceW = computeReferenceClipW(parameters);
+    // Computed lazily below, from the first drawable this frame supplies: computeReferenceClipW
+    // needs one drawable's own (tileID, matrix) pair to be exact - see that function's comment.
+    // "Any one drawable's tile" is exact because same-zoom tiles' matrices differ only by a
+    // translation in tile units; the tile cover here is overwhelmingly uniform-zoom, and being
+    // off by one tile's translation on the rare mixed-LOD edge changes the reference by far less
+    // than the bug this replaces.
+    bool haveReferenceW = false;
+    float referenceW = 1e-4f;
     const float pixelScale = parameters.pixelRatio / kReferenceRatio;
 
     if (!evaluatedPropsUniformBuffer || propertiesUpdated) {
@@ -143,6 +183,11 @@ void TerrainContourLayerTweaker::execute(LayerGroupBase& layerGroup, const Paint
         matrix[10] = 0.5 * (matrix[10] + matrix[11]);
         matrix[14] = 0.5 * (matrix[14] + matrix[15]);
 #endif
+
+        if (!haveReferenceW) {
+            referenceW = computeReferenceClipW(parameters, tileID, matrix);
+            haveReferenceW = true;
+        }
 
         // Bind the covering DEM tile so the vertex/fragment shaders can sample the terrain
         // elevation directly - RenderTerrain::getTerrainData, the same call

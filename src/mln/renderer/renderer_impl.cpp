@@ -35,7 +35,10 @@
 #include <mln/util/tile_cover.hpp>
 #include <mln/util/geo.hpp>             // elevation trace: complete LatLng type (task C1)
 #include <mln/util/monotonic_timer.hpp> // elevation trace: tMs (task C1)
+#include <mln/util/projection.hpp>      // C6: project/unproject the forward sample line
 
+#include <algorithm> // C6: std::max for the forward sample line
+#include <cmath>   // C6: hypot for the forward sample line
 #include <cstdio>  // elevation trace: fopen/fwrite/fflush (task C1)
 #include <cstdlib> // elevation trace: getenv (task C1)
 #include <iomanip> // elevation trace: setprecision (task C1)
@@ -754,6 +757,8 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
     // centre, always for the camera-above-terrain clamp). Gated so a still map does not post a
     // message a frame.
     bool centerElevationSettling = false;
+    // C6: kept for the debug trace below, which is otherwise blind to the forward rise.
+    std::optional<double> traceCameraGroundRise;
     {
         // Terrain switched off (or never on) has to be reported too, as a height of zero: the
         // camera's centre altitude is sticky, and a centre left lifted over a map that is now
@@ -788,13 +793,117 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         const std::optional<double> queriedCenterElevation =
             terrain ? terrain->queryElevationForLatLng(updateParameters->transformState.getLatLng())
                     : std::nullopt;
-        const std::optional<double> queriedCameraElevation =
-            terrain ? terrain->queryElevationForLatLng(updateParameters->transformState.getCameraLatLng())
-                    : std::nullopt;
+        // Task C6, the bird climb. The rise is the HIGHEST ground along the flight path
+        // ahead, not the single sample under the camera. Sampling only under the camera is
+        // what every other renderer does (MapLibre GL JS's _elevateCameraIfInsideTerrain
+        // takes one DEM sample at the camera's own lng/lat; Cesium's adjustHeightForTerrain
+        // reads Scene.globeHeight under the camera) and it is why theirs jumps: the ground
+        // under the camera is BEHIND the centre at any pitch, so the camera only learns
+        // about a wall once the wall is already underneath it, and the correction is then
+        // a step. Sampling forward means the climb begins while the wall is still ahead and
+        // is spread over the whole approach, which is what makes it continuous. There is no
+        // rate limiter anywhere in this: the smoothness comes from the window sliding, not
+        // from filtering a value, so no wrong number is ever being smoothed over.
+        //
+        // The line sampled runs from the camera's own ground point, through the map centre,
+        // and on for kForwardLookahead times that distance again. It is the straight line
+        // the camera flies along, so it is interpolated in projected coordinates rather than
+        // in degrees. At pitch 0 the camera's ground point IS the centre, the line has zero
+        // length, every sample lands on the centre and the rise is identically zero for any
+        // terrain - the property the whole rise formulation exists to keep.
+        //
+        // Samples with no loaded DEM are skipped rather than read as sea level; the rise is
+        // reported as nullopt (clamp off, honestly) only when nothing along the line could be
+        // sampled at all, exactly as the single-sample form did.
+        // Each sample's requirement is DISCOUNTED by how far ahead it is. A bird does not
+        // need to be above a wall three kilometres away; it needs to be on a climb that
+        // reaches the wall's height by the time it arrives. So the height a sample at
+        // forward distance d demands is `elevation(d) - kClimbGradient * d`, and the
+        // requirement is the maximum of that over the whole line. At d = 0, the ground
+        // directly under the camera, the discount is zero and the requirement is the bare
+        // ground height, which is right: you must already be above what you are over.
+        //
+        // Without the discount the requirement steps. Measured on the first build of this
+        // task, flying south into the Gavarnie wall at zoom 15.5: the plain forward maximum
+        // went 794 m, 1061 m, 1491 m over three consecutive frames as the top of the cliff
+        // crossed the far edge of a hard-edged window, and the clamp answered with a 0.93
+        // zoom-level correction in about 110 ms, which is a snap. The discount turns the
+        // same wall into a requirement that grows continuously all the way in, because a
+        // sample's contribution rises smoothly as its own d shrinks. This is geometry, not
+        // a rate limiter: no value is filtered, delayed or averaged, and the requirement is
+        // exact and immediate at every instant. It is the shape of the climb, which is what
+        // David asked for ("a gradual, continuous rise to clear the summit").
+        //
+        // The gradient is a slope in metres of altitude per metre of ground. 0.2 is about
+        // 11 degrees, an ordinary aircraft climb, and it is the measured choice rather than
+        // the first guess: 0.5 (27 degrees) discounted the Gavarnie cirque, 2862 m of rock
+        // 2.9 km ahead, to below the ground under the camera, so the requirement stayed
+        // negative and the clamp never armed until the wall was inside two kilometres, at
+        // which point the climb would have been steep again. 0.2 leaves that same wall
+        // demanding 2282 m from 2.9 km out, so the climb begins early and grows all the
+        // way in, which is what "gradual" asks for.
+        // The line is at least kMinForwardMeters long however far in the camera is zoomed.
+        // Scaling the window with the camera-to-centre distance alone is right in spirit (a
+        // wide view should look further) but it fails exactly where it matters: measured at
+        // zoom 16.6 in the Gavarnie approach the window reached only 1.3 km, the cirque was
+        // 2.5 km out, and the requirement read as -55 m - the camera had no idea a 1400 m
+        // wall was coming, and would have learned about it all at once. 5 km is the distance
+        // a climb at this gradient needs to gain a thousand metres, so it is the distance
+        // over which a thousand-metre obstacle can be cleared gradually rather than suddenly.
+        constexpr int kForwardSamples = 48;
+        constexpr double kForwardLookahead = 2.0;
+        constexpr double kMinForwardMeters = 5000.0;
+        constexpr double kClimbGradient = 0.2;
+        std::optional<double> forwardMaxElevation;
+        if (terrain && queriedCenterElevation) {
+            const auto& ts = updateParameters->transformState;
+            const LatLng cameraLatLng = ts.getCameraLatLng();
+            const LatLng centerLatLng = ts.getLatLng();
+            // A fixed scale for the projection: the interpolation only needs a linear space,
+            // and the samples are unprojected back before they are read.
+            constexpr double kSampleProjectionScale = 1.0;
+            const auto camPoint = Projection::project(cameraLatLng, kSampleProjectionScale);
+            const auto ctrPoint = Projection::project(centerLatLng, kSampleProjectionScale);
+            const double dx = ctrPoint.x - camPoint.x;
+            const double dy = ctrPoint.y - camPoint.y;
+            // Ground metres from the camera's own ground point to the centre, which is the
+            // unit the sample parameter t is measured in. Projection::project at scale 1 is
+            // Mercator pixels with a world size of one tile, so one of its units is exactly
+            // getMetersPerPixelAtLatitude(lat, 0) metres - the same `k` the camera clamp in
+            // TransformState::constrainCameraAboveTerrain uses, so the two agree by
+            // construction rather than by coincidence.
+            const double metersPerUnit = Projection::getMetersPerPixelAtLatitude(centerLatLng.latitude(), 0.0);
+            const double cameraToCenterGroundM = std::hypot(dx, dy) * metersPerUnit;
+            const double forwardMeters = std::max((1.0 + kForwardLookahead) * cameraToCenterGroundM,
+                                                  kMinForwardMeters);
+            // At pitch 0 the camera's ground point IS the centre, so the direction is
+            // undefined and there is no "ahead" to sample: the rise is zero, by
+            // construction, for any terrain. Guard the normalisation rather than divide by
+            // a zero length.
+            const double dLen = std::hypot(dx, dy);
+            if (dLen > 0.0) {
+                const double ux = dx / dLen;
+                const double uy = dy / dLen;
+                for (int i = 0; i <= kForwardSamples; ++i) {
+                    const double d = forwardMeters * static_cast<double>(i) / static_cast<double>(kForwardSamples);
+                    const double units = d / metersPerUnit;
+                    const auto sample = terrain->queryElevationForLatLng(Projection::unproject(
+                        {camPoint.x + ux * units, camPoint.y + uy * units}, kSampleProjectionScale));
+                    if (!sample) {
+                        continue;
+                    }
+                    const double demanded = *sample - kClimbGradient * d;
+                    if (!forwardMaxElevation || demanded > *forwardMaxElevation) {
+                        forwardMaxElevation = demanded;
+                    }
+                }
+            }
+        }
         const std::optional<double> cameraGroundRise =
-            (queriedCenterElevation && queriedCameraElevation)
-                ? std::optional<double>(*queriedCameraElevation - *queriedCenterElevation)
+            (queriedCenterElevation && forwardMaxElevation)
+                ? std::optional<double>(*forwardMaxElevation - *queriedCenterElevation)
                 : std::nullopt;
+        traceCameraGroundRise = cameraGroundRise;
         const bool cameraGroundValidityChanged =
             cameraGroundRise.has_value() != lastReportedCameraGroundRise.has_value();
         const bool cameraGroundChanged =
@@ -871,6 +980,13 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                // is needed here.
                << ",\"exaggeration\":" << (traceTerrain ? traceTerrain->getExaggeration() : 0.0f)
                << ",\"gestureInProgress\":" << (transformState.isGestureInProgress() ? "true" : "false")
+               << ",\"forwardRiseM\":";
+            if (traceCameraGroundRise) {
+                os << *traceCameraGroundRise;
+            } else {
+                os << "null";
+            }
+            os << ",\"cameraAltitudeM\":" << transformState.getCameraAltitudeMeters()
                << ",\"terrain\":" << (traceTerrain ? "true" : "false") << ",\"center\":{\"m\":"
                << centerProbe.meters << ",\"demZ\":" << static_cast<int>(centerProbe.demZ)
                << ",\"demX\":" << centerProbe.demX << ",\"demY\":" << centerProbe.demY

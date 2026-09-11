@@ -257,6 +257,13 @@
         "uses_ubos": true
     },
     {
+        "name": "TerrainContourShader",
+        "header": "terrain_contour",
+        "glsl_vert": "terrain_contour.vertex.glsl",
+        "glsl_frag": "terrain_contour.fragment.glsl",
+        "uses_ubos": true
+    },
+    {
         "name": "WideVectorShader",
         "header": "wide_vector",
         "glsl_vert": "_empty.glsl",

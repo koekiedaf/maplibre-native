@@ -21,6 +21,13 @@ delete styleSpec.layer.type.values["terrain-line"];
 delete styleSpec["layout_terrain-line"];
 delete styleSpec["paint_terrain-line"];
 
+// DuckMaps fork only, task 2.4a: terrain-contour has no Objective-C/Swift peer class either,
+// same reasoning as terrain-line above - registered addLayerTypeCoreOnly in
+// MLNStyleLayerManager.mm.
+delete styleSpec.layer.type.values["terrain-contour"];
+delete styleSpec["layout_terrain-contour"];
+delete styleSpec["paint_terrain-contour"];
+
 import cocoaConventions from './style-spec-cocoa-conventions-v8.json' with { type: "json" };
 import styleSpecOverrides from './style-spec-overrides-v8.json' with { type: "json" };
 

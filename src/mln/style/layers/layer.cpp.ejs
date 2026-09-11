@@ -97,6 +97,9 @@ layerCapabilities['line']           = layerCapabilities['fill'];
 // RenderPass::Pass3D (fill-extrusion/heatmap's own render-order pass), unrelated to terrain
 // elevation - circle and symbol are elevated (renderToTerrain=false) without it either.
 layerCapabilities['terrain-line']   = layerCapabilities['line'];
+// DuckMaps fork only, task 2.4a: terrain-contour has no source and no bucket/geometry of its
+// own (it reuses RenderTerrain's own mesh) - same capability shape as background.
+layerCapabilities['terrain-contour'] = defaults.finalize();
 layerCapabilities['heatmap']        = defaults.require('Source')
                                               .require('Pass3D')
                                               .set('TileKind', 'Geometry')
@@ -124,7 +127,7 @@ const LayerTypeInfo* <%- camelize(type) %>Layer::Impl::staticTypeInfo() noexcept
     return &typeInfo;
 }
 
-<% if ((type === 'background') || (type === 'location-indicator')) { -%>
+<% if ((type === 'background') || (type === 'location-indicator') || (type === 'terrain-contour')) { -%>
 <%- camelize(type) %>Layer::<%- camelize(type) %>Layer(const std::string& layerID)
     : Layer(makeMutable<Impl>(layerID, std::string())) {
 }

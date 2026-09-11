@@ -213,6 +213,22 @@ public:
     const std::array<float, 4>& getDEMUnpackVector() const { return demUnpackVector; }
 
     /**
+     * @brief DuckMaps fork only, task 2.4a: the tile ids RenderTerrain currently has a terrain
+     * drawable for (the keys of tilesWithDrawables, equivalently of drawableDemCoords) - the
+     * cover terrain-contour follows, one of its own drawables per tile here, since it draws over
+     * RenderTerrain's own mesh rather than tracking renderTiles/a source of its own (see
+     * RenderTerrainContourLayer::update).
+     */
+    std::vector<OverscaledTileID> getTilesWithDrawables() const {
+        std::vector<OverscaledTileID> tileIDs;
+        tileIDs.reserve(tilesWithDrawables.size());
+        for (const auto& entry : tilesWithDrawables) {
+            tileIDs.push_back(entry.first);
+        }
+        return tileIDs;
+    }
+
+    /**
      * @brief {scale, x offset, y offset, DEM dim} mapping a terrain drawable's
      * tile-local position (0..EXTENT) into its bound DEM texture's normalized
      * space, for the shader's get_elevation() (see the demCoords built in update)

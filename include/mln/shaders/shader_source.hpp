@@ -46,6 +46,7 @@ enum class BuiltIn {
     TerrainShader,
     TerrainDepthShader,
     TerrainLineShader,
+    TerrainContourShader,
     WideVectorShader
 };
 

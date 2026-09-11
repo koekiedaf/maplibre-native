@@ -15,6 +15,7 @@
 #import "MLNCustomDrawableStyleLayer_Private.h"
 
 #include <mln/layermanager/terrain_line_layer_factory.hpp>
+#include <mln/layermanager/terrain_contour_layer_factory.hpp>
 
 #include <vector>
 
@@ -87,6 +88,11 @@ LayerManagerDarwin::LayerManagerDarwin() {
   // the task's final report), so style JSON parses and renders terrain-line but Swift/ObjC
   // cannot find or mutate the layer through MLNStyle yet (task 2.5 will need to add one).
   addLayerTypeCoreOnly(std::make_unique<TerrainLineLayerFactory>());
+
+  // DuckMaps fork only, task 2.4a: same reasoning as terrain-line above - no Objective-C/Swift
+  // peer class yet, style JSON parses and renders terrain-contour but Swift/ObjC cannot find or
+  // mutate the layer through MLNStyle yet.
+  addLayerTypeCoreOnly(std::make_unique<TerrainContourLayerFactory>());
 }
 
 LayerManagerDarwin::~LayerManagerDarwin() = default;

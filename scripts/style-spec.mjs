@@ -350,4 +350,159 @@ modifiedReferenceSpec["paint_terrain-line"] = {
   }
 };
 
+// DuckMaps fork only, task 2.4a: a contour-line layer computed per-fragment from the terrain
+// DEM itself, drawn over RenderTerrain's own mesh (renderToTerrain=false, real 3D world space,
+// never draped) - ported from the web engine's contours3d.js (see
+// container/server/app/map/assets/contours3d.js and
+// docs/plans/2026-09-11-engine-layer-plumbing.md). Like background, this layer has NO source
+// and NO bucket/geometry of its own: it reuses RenderTerrain::getMesh()'s shared vertex/index
+// buffers directly, one drawable per tile RenderTerrain already has a terrain drawable for. All
+// ten paint properties are plain PropertyValue<T> (zoom functions allowed, never data-driven -
+// there is no per-feature geometry to drive them from).
+modifiedReferenceSpec.layer.type.values["terrain-contour"] = {
+  "doc": "Contour lines computed per-fragment from the terrain DEM, drawn in real 3D world space on the terrain surface, DuckMaps fork only."
+};
+
+modifiedReferenceSpec["layout_terrain-contour"] = {
+  "visibility": {
+      "type": "enum",
+      "values": {
+        "visible": { "doc": "The layer is shown." },
+        "none": { "doc": "The layer is not shown." }
+      },
+      "default": "visible",
+      "doc": "Whether this layer is displayed.",
+      "property-type": "constant"
+  }
+};
+
+modifiedReferenceSpec["paint_terrain-contour"] = {
+  "terrain-contour-minor-color": {
+      "type": "color",
+      "default": "hsl(36, 45%, 60%)",
+      "transition": true,
+      "doc": "Colour of the minor contour lines.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "terrain-contour-index-color": {
+      "type": "color",
+      "default": "hsl(31, 41%, 65%)",
+      "transition": true,
+      "doc": "Colour of the index contour lines.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "terrain-contour-minor-opacity": {
+      "type": "number",
+      "default": 1,
+      "minimum": 0,
+      "maximum": 1,
+      "transition": true,
+      "doc": "Alpha multiplier for the minor contour lines.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "terrain-contour-index-opacity": {
+      "type": "number",
+      "default": 1,
+      "minimum": 0,
+      "maximum": 1,
+      "transition": true,
+      "doc": "Alpha multiplier for the index contour lines.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "terrain-contour-minor-interval": {
+      "type": "number",
+      "default": 20,
+      "minimum": 0,
+      "units": "meters",
+      "transition": false,
+      "doc": "Vertical interval between minor contour lines, in metres. 0 disables the minor lines.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "terrain-contour-index-interval": {
+      "type": "number",
+      "default": 100,
+      "minimum": 0,
+      "units": "meters",
+      "transition": false,
+      "doc": "Vertical interval between index contour lines, in metres. 0 disables the index lines.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "terrain-contour-minor-width": {
+      "type": "number",
+      "default": 1.3,
+      "minimum": 0,
+      "units": "pixels",
+      "transition": false,
+      "doc": "Half-width of the minor contour lines, in raw pixels at a reference render ratio of 2 (see terrain-contour-index-width and the tweaker's pixelRatio/2 scale).",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "terrain-contour-index-width": {
+      "type": "number",
+      "default": 2.1,
+      "minimum": 0,
+      "units": "pixels",
+      "transition": false,
+      "doc": "Half-width of the index contour lines, in raw pixels at a reference render ratio of 2.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "terrain-contour-fade-lo": {
+      "type": "number",
+      "default": 0.6,
+      "minimum": 0,
+      "units": "pixels",
+      "transition": false,
+      "doc": "On-screen line spacing, in pixels at a reference render ratio of 2, below which a contour family is fully faded out.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "terrain-contour-fade-hi": {
+      "type": "number",
+      "default": 2.2,
+      "minimum": 0,
+      "units": "pixels",
+      "transition": false,
+      "doc": "On-screen line spacing, in pixels at a reference render ratio of 2, above which a contour family is fully visible.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  }
+};
+
 export default modifiedReferenceSpec;

@@ -3,18 +3,16 @@
 // width/caps via reference w, the AA edge feather, colour, opacity, the dash discard, the rail
 // offset and the depth bias. Left out, deferred to 2.2b: the terrain depth-texture occlusion
 // test, ghosting, distance fade, every debug early-out. No depth texture is bound here.
-layout (std140) uniform TerrainLineDrawableUBO {
-    highp mat4 u_matrix;
-    highp vec4 u_dem_coords;
-    highp vec4 u_dem_unpack;
-    highp float u_dem_dim;
-    highp float u_dem_exaggeration;
-    lowp float u_dem_enabled;
-    highp float u_reference_w;
+// Fragment-only tile props (task 2.2c): dash_period/dash_on used to live in
+// TerrainLineDrawableUBO below, but the Metal backend binds that reserved id to the vertex stage
+// only (see include/mln/shaders/mtl/terrain_line.hpp's TerrainLineDrawableUBO comment) - so the
+// fragment shader now reads them from this separate block instead, filled in lockstep by
+// TerrainLineLayerTweaker::execute.
+layout (std140) uniform TerrainLineTilePropsUBO {
     highp float u_dash_period;
     highp float u_dash_on;
-    lowp float drawable_pad1;
-    lowp float drawable_pad2;
+    lowp float tileprops_pad1;
+    lowp float tileprops_pad2;
 };
 
 layout (std140) uniform TerrainLineEvaluatedPropsUBO {

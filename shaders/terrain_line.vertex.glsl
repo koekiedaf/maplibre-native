@@ -21,6 +21,12 @@ layout (std140) uniform GlobalPaintParamsUBO {
     highp vec4 u_drape_tile;
 };
 
+// Vertex-only. Task 2.2c: dash_period/dash_on moved out of this block into
+// TerrainLineTilePropsUBO (declared in the fragment shader only) - see
+// include/mln/shaders/mtl/terrain_line.hpp's TerrainLineDrawableUBO comment for why the Metal
+// fragment stage could not read them from here, which is the actual reason for the split. GL
+// does not have that stage-binding restriction, but the tweaker that fills these buffers is
+// shared across backends, so both backends' declarations follow the same struct layout.
 layout (std140) uniform TerrainLineDrawableUBO {
     highp mat4 u_matrix;
     // 3D terrain elevation; see RenderTerrain::getTerrainData.
@@ -32,12 +38,6 @@ layout (std140) uniform TerrainLineDrawableUBO {
     // Clip-space w at the ground under the map centre - see
     // TerrainLineLayerTweaker::computeReferenceClipW.
     highp float u_reference_w;
-    // Dash period/on-fraction for this drawable's tile, already converted to this tile's
-    // EXTENT-unit distance space - see TerrainLineLayerTweaker's dash conversion comment.
-    highp float u_dash_period;
-    highp float u_dash_on;
-    lowp float drawable_pad1;
-    lowp float drawable_pad2;
 };
 
 uniform sampler2D u_dem;

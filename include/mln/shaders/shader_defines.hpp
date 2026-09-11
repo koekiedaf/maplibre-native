@@ -79,11 +79,18 @@ enum {
     terrainLayerSSBOCount = drawableReservedUBOCount
 };
 
-// terrain-line (DuckMaps fork): elevated ribbon layer, one shared drawable UBO, no per-tile
-// props SSBO (no data-driven properties to carry per-vertex - see
-// docs/plans/2026-09-11-engine-layer-plumbing.md).
+// terrain-line (DuckMaps fork): elevated ribbon layer. Vertex-only drawable UBO (matrix + dem_*
+// + reference_w) plus a fragment-only tile-props UBO (dash_period + dash_on, task 2.2c) - the
+// same split terrain-contour uses (terrain_contour_layer_ubo.hpp) and for the identical reason:
+// mtl::UniformBufferArray::bindMtl (src/mln/mtl/uniform_buffer.cpp:39-51) binds a buffer at
+// idDrawableReservedVertexOnlyUBO to the VERTEX stage only, so a fragment shader reading
+// idTerrainLineDrawableUBO directly (as this shader used to for dash_period/dash_on) saw an
+// unbound Metal argument-table slot and read zeros - dash_period reading 0 means the dash test
+// (`dash_period > 0.0 && ...`) never fires, i.e. every dasharray renders solid. See
+// TerrainLineDrawableUBO/TerrainLineTilePropsUBO's own comments in terrain_line_layer_ubo.hpp.
 enum {
-    idTerrainLineDrawableUBO = idDrawableReservedVertexOnlyUBO, // SSBO
+    idTerrainLineDrawableUBO = idDrawableReservedVertexOnlyUBO,    // SSBO
+    idTerrainLineTilePropsUBO = idDrawableReservedFragmentOnlyUBO, // SSBO
     terrainLineLayerSSBOCount = drawableReservedUBOCount
 };
 

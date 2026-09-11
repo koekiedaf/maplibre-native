@@ -194,6 +194,7 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
 #if MLN_UBO_CONSOLIDATION
     int i = 0;
     std::vector<TerrainLineDrawableUBO> drawableUBOVector(layerGroup.getDrawableCount());
+    std::vector<TerrainLineTilePropsUBO> tilePropsUBOVector(layerGroup.getDrawableCount());
 #endif
 
     visitLayerGroupDrawables(layerGroup, [&](gfx::Drawable& drawable) {
@@ -254,6 +255,14 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
             .dem_exaggeration = parameters.terrain ? parameters.terrain->getExaggeration() : 0.0f,
             .dem_enabled = terrainData ? 1.0f : 0.0f,
             .reference_w = referenceW,
+        };
+        // Fragment-only tile props (dash_period/dash_on) - see TerrainLineDrawableUBO's comment
+        // in terrain_line_layer_ubo.hpp for why the fragment stage cannot read the struct above.
+#if MLN_UBO_CONSOLIDATION
+        tilePropsUBOVector[i] = {
+#else
+        const TerrainLineTilePropsUBO tilePropsUBO = {
+#endif
             .dash_period = dashPeriod.periodExtent,
             .dash_on = dashPeriod.on,
             .pad1 = 0,
@@ -264,6 +273,7 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
 #else
         auto& drawableUniforms = drawable.mutableUniformBuffers();
         drawableUniforms.createOrUpdate(idTerrainLineDrawableUBO, &drawableUBO, context);
+        drawableUniforms.createOrUpdate(idTerrainLineTilePropsUBO, &tilePropsUBO, context);
 #endif
     });
 
@@ -276,6 +286,15 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
         drawableUniformBuffer->update(drawableUBOVector.data(), drawableUBOVectorSize);
     }
     layerUniforms.set(idTerrainLineDrawableUBO, drawableUniformBuffer);
+
+    const size_t tilePropsUBOVectorSize = sizeof(TerrainLineTilePropsUBO) * tilePropsUBOVector.size();
+    if (!tilePropsUniformBuffer || tilePropsUniformBuffer->getSize() < tilePropsUBOVectorSize) {
+        tilePropsUniformBuffer = context.createUniformBuffer(
+            tilePropsUBOVector.data(), tilePropsUBOVectorSize, false, true);
+    } else {
+        tilePropsUniformBuffer->update(tilePropsUBOVector.data(), tilePropsUBOVectorSize);
+    }
+    layerUniforms.set(idTerrainLineTilePropsUBO, tilePropsUniformBuffer);
 #endif
 }
 

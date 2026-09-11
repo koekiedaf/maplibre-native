@@ -5,10 +5,23 @@
 namespace mln {
 namespace shaders {
 
-// Per-tile/per-drawable data for the terrain-line ribbon shader. Filled by
+// Per-tile/per-drawable VERTEX-ONLY data for the terrain-line ribbon shader. Filled by
 // TerrainLineLayerTweaker::execute() every frame, mirroring
 // symbol_layer_tweaker.cpp:170-234's dem_* binding pattern (see
 // docs/plans/2026-09-11-engine-layer-plumbing.md section A2).
+//
+// Task 2.2c: this struct is read ONLY by the vertex stage. It used to also carry dash_period/
+// dash_on, which the FRAGMENT shader read straight out of this same buffer at
+// idTerrainLineDrawableUBO == idDrawableReservedVertexOnlyUBO - but
+// mtl::UniformBufferArray::bindMtl (src/mln/mtl/uniform_buffer.cpp:39-51) binds a buffer at that
+// reserved id to the VERTEX stage only (by design: see hillshade/symbol/line/terrain-contour,
+// which all keep this exact vertex-only/fragment-only split). The fragment stage therefore read
+// an unbound Metal argument-table slot for dash_period/dash_on - always 0.0 - so the shader's own
+// `dash_period > 0.0` dash test never fired and every dasharray rendered solid, regardless of
+// value. Those two fields now live in TerrainLineTilePropsUBO below, bound at
+// idDrawableReservedFragmentOnlyUBO and filled in lockstep with this struct (same index i, same
+// tile, every frame) by the tweaker - the same fix terrain-contour's TilePropsUBO split applied
+// for dem_enabled/reference_w in task 2.4b.
 struct alignas(16) TerrainLineDrawableUBO {
     /*   0 */ std::array<float, 4 * 4> matrix;
 
@@ -25,20 +38,29 @@ struct alignas(16) TerrainLineDrawableUBO {
     // (TerrainLineLayerTweaker::computeReferenceClipW, mirroring the web engine's
     // referenceClipW(), routes3d.js:1223-1231). Scaling u_half_px by (this / this vertex's own
     // w) is what keeps the ribbon's on-screen width constant at the map centre while it grows or
-    // shrinks with depth away from it, like a real object would as the camera tilts.
+    // shrinks with depth away from it, like a real object would as the camera tilts. Read by the
+    // vertex stage only.
     /* 108 */ float reference_w;
+    /* 112 */
+};
+static_assert(sizeof(TerrainLineDrawableUBO) == 7 * 16);
 
+// Fragment-only per-tile data - see TerrainLineDrawableUBO's comment above for why this is a
+// separate struct/buffer rather than the fragment stage reading that one. Bound at
+// idDrawableReservedFragmentOnlyUBO, filled in lockstep with TerrainLineDrawableUBO (same index
+// i, same tile, every frame) by TerrainLineLayerTweaker::execute.
+struct alignas(16) TerrainLineTilePropsUBO {
     // Dash period/on-fraction for THIS drawable's tile, already converted from the paint
     // property's width-units dasharray into this tile's EXTENT-unit distance space - see
     // TerrainLineLayerTweaker::computeDashPeriodExtent's comment for the exact conversion.
     // dash_period == 0 means "no dashing, draw solid" (also the default: an empty dasharray).
-    /* 112 */ float dash_period;
-    /* 116 */ float dash_on;
-    /* 120 */ float pad1;
-    /* 124 */ float pad2;
-    /* 128 */
+    /*  0 */ float dash_period;
+    /*  4 */ float dash_on;
+    /*  8 */ float pad1;
+    /* 12 */ float pad2;
+    /* 16 */
 };
-static_assert(sizeof(TerrainLineDrawableUBO) == 8 * 16);
+static_assert(sizeof(TerrainLineTilePropsUBO) == 1 * 16);
 
 /// Evaluated (per-layer, zoom-evaluated) properties that do not depend on the tile. All nine
 /// paint properties are non-data-driven (PropertyValue<T>, never DataDrivenPropertyValue<T>), so

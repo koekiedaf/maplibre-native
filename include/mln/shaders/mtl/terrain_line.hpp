@@ -30,10 +30,15 @@ constexpr auto terrainLineShaderPrelude = R"(
 
 enum {
     idTerrainLineDrawableUBO = idDrawableReservedVertexOnlyUBO,
+    idTerrainLineTilePropsUBO = idDrawableReservedFragmentOnlyUBO,
     idTerrainLineEvaluatedPropsUBO = drawableReservedUBOCount,
     terrainLineUBOCount
 };
 
+// Vertex-only. See terrain_line_layer_ubo.hpp's comment on TerrainLineDrawableUBO for why
+// dash_period/dash_on were moved out of this struct into TerrainLineTilePropsUBO below - the
+// fragment shader used to read them straight out of this buffer, which is bound to the vertex
+// stage only on Metal.
 struct alignas(16) TerrainLineDrawableUBO {
     /*   0 */ float4x4 matrix;
 
@@ -44,14 +49,20 @@ struct alignas(16) TerrainLineDrawableUBO {
     /* 104 */ float dem_enabled;
 
     /* 108 */ float reference_w;
-
-    /* 112 */ float dash_period;
-    /* 116 */ float dash_on;
-    /* 120 */ float pad1;
-    /* 124 */ float pad2;
-    /* 128 */
+    /* 112 */
 };
-static_assert(sizeof(TerrainLineDrawableUBO) == 8 * 16, "wrong size");
+static_assert(sizeof(TerrainLineDrawableUBO) == 7 * 16, "wrong size");
+
+// Fragment-only, bound at idDrawableReservedFragmentOnlyUBO. Filled in lockstep with
+// TerrainLineDrawableUBO (same index, same tile, every frame).
+struct alignas(16) TerrainLineTilePropsUBO {
+    /*  0 */ float dash_period;
+    /*  4 */ float dash_on;
+    /*  8 */ float pad1;
+    /* 12 */ float pad2;
+    /* 16 */
+};
+static_assert(sizeof(TerrainLineTilePropsUBO) == 1 * 16, "wrong size");
 
 struct alignas(16) TerrainLineEvaluatedPropsUBO {
     /*  0 */ float4 color;
@@ -174,16 +185,16 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
 
 half4 fragment fragmentMain(FragmentStage in [[stage_in]],
                             device const uint32_t& uboIndex [[buffer(idGlobalUBOIndex)]],
-                            device const TerrainLineDrawableUBO* drawableVector [[buffer(idTerrainLineDrawableUBO)]],
+                            device const TerrainLineTilePropsUBO* tilePropsVector [[buffer(idTerrainLineTilePropsUBO)]],
                             device const TerrainLineEvaluatedPropsUBO& props [[buffer(idTerrainLineEvaluatedPropsUBO)]]) {
 #if defined(OVERDRAW_INSPECTOR)
     return half4(1.0);
 #endif
 
-    device const TerrainLineDrawableUBO& drawable = drawableVector[uboIndex];
+    device const TerrainLineTilePropsUBO& tileProps = tilePropsVector[uboIndex];
 
     // dash_period == 0 (an empty/undefined dasharray) means "draw solid".
-    if (drawable.dash_period > 0.0 && fract(in.dist / drawable.dash_period) > drawable.dash_on) {
+    if (tileProps.dash_period > 0.0 && fract(in.dist / tileProps.dash_period) > tileProps.dash_on) {
         discard_fragment();
     }
 

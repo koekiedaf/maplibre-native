@@ -20,6 +20,11 @@ protected:
 
 #if MLN_UBO_CONSOLIDATION
     gfx::UniformBufferPtr drawableUniformBuffer;
+    // Fragment-only per-tile data (dash_period/dash_on), bound at
+    // idDrawableReservedFragmentOnlyUBO - see TerrainLineDrawableUBO's comment in
+    // terrain_line_layer_ubo.hpp for why this is a separate buffer from drawableUniformBuffer
+    // rather than the fragment stage reading that one.
+    gfx::UniformBufferPtr tilePropsUniformBuffer;
 #endif
 };
 

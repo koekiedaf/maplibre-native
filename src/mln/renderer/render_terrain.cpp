@@ -96,13 +96,24 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     // DEM height rather than the z=0 plane (as util::tileCover / gl-js do).
     DEMElevationProvider elevationProvider(demSource, getExaggeration());
 
-    // Cover at the tile size the DEM source selects tiles with, so the mesh lands on the zoom its
-    // DEM tiles are on. Meshing shallower than the DEM leaves its tiles descendants, which the
-    // per-tile lookup cannot match, so the mesh renders flat off the placeholder; it also
-    // undersamples the DEM, aliasing the relief into waves on the fixed 128x128 mesh. Still the
-    // elevation-aware ideal cover from the view, not the DEM's loaded tile set.
+    // Cover at the tile size the DEM source selects tiles with, so the per-tile DEM lookup below
+    // has a tile size to compute overscaledZoom from. This no longer bounds how deep the cover
+    // goes (see zoomRange just below): the mesh and its drape target resolve to the VIEW, same as
+    // maplibre-gl-js's terrain tile manager (`this.minzoom=0, this.maxzoom=22` in its coveringTiles
+    // call, independent of the DEM source's own maxzoom); only the DEM sample resolves to whatever
+    // level the DEM actually has, via the closest loaded ancestor per tile (demSubTileOffset,
+    // below). Meshing shallower than the DEM leaves its tiles descendants, which the per-tile
+    // lookup cannot match, so the mesh renders flat off the placeholder; it also undersamples the
+    // DEM, aliasing the relief into waves on the fixed 128x128 mesh - so the cover must never go
+    // shallower than the DEM, but going deeper than it is exactly the near-field-under-tilt case
+    // and is what this range now allows.
     const uint16_t terrainCoverTileSize = demSource->getTileSize();
-    const Range<uint8_t> zoomRange{0, demSource->getMaxZoom()};
+    // 22, not demSource->getMaxZoom(): maplibre-gl-js's terrain tile manager hardcodes this same
+    // 22 as its cover's maxzoom (util::DEFAULT_MAX_ZOOM matches it), not the DEM source's own
+    // maxzoom, which is exactly why its near field under tilt does not go soft the way ours did.
+    // The DEM source's maxzoom still bounds the DEM/drape sampling (getTerrainData's ancestor
+    // fallback), just not the mesh cover's own zoom range.
+    const Range<uint8_t> zoomRange{0, util::DEFAULT_MAX_ZOOM};
 
     // LOD parameters from the frame drive the same near-high/far-low zoom
     // selection every other source uses, so the near field drapes at a higher

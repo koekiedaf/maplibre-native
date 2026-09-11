@@ -290,6 +290,19 @@ const MLNExceptionName MLNRedundantSourceIdentifierException =
       [NSMutableArray arrayWithCapacity:layers.size()];
   for (auto layer : layers) {
     MLNStyleLayer *styleLayer = [self layerFromMBGLLayer:layer];
+    // A core-only layer type (registered with addLayerTypeCoreOnly, no Objective-C peer
+    // factory) makes layerFromMBGLLayer: return nil. NSMutableArray cannot hold nil
+    // (addObject:nil throws NSInvalidArgumentException), and inserting a placeholder would
+    // make -layers lie about what identifiers exist, so we skip the entry entirely: callers
+    // of this property see every layer they can address through MLNStyleLayer, and nothing
+    // else. Logged once per occurrence at debug level rather than every frame/build, since a
+    // style with such a layer will otherwise never see this line.
+    if (!styleLayer) {
+      MLNLogDebug(@"Skipping style layer \"%s\" (type %s) with no Objective-C peer",
+                  layer->getID().c_str(),
+                  layer->getTypeInfo()->type);
+      continue;
+    }
     [styleLayers addObject:styleLayer];
   }
   return styleLayers;
@@ -328,6 +341,17 @@ const MLNExceptionName MLNRedundantSourceIdentifierException =
   }
   NSUInteger i = 0;
   for (auto layer = *(layers.rbegin() + inRange.location); i < inRange.length; ++layer, ++i) {
+    // Unlike -layers, this fills a caller-owned C array whose length is fixed at
+    // inRange.length before we are called (it backs KVC's indexed to-many accessor
+    // machinery, e.g. mutableArrayValueForKey: fast enumeration). We cannot "skip" a
+    // core-only layer with no peer the way -layers does: the buffer has exactly
+    // inRange.length slots and the caller expects every one of them written, so leaving
+    // one empty would leave a slot holding whatever garbage was already on the stack/heap
+    // there, and that garbage pointer would later be retained/read as though it were a
+    // valid MLNStyleLayer - memory corruption, not a safe no-op. Writing nil is safe: nil
+    // is a legitimate object pointer, ObjC message sends to it are no-ops, and this matches
+    // the existing contract of -objectInLayersAtIndex: and -layerWithIdentifier:, which
+    // already return nil for exactly this case.
     MLNStyleLayer *styleLayer = [self layerFromMBGLLayer:layer];
     buffer[i] = styleLayer;
   }

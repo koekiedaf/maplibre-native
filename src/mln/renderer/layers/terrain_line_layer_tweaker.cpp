@@ -5,9 +5,12 @@
 #include <mln/map/transform_state.hpp>
 #include <mln/renderer/layer_group.hpp>
 #include <mln/renderer/paint_parameters.hpp>
+#include <mln/renderer/property_evaluation_parameters.hpp>
+#include <mln/renderer/property_evaluator.hpp>
 #include <mln/renderer/render_terrain.hpp>
 #include <mln/shaders/shader_source.hpp>
 #include <mln/shaders/terrain_line_layer_ubo.hpp>
+#include <mln/style/layers/terrain_line_layer_impl.hpp>
 #include <mln/style/layers/terrain_line_layer_properties.hpp>
 #include <mln/util/convert.hpp>
 #include <mln/util/geo.hpp>
@@ -51,43 +54,73 @@ float computeReferenceClipW(const PaintParameters& parameters) {
     return static_cast<float>(clip[3]);
 }
 
-// Converts the evaluated terrain-line-dasharray + terrain-line-width paint properties into a
-// dash period expressed in THIS TILE's EXTENT-unit distance space, matching a_dist's own units
-// (see TerrainLineLayout, which accumulates distance directly in EXTENT-unit coordinate deltas).
+// The web's DASH_ANCHOR_ZOOM (routes3d.js:1171, groundDashPeriod at :1174-1187): the dash
+// pattern's period is computed from the line width evaluated at this FIXED zoom, never at the
+// zoom the camera happens to be at, so the dash never re-subdivides or rescales while zooming.
+constexpr double DASH_ANCHOR_ZOOM = 15.0;
+
+// Evaluates terrain-line-width at the fixed DASH_ANCHOR_ZOOM rather than the current frame zoom,
+// for the dash calculation only (the width used for u_half_px stays at the frame zoom - see
+// halfPx in execute()). This is the same two-step PropertyValue evaluation the style engine
+// itself uses to turn an unevaluated property into a zoom-baked one (compare
+// RenderTerrainLineLayer::evaluate(), which does the same thing at the frame zoom via
+// unevaluated.evaluate(...)): PropertyEvaluator<float> replays terrain-line-width's raw
+// PropertyValue (from the layer's own Impl, not the already-frame-baked `evaluated`) against an
+// arbitrary PropertyEvaluationParameters zoom.
+float evaluateWidthAtAnchorZoom(const TerrainLineLayerProperties& properties) {
+    const PropertyEvaluationParameters anchorParameters(static_cast<float>(DASH_ANCHOR_ZOOM));
+    const PropertyEvaluator<float> evaluator(anchorParameters, TerrainLineWidth::defaultValue());
+    return properties.layerImpl().paint.get<TerrainLineWidth>().value.evaluate(evaluator);
+}
+
+// Converts the terrain-line-dasharray + terrain-line-width paint properties into a dash period
+// expressed in THIS TILE's EXTENT-unit distance space, matching a_dist's own units (see
+// TerrainLineLayout, which accumulates distance directly in EXTENT-unit coordinate deltas).
 //
 // The web's groundDashPeriod (routes3d.js:1174-1187) computes a period in *normalised mercator
 // world units* - a fraction of the whole world circumference, independent of zoom - because its
-// own a_dist is mercator. Ours is EXTENT units for one specific tile at zoom tileZ, and a tile at
-// zoom z spans 1/2^z of the normalised world, so: period_extent = period_mercator * 2^tileZ *
-// EXTENT. Getting this factor right matters: it is invisible at the zoom the ribbon happened to
-// be authored/tested at and wrong everywhere else.
+// own a_dist is mercator, and it anchors the width lookup at the fixed DASH_ANCHOR_ZOOM (15)
+// rather than the live camera zoom so the pattern never re-subdivides while zooming. Ours is
+// EXTENT units for one specific tile at zoom tileZ, and a tile at zoom z spans 1/2^z of the
+// normalised world, so a second, DIFFERENT exponent is needed to place the period back into that
+// tile's own EXTENT space. The two exponents must not be collapsed into one - they answer two
+// unrelated questions ("how wide is the world at the anchor zoom, in pixels" vs. "how much of the
+// normalised world does this tile's own zoom cover"):
 //
-// One deliberate simplification versus the web: groundDashPeriod evaluates width at a *fixed*
-// anchor zoom (DASH_ANCHOR_ZOOM = 15) so the dash pattern never subdivides or rescales as the
-// camera zooms. We evaluate width at the CURRENT frame zoom instead (the same width already
-// evaluated for u_half_px), which is simpler but means the dash pattern is not zoom-stable the
-// way the web's is. Flagged here rather than silently matched, since it is a real behavioural
-// difference, not just an implementation detail.
+//   widthPxAtZoom15 = terrain-line-width evaluated at the fixed anchor zoom 15 (not tileID.z,
+//                     not the frame zoom) - see evaluateWidthAtAnchorZoom() above.
+//   period_mercator = (dasharray[0] + dasharray[1]) * widthPxAtZoom15 / (tileSize * 2^15)
+//                     -- the ANCHOR zoom's world pixel span (util::tileSize_D * 2^15, the web's
+//                     WORLD_PX * 2^DASH_ANCHOR_ZOOM) turns the dash length in device pixels into
+//                     a fraction of the whole normalised mercator world, fixed regardless of the
+//                     tile or the live camera zoom.
+//   period_extent   = period_mercator * 2^tileZ * EXTENT
+//                     -- tileZ is THIS TILE's own zoom (tileID.z, varies per tile/frame): a tile
+//                     at zoom z spans 1/2^z of the normalised world, so multiplying the
+//                     world-fraction period by 2^tileZ * EXTENT converts it into this tile's own
+//                     EXTENT-unit distance space, matching a_dist.
+//
+// Getting the anchor-vs-tile distinction right matters: collapsing the two exponents into one
+// (using 2^tileZ for both, as an earlier version of this function did) makes the pattern
+// invisible at whichever zoom it happened to be authored/tested at and wrong everywhere else -
+// the dash silently resubdivides or rescales as the camera zooms.
 struct DashPeriod {
     float periodExtent = 0.0f;
     float on = 1.0f;
 };
 
 DashPeriod computeDashPeriodExtent(const std::array<float, 2>& dasharray,
-                                   float widthPx,
+                                   float widthPxAtAnchorZoom,
                                    const CanonicalTileID& tileID) {
     const float units = dasharray[0] + dasharray[1];
     if (!(units > 0.0f)) {
         return {};
     }
     const float on = dasharray[0] / units;
-    // Normalised-mercator-world-unit period at the current zoom: `units` (in line-width
-    // multiples) * widthPx gives a dash length in device pixels; dividing by the world's total
-    // pixel span at this zoom (util::tileSize_D * 2^zoom, the same WORLD_PX * 2^zoom the web
-    // uses) turns that into a fraction of the whole world - independent of which tile it lands
-    // in, until the next step converts it back into this one tile's own EXTENT units.
-    const double worldPxAtZoom = util::tileSize_D * std::exp2(static_cast<double>(tileID.z));
-    const double periodMercator = worldPxAtZoom > 0.0 ? (static_cast<double>(units) * widthPx) / worldPxAtZoom : 0.0;
+    const double worldPxAtAnchorZoom = util::tileSize_D * std::exp2(DASH_ANCHOR_ZOOM);
+    const double periodMercator = worldPxAtAnchorZoom > 0.0
+                                       ? (static_cast<double>(units) * widthPxAtAnchorZoom) / worldPxAtAnchorZoom
+                                       : 0.0;
     const double periodExtent = periodMercator * std::exp2(static_cast<double>(tileID.z)) * util::EXTENT;
     return {static_cast<float>(periodExtent), on};
 }
@@ -100,7 +133,8 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
     }
 
     auto& context = parameters.context;
-    const auto& evaluated = static_cast<const TerrainLineLayerProperties&>(*evaluatedProperties).evaluated;
+    const auto& properties = static_cast<const TerrainLineLayerProperties&>(*evaluatedProperties);
+    const auto& evaluated = properties.evaluated;
 
 #ifndef NDEBUG
     const auto label = layerGroup.getName() + "-update-uniforms";
@@ -113,6 +147,9 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
     const float widthPx = evaluated.get<TerrainLineWidth>();
     const float halfPx = widthPx * parameters.pixelRatio / 2.0f;
     const auto dasharray = evaluated.get<TerrainLineDasharray>();
+    // The dash calculation anchors its width lookup at a fixed zoom (DASH_ANCHOR_ZOOM), never
+    // at the current frame zoom above - see computeDashPeriodExtent()'s comment.
+    const float widthPxAtAnchorZoom = evaluateWidthAtAnchorZoom(properties);
 
     if (!evaluatedPropsUniformBuffer || propertiesUpdated) {
         const TerrainLineEvaluatedPropsUBO evaluatedPropsUBO = {
@@ -183,7 +220,7 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
         // exactly like circle (docs/plans/2026-09-11-engine-layer-plumbing.md A2 point 4).
         drawable.setEnableDepth(!terrainEnabled);
 
-        const auto dashPeriod = computeDashPeriodExtent(dasharray, widthPx, tileID.canonical);
+        const auto dashPeriod = computeDashPeriodExtent(dasharray, widthPxAtAnchorZoom, tileID.canonical);
 
 #if MLN_UBO_CONSOLIDATION
         drawableUBOVector[i] = {

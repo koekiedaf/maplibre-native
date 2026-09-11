@@ -40,6 +40,15 @@ private:
     bool hasTransition() const override;
     bool hasCrossfade() const override;
 
+    // No source (see the class comment): RenderLayer's own default prepare() unconditionally
+    // dereferences LayerPrepareParameters::source (renderTiles = params.source->getRenderTiles()),
+    // which is null for a source-less layer type - RenderOrchestrator::createRenderTree calls
+    // prepare() on every layer before update() ever runs, so left un-overridden this crashes on
+    // the very first frame. RenderBackgroundLayer (the existing no-source precedent) overrides it
+    // for the same reason; this override is a no-op since update() gets its own tile list from
+    // RenderTerrain::getTilesWithDrawables(), not from renderTiles.
+    void prepare(const LayerPrepareParameters&) override;
+
 private:
     // Paint properties
     style::TerrainContourPaintProperties::Unevaluated unevaluated;

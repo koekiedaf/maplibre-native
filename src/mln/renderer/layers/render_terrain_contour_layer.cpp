@@ -75,6 +75,13 @@ bool RenderTerrainContourLayer::hasCrossfade() const {
     return false;
 }
 
+void RenderTerrainContourLayer::prepare(const LayerPrepareParameters&) {
+    // Deliberately does not call RenderLayer::prepare(): its default body unconditionally
+    // dereferences LayerPrepareParameters::source, which is null for this source-less layer
+    // type - see the header comment. update() gets its own tile list from
+    // RenderTerrain::getTilesWithDrawables() instead of renderTiles.
+}
+
 void RenderTerrainContourLayer::update(gfx::ShaderRegistry& shaders,
                                        gfx::Context& context,
                                        const TransformState&,

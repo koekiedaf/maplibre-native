@@ -229,9 +229,27 @@ public:
     // Conversion
     ScreenCoordinate latLngToScreenCoordinate(const LatLng&) const;
     ScreenCoordinate latLngToScreenCoordinate(const LatLng&, vec4&) const;
+    /// Projects a point sitting `elevationMeters` above sea level (3D terrain, exaggeration
+    /// already applied). World z is metres here, not pixels: Camera::getWorldToCamera scales the
+    /// z column by pixelsPerMeter, so metres is what the matrix expects.
+    ScreenCoordinate latLngToScreenCoordinate(const LatLng&, double elevationMeters, vec4&) const;
     LatLng screenCoordinateToLatLng(const ScreenCoordinate&, LatLng::WrapMode = LatLng::Unwrapped) const;
+    /// Unprojects onto the horizontal plane `elevationMeters` above sea level instead of onto sea
+    /// level. Same units as the projection above.
+    LatLng screenCoordinateToLatLng(const ScreenCoordinate&,
+                                    double elevationMeters,
+                                    LatLng::WrapMode = LatLng::Unwrapped) const;
+    /// The plane every camera gesture is solved on: the terrain height under the map centre,
+    /// which `centerClampedToGround` keeps the camera's own orbit plane at. Sea level is the
+    /// wrong plane once terrain is on - the view ray crosses the real surface long before z=0,
+    /// so a sea-level solve grabs a point centerAltitude*tan(pitch) or more beyond the ground
+    /// under the finger and amplifies every pan, pinch and tilt by that much.
+    double getGroundPlaneAltitude() const { return getCenterAltitude(); }
     // Implements mapbox-gl-js pointCoordinate() : MercatorCoordinate.
-    TileCoordinate screenCoordinateToTileCoordinate(const ScreenCoordinate&, uint8_t atZoom) const;
+    // `targetZ` is the world z of the plane to intersect, in metres above sea level.
+    TileCoordinate screenCoordinateToTileCoordinate(const ScreenCoordinate&,
+                                                    uint8_t atZoom,
+                                                    double targetZ = 0.0) const;
 
     double zoomScale(double zoom) const;
     double scaleZoom(double scale) const;

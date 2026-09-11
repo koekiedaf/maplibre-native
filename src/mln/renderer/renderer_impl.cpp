@@ -745,8 +745,14 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
     // DEM, so this is the channel; whether the camera acts on it is the map's call
     // (Map::setCenterClampedToGround). Gated so a still map does not post a message a frame.
     bool centerElevationSettling = false;
-    if (auto* terrain = orchestrator.getRenderTerrain()) {
-        const double centerElevation = terrain->getElevationForLatLng(updateParameters->transformState.getLatLng());
+    {
+        // Terrain switched off (or never on) has to be reported too, as a height of zero: the
+        // camera's centre altitude is sticky, and a centre left lifted over a map that is now
+        // drawn at sea level would keep the camera high and every gesture solved on a plane that
+        // no longer exists. nullptr terrain therefore reports 0 rather than reporting nothing.
+        auto* terrain = orchestrator.getRenderTerrain();
+        const double centerElevation =
+            terrain ? terrain->getElevationForLatLng(updateParameters->transformState.getLatLng()) : 0.0;
         if (std::abs(centerElevation - lastReportedCenterElevation) > 0.25) {
             lastReportedCenterElevation = centerElevation;
             observer->onTerrainCenterElevationChanged(centerElevation);

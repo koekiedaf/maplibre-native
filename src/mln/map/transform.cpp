@@ -424,8 +424,15 @@ void Transform::moveBy(const ScreenCoordinate& offset, const AnimationOptions& a
 
     ScreenCoordinate pointOnScreen = state.getEdgeInsets().getCenter(state.getSize().width, state.getSize().height) -
                                      centerOffset;
+    // Solved on the terrain's ground plane, not sea level. With 3D terrain the camera orbits a
+    // centre `getGroundPlaneAltitude()` metres up, so a sea-level solve would land the new centre
+    // roughly that height times tan(pitch) beyond the ground under the finger and turn a
+    // hundred-point drag into a flight of kilometres. At pitch 0 this plane is exactly the
+    // camera-to-centre distance away, so a drag moves exactly its own pixels of ground.
     // Use unwrapped LatLng to carry information about moveBy direction.
-    easeTo(CameraOptions().withCenter(screenCoordinateToLatLng(pointOnScreen, LatLng::Unwrapped)), animation);
+    easeTo(CameraOptions().withCenter(
+               screenCoordinateToLatLng(pointOnScreen, state.getGroundPlaneAltitude(), LatLng::Unwrapped)),
+           animation);
 }
 
 LatLng Transform::getLatLng(LatLng::WrapMode wrap) const {
@@ -604,7 +611,9 @@ void Transform::startTransition(const CameraOptions& camera,
     LatLng anchorLatLng;
     if (anchor) {
         anchor->y = state.getSize().height - anchor->y;
-        anchorLatLng = state.screenCoordinateToLatLng(*anchor);
+        // Same ground plane TransformState::moveLatLng re-solves the anchor on every frame of
+        // this transition: capture and replay must agree, or a pinch or tilt would walk.
+        anchorLatLng = state.screenCoordinateToLatLng(*anchor, state.getGroundPlaneAltitude());
     }
 
     transitionStart = Clock::now();
@@ -717,6 +726,13 @@ void Transform::setGestureInProgress(bool inProgress) {
 
 // MARK: Conversion and projection
 
+ScreenCoordinate Transform::latLngToScreenCoordinate(const LatLng& latLng, double elevationMeters) const {
+    vec4 p;
+    ScreenCoordinate point = state.latLngToScreenCoordinate(latLng, elevationMeters, p);
+    point.y = state.getSize().height - point.y;
+    return point;
+}
+
 ScreenCoordinate Transform::latLngToScreenCoordinate(const LatLng& latLng) const {
     ScreenCoordinate point = state.latLngToScreenCoordinate(latLng);
     point.y = state.getSize().height - point.y;
@@ -727,6 +743,14 @@ LatLng Transform::screenCoordinateToLatLng(const ScreenCoordinate& point, LatLng
     ScreenCoordinate flippedPoint = point;
     flippedPoint.y = state.getSize().height - flippedPoint.y;
     return state.screenCoordinateToLatLng(flippedPoint, wrapMode);
+}
+
+LatLng Transform::screenCoordinateToLatLng(const ScreenCoordinate& point,
+                                           double elevationMeters,
+                                           LatLng::WrapMode wrapMode) const {
+    ScreenCoordinate flippedPoint = point;
+    flippedPoint.y = state.getSize().height - flippedPoint.y;
+    return state.screenCoordinateToLatLng(flippedPoint, elevationMeters, wrapMode);
 }
 
 double Transform::getMaxPitchForEdgeInsets(const EdgeInsets& insets) const {

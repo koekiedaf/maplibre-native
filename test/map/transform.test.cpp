@@ -5,6 +5,7 @@
 #include <mln/map/transform.hpp>
 #include <mln/math/angles.hpp>
 #include <mln/util/geo.hpp>
+#include <mln/util/projection.hpp>
 #include <mln/util/quaternion.hpp>
 
 #include <numbers>
@@ -1267,4 +1268,82 @@ TEST(Camera, SetOrientationWithRollNoPitch) {
     EXPECT_NEAR(bearing - roll, bearing_, 1.0e-9);
     EXPECT_NEAR(pitch, pitch_, 1.0e-9);
     EXPECT_NEAR(0.0, roll_, 1.0e-9);
+}
+
+// MARK: - Task 2.0: gestures are solved on the terrain's ground plane
+
+namespace {
+
+// Great-circle distance between two camera centres, in metres.
+double groundDistanceM(const LatLng& a, const LatLng& b) {
+    constexpr double earthRadiusM = 6378137.0;
+    const double p1 = util::deg2rad(a.latitude());
+    const double p2 = util::deg2rad(b.latitude());
+    const double dp = p2 - p1;
+    const double dl = util::deg2rad(b.longitude() - a.longitude());
+    const double h = std::sin(dp / 2) * std::sin(dp / 2) +
+                     std::cos(p1) * std::cos(p2) * std::sin(dl / 2) * std::sin(dl / 2);
+    return 2 * earthRadiusM * std::asin(std::min(1.0, std::sqrt(h)));
+}
+
+Transform gavarnieTransform(double pitchDegrees, double centerAltitudeM) {
+    Transform transform;
+    transform.resize({390, 844}); // an iPhone in points
+    transform.jumpTo(CameraOptions()
+                         .withCenter(LatLng{42.696, -0.004})
+                         .withZoom(14.2)
+                         .withPitch(pitchDegrees)
+                         .withCenterAltitude(centerAltitudeM));
+    return transform;
+}
+
+} // namespace
+
+// Raising the whole world by a uniform 1700 m must not change what a gesture does. Before the
+// ground plane existed, the same drag over a 1700 m plateau flew kilometres because the view ray
+// was intersected with sea level, far past the surface the finger was on: David's "the screen
+// jumps around like crazy".
+TEST(Transform, PanIsSolvedOnTheGroundPlaneNotSeaLevel) {
+    for (const double pitch : {0.0, 25.0, 45.0, 60.0}) {
+        Transform seaLevel = gavarnieTransform(pitch, 0.0);
+        Transform plateau = gavarnieTransform(pitch, 1700.0);
+
+        const LatLng seaBefore = seaLevel.getLatLng();
+        const LatLng plateauBefore = plateau.getLatLng();
+
+        seaLevel.moveBy({0, 120});
+        plateau.moveBy({0, 120});
+
+        const double seaMoved = groundDistanceM(seaBefore, seaLevel.getLatLng());
+        const double plateauMoved = groundDistanceM(plateauBefore, plateau.getLatLng());
+
+        ASSERT_GT(seaMoved, 1.0) << "pitch " << pitch;
+        EXPECT_NEAR(plateauMoved / seaMoved, 1.0, 0.02) << "pitch " << pitch;
+    }
+}
+
+// At pitch 0 the plane at the centre's altitude sits exactly the camera-to-centre distance from
+// the camera, whatever that altitude is, so a drag moves exactly its own pixels of ground. This
+// is the acceptance number the app bench measures with a real finger.
+TEST(Transform, PanAtPitchZeroMovesItsOwnPixelsOfGround) {
+    Transform transform = gavarnieTransform(0.0, 1700.0);
+    const LatLng before = transform.getLatLng();
+    transform.moveBy({0, 120});
+
+    const double metersPerPoint = Projection::getMetersPerPixelAtLatitude(before.latitude(), 14.2);
+    EXPECT_NEAR(groundDistanceM(before, transform.getLatLng()) / (120 * metersPerPoint), 1.0, 0.01);
+}
+
+// The anchored paths (pinch, two-finger tilt) must use the same plane, or the anchor captured at
+// the start of a transition and the anchor re-solved on each frame would disagree and the map
+// would walk under the fingers.
+TEST(Transform, AnchoredZoomKeepsTheAnchoredGroundPointStill) {
+    Transform transform = gavarnieTransform(45.0, 1700.0);
+    const ScreenCoordinate anchor{120, 600};
+    const LatLng anchorBefore = transform.screenCoordinateToLatLng(anchor, 1700.0);
+
+    transform.jumpTo(CameraOptions().withZoom(15.2).withAnchor(anchor));
+
+    const LatLng anchorAfter = transform.screenCoordinateToLatLng(anchor, 1700.0);
+    EXPECT_LT(groundDistanceM(anchorBefore, anchorAfter), 5.0);
 }

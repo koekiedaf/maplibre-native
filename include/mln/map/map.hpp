@@ -117,7 +117,13 @@ public:
 
     // Projection
     ScreenCoordinate pixelForLatLng(const LatLng&) const;
+    /// Screen position of a point `elevationMeters` above sea level, for markers and probes that
+    /// must sit on the draped 3D surface rather than at sea level.
+    ScreenCoordinate pixelForLatLng(const LatLng&, double elevationMeters) const;
     LatLng latLngForPixel(const ScreenCoordinate&) const;
+    /// Geographic position where the pixel's view ray crosses the plane `elevationMeters` above
+    /// sea level. Same units as pixelForLatLng above; the two are inverses on that plane.
+    LatLng latLngForPixel(const ScreenCoordinate&, double elevationMeters) const;
     std::vector<ScreenCoordinate> pixelsForLatLngs(const std::vector<LatLng>&) const;
     std::vector<LatLng> latLngsForPixels(const std::vector<ScreenCoordinate>&) const;
 

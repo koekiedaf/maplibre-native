@@ -307,7 +307,35 @@ public:
     /// change (pan), a bare `CameraOptions()` (the terrain-elevation-changed correction), or both
     /// at once - clamps ZOOM first, then PITCH as a backstop for when the zoom clamp ran into
     /// `minZoom` and the camera is still under the terrain.
-    void constrainCameraAboveTerrain(bool zoomRequested, bool pitchRequested);
+    ///
+    /// `previousZoom`/`previousPitch` are the state's own zoom and pitch from before this
+    /// transition's change was applied - a floor, not a target. A pinch that asks to zoom in can
+    /// walk the camera's ground point back onto higher terrain as zoom rises, which raises the
+    /// rise, which lowers the clamp, which walks the camera back further: measured live at
+    /// Cirque de Gavarnie, a two-finger spread-apart (a zoom-in gesture) starting at zoom 15.000
+    /// (rise 673.4 m, camera altitude 1150.8 m) settled at zoom 14.874 (rise 665.8 m, altitude
+    /// 1256.2 m) - the gesture asked to zoom in and the map zoomed out instead. A clamp may stop
+    /// a change, never reverse it: if the caller requested a zoom change, a pitch change, or
+    /// both, NEITHER the zoom nor the pitch may end up below where it was before this transition
+    /// began, whichever axis actually ends up doing the clamping. A first cut floored only the
+    /// axis the caller had directly requested, which left the pitch backstop free to fire on a
+    /// zoom-only gesture and tilt the map flatter under a pinch that asked to zoom in - exactly
+    /// the MapLibre GL JS response section 3b of the collision design doc rejects, reintroduced
+    /// by a narrower door. Both floors now stand together whenever either axis was requested, so
+    /// a zoom-only gesture cannot lose ground on pitch and a pitch-only gesture cannot lose ground
+    /// on zoom. When the caller requested neither (a pan's centre change, or the bare
+    /// `CameraOptions()` the terrain-rise channel sends), both floors are inert and the clamp
+    /// still reduces freely, because panning onto higher ground genuinely does have to lift the
+    /// camera. The deliberate consequence: while a floor holds, the camera can sit closer to the
+    /// terrain than the margin asks, because it was already there and the alternative is moving a
+    /// camera the user did not ask to move; the next pan, unfloored, is what restores the
+    /// clearance. MapLibre GL JS does not need this floor because `Camera.applyUpdatedTransform`
+    /// (src/ui/camera.ts:915-944) clamps a clone of `_requestedCameraState` (camera.ts:873-878)
+    /// every frame and never writes the clamp back into the state driving the next frame, so
+    /// nothing accumulates; this engine clamps the state itself, so the floor has to do that job
+    /// instead.
+    void constrainCameraAboveTerrain(bool zoomRequested, bool pitchRequested, double previousZoom,
+                                     double previousPitch);
 
     double zoomScale(double zoom) const;
     double scaleZoom(double scale) const;

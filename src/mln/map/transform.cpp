@@ -624,8 +624,15 @@ void Transform::startTransition(const CameraOptions& camera,
     const bool zoomRequested = camera.zoom.has_value();
     const bool pitchRequested = camera.pitch.has_value();
 
+    // Captured once, here, before this transition's first frame runs - not inside
+    // transitionFrameFn, which would re-read a value the previous frame of this same transition
+    // had already moved and let an animated ease ratchet the floor up frame by frame, reproducing
+    // the exact accumulation the floor exists to stop.
+    const double previousZoom = state.getZoom();
+    const double previousPitch = state.getPitch();
+
     transitionFrameFn = [isAnimated, animation, frame, anchor, anchorLatLng, zoomRequested, pitchRequested,
-                         this](const TimePoint now) {
+                         previousZoom, previousPitch, this](const TimePoint now) {
         float t = isAnimated ? (std::chrono::duration<float>(now - transitionStart) / transitionDuration) : 1.0f;
         if (t >= 1.0) {
             frame(1.0);
@@ -639,7 +646,7 @@ void Transform::startTransition(const CameraOptions& camera,
         // Every camera path funnels through here (jumpTo, easeTo, flyTo, moveBy, rotateBy and
         // every gesture), so this is the one place the camera's own altitude is tested against
         // the terrain under it, after the frame's change and before it is drawn.
-        state.constrainCameraAboveTerrain(zoomRequested, pitchRequested);
+        state.constrainCameraAboveTerrain(zoomRequested, pitchRequested, previousZoom, previousPitch);
 
         // At t = 1.0, a DidChangeAnimated notification should be sent from finish().
         if (t < 1.0) {

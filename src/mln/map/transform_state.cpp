@@ -1071,7 +1071,8 @@ void TransformState::setCenterAltitude(double alt_m) {
     requestMatricesUpdate = true;
 }
 
-void TransformState::constrainCameraAboveTerrain(bool zoomRequested, bool pitchRequested) {
+void TransformState::constrainCameraAboveTerrain(bool zoomRequested, bool pitchRequested, double previousZoom,
+                                                 double previousPitch) {
     if (!terrainCameraGroundRise || !valid()) {
         return;
     }
@@ -1123,8 +1124,22 @@ void TransformState::constrainCameraAboveTerrain(bool zoomRequested, bool pitchR
         // => zoom == log2(cos(pitch) * C * k / R).
         const double zoomArg = cosPitch * C * k / R;
         if (zoomArg > 0.0 && std::isfinite(zoomArg)) {
-            const double zoomMax = util::log2(zoomArg);
-            if (std::isfinite(zoomMax) && getZoom() > zoomMax) {
+            double zoomMax = util::log2(zoomArg);
+            const double requestedZoom = getZoom();
+            if (std::isfinite(zoomMax) && requestedZoom > zoomMax) {
+                if (zoomRequested || pitchRequested) {
+                    // A clamp may stop a change, never reverse it: whenever the caller asked for a
+                    // zoom change, a pitch change, or both, this axis is floored at the zoom from
+                    // before this transition, but never above what was requested (a zoom-out
+                    // request that the terrain clamps even further is left as a clamp, not raised
+                    // back up). The floor applies here even when only pitch was requested, and
+                    // below even when only zoom was requested, because the two clamps are one
+                    // constraint (cos(pitch) * D == R): whichever axis ends up absorbing the
+                    // remainder must not undo camera the user did not ask to move on that axis
+                    // either. Only a pan's centre change or the bare CameraOptions() the terrain-
+                    // rise channel sends - neither axis requested - leaves both floors inert.
+                    zoomMax = std::min(std::max(zoomMax, previousZoom), requestedZoom);
+                }
                 // setLatLngZoom changes zoom but not z, and getCenterAltitude() reinterprets that
                 // raw z at whatever zoom is current - so the centre altitude has to be re-pinned
                 // after a zoom change here, exactly as every other zoom-changing transition in this
@@ -1144,8 +1159,16 @@ void TransformState::constrainCameraAboveTerrain(bool zoomRequested, bool pitchR
     // caller asked for, unchanged.
     const double D_m = C * Projection::getMetersPerPixelAtLatitude(lat, getZoom());
     if (D_m > 0.0 && std::isfinite(D_m)) {
-        const double pitchMax = std::acos(util::clamp(R / D_m, 0.0, 1.0));
-        if (std::isfinite(pitchMax) && getPitch() > pitchMax) {
+        double pitchMax = std::acos(util::clamp(R / D_m, 0.0, 1.0));
+        const double requestedPitch = getPitch();
+        if (std::isfinite(pitchMax) && requestedPitch > pitchMax) {
+            if (zoomRequested || pitchRequested) {
+                // Same floor, same reason, for the pitch axis: whenever the caller asked for a
+                // zoom change, a pitch change, or both, this axis (whether it is carrying the
+                // caller's own request or just absorbing the backstop remainder from the zoom
+                // clamp above) may not be lowered past the pitch the transition started from.
+                pitchMax = std::min(std::max(pitchMax, previousPitch), requestedPitch);
+            }
             setPitch(util::clamp(pitchMax, minPitch, maxPitch));
         }
     }

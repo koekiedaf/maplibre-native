@@ -116,15 +116,27 @@ private:
 
 // Task 2.0b's regression guards: the camera's own altitude tested against the terrain under it.
 //
-// (a) A zoom breach clamps the zoom, holding the camera exactly at ground + margin, pitch
-// untouched. Well-above-centre terrain (a 3300 m rise, the same as 5000 m ground over a 1700 m
-// centre) plus a 100 m margin, at pitch 45, then a jump to zoom 20, which at that pitch would put
-// the camera at ~1750 m - underground.
+// (a) A zoom breach clamps the zoom. Well-above-centre terrain (a 3300 m rise, the same as
+// 5000 m ground over a 1700 m centre) plus a 100 m margin, at pitch 45, then a jump to zoom 20,
+// which at that pitch would put the camera at ~1750 m - underground. Both floors sit under this
+// gesture (it requested a zoom change), so neither axis may end up below its pre-gesture value:
+// the terrain-safe zoom alone (13.89) sits below the pre-gesture zoom (14.2), so the zoom floor
+// holds zoom at 14.2; the terrain-safe pitch backstop at that zoom (28.52) also sits below the
+// pre-gesture pitch (45), so the pitch floor holds pitch at 45 too. Both axes land back exactly
+// where the gesture started, so the request is fully refused rather than partly honoured by
+// tilting the map - and the camera altitude this produces sits below ground + margin (about
+// 4436 m against a 5100 m target), which is the deliberate consequence documented on
+// `constrainCameraAboveTerrain`: the floors hold a camera the user did not ask to move, closer to
+// the terrain than the margin asks, until the next unfloored pan restores the clearance.
 - (void)testZoomBreachClampsZoomToGroundPlusMargin {
   mln::Transform transform;
   gavarnie(transform, 45.0, 1700.0);
   transform.setTerrainCameraMarginMeters(100.0);
   transform.setTerrainCameraGroundRise(3300.0);
+  // Start below the terrain-safe zoom for this rise and margin, so the floor (which never lets a
+  // clamp leave the camera further out than the gesture began) is inert here and the clamp can be
+  // read for what it computes: the camera held at exactly rise plus margin.
+  transform.jumpTo(mln::CameraOptions().withZoom(12.0));
 
   transform.jumpTo(mln::CameraOptions().withZoom(20.0));
 
@@ -178,14 +190,17 @@ private:
 
   XCTAssertEqualWithAccuracy(transform.getZoom(), 14.2, 1e-6);
   XCTAssertLessThan(mln::util::rad2deg(transform.getPitch()), 55.0);
-  XCTAssertEqualWithAccuracy(mln::util::rad2deg(transform.getPitch()), 31.48, 0.5);
+  XCTAssertEqualWithAccuracy(mln::util::rad2deg(transform.getPitch()), 29.74, 0.5);
 }
 
-// (c') A zoom-only change over the same high ground and starting pitch (45) leaves the pitch
-// untouched and clamps the zoom instead - the mirror of (c), and the pinch gesture's own shape
-// (jumpTo with zoom and an anchor but no pitch). This is the same scenario as
-// testZoomBreachClampsZoomToGroundPlusMargin; restated here beside its pitch-only twin so the
-// axis rule reads as one pair.
+// (c') A zoom-only change over the same starting pitch (45) leaves the pitch untouched and
+// clamps the zoom instead - the mirror of (c), and the pinch gesture's own shape (jumpTo with
+// zoom and an anchor but no pitch). Same 3300 m rise as testZoomBreachClampsZoomToGroundPlusMargin
+// but the default 60 m margin rather than that test's 100 m: the terrain-safe zoom alone (13.90)
+// still sits below the pre-gesture zoom (14.2), so the zoom floor holds zoom at 14.2, and the
+// terrain-safe pitch backstop at that zoom (29.74) sits below the pre-gesture pitch (45), so the
+// pitch floor holds pitch at exactly 45 too - a zoom-only gesture must never tilt the map, which
+// is the regression this task exists to prevent.
 - (void)testZoomBreachClampsZoomAndLeavesThePitchAlone {
   mln::Transform transform;
   gavarnie(transform, 45.0, 1700.0);
@@ -195,6 +210,83 @@ private:
 
   XCTAssertLessThan(transform.getZoom(), 20.0);
   XCTAssertEqualWithAccuracy(mln::util::rad2deg(transform.getPitch()), 45.0, 0.01);
+}
+
+// (c'') The floor: a clamp may stop a change, never reverse it. Starting comfortably clear (no
+// rise reported yet, so nothing has clamped), a jumpTo asking for a HIGHER zoom, with a rise
+// large enough that the clamp fires, must leave the zoom no lower than where the gesture
+// started - and still no higher than what was requested. This is the reported defect: a pinch
+// asking to zoom in walked the camera's ground point onto higher terrain as zoom rose, which
+// grew the rise, which cut the zoom, which walked the camera back further, settling below the
+// zoom the gesture started from. Without the floor this test fails because the clamp lands on
+// zoomMax alone, which sits below startZoom by construction here.
+- (void)testZoomFloorNeverLowersZoomBelowWhereTheGestureStarted {
+  mln::Transform transform;
+  gavarnie(transform, 45.0, 1700.0);
+  const double startZoom = transform.getZoom();
+  XCTAssertEqualWithAccuracy(startZoom, 14.2, 1e-6, @"comfortably clear: no rise reported yet");
+
+  // A rise large enough that honouring a jump to zoom 20 at this pitch would put the camera
+  // underground, well below where the gesture started.
+  transform.setTerrainCameraGroundRise(20000.0);
+  transform.jumpTo(mln::CameraOptions().withZoom(20.0));
+
+  XCTAssertGreaterThanOrEqual(transform.getZoom(), startZoom - 1e-6);
+  XCTAssertLessThanOrEqual(transform.getZoom(), 20.0 + 1e-6);
+}
+
+// The regression this round exists to prevent: with the zoom floor holding, the pitch backstop
+// must not fire and tilt the map under a gesture that never asked for a pitch change. A zoom-only
+// jumpTo asking for MORE zoom, over a rise big enough that the zoom clamp needs the pitch
+// backstop to absorb the remainder, must still leave the pitch exactly where the gesture started
+// - not just above where the unfloored backstop alone would have put it. A fix that only floors
+// the axis the caller directly requested passes testZoomFloorNeverLowersZoomBelowWhereTheGesture-
+// Started above but fails this one, because the pitch backstop it leaves unfloored lowers pitch
+// to answer a zoom request with a tilt.
+- (void)testZoomOnlyBreachLeavesThePitchExactlyWhereItStarted {
+  mln::Transform transform;
+  gavarnie(transform, 45.0, 1700.0);
+  const double startPitchDeg = mln::util::rad2deg(transform.getPitch());
+
+  transform.setTerrainCameraGroundRise(3300.0);
+  transform.jumpTo(mln::CameraOptions().withZoom(20.0));
+
+  XCTAssertLessThan(transform.getZoom(), 20.0);
+  XCTAssertEqualWithAccuracy(mln::util::rad2deg(transform.getPitch()), startPitchDeg, 1e-6);
+}
+
+// (c''') The same shape for pitch: a pitch-only jumpTo asking for MORE pitch must never leave
+// the pitch below where it started, for the same reason as the zoom floor above. Without the
+// floor this test fails because the clamp lands on pitchMax alone, below startPitch here.
+- (void)testPitchFloorNeverLowersPitchBelowWhereTheGestureStarted {
+  mln::Transform transform;
+  gavarnie(transform, 30.0, 1700.0);
+  const double startPitchDeg = mln::util::rad2deg(transform.getPitch());
+  XCTAssertEqualWithAccuracy(startPitchDeg, 30.0, 1e-6, @"comfortably clear: no rise reported yet");
+
+  // A rise large enough that honouring a pitch-only jump to 70 degrees would put the camera
+  // underground, well below the pitch the gesture started from.
+  transform.setTerrainCameraGroundRise(20000.0);
+  transform.jumpTo(mln::CameraOptions().withPitch(70.0));
+
+  const double resultPitchDeg = mln::util::rad2deg(transform.getPitch());
+  XCTAssertGreaterThanOrEqual(resultPitchDeg, startPitchDeg - 1e-6);
+  XCTAssertLessThanOrEqual(resultPitchDeg, 70.0 + 1e-6);
+}
+
+// The floor only guards a gesture that actually requested a zoom or a pitch change. A centre-only
+// change - no zoom, no pitch in the CameraOptions, the shape moveBy reduces to - requests neither,
+// so both floors stay inert and the clamp must still be free to reduce the zoom when panning
+// walks the camera onto terrain high enough to need it, exactly as before this task.
+- (void)testPanShapedChangeCanStillReduceZoomFreely {
+  mln::Transform transform;
+  gavarnie(transform, 45.0, 1700.0);
+  const double startZoom = transform.getZoom();
+
+  transform.setTerrainCameraGroundRise(20000.0);
+  transform.jumpTo(mln::CameraOptions().withCenter(mln::LatLng{42.696, -0.004}));
+
+  XCTAssertLessThan(transform.getZoom(), startZoom);
 }
 
 // (d) Sliding off the cliff (a lower reported rise) releases the clamp: a subsequent zoom-in

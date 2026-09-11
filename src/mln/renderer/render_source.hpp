@@ -79,6 +79,10 @@ public:
     virtual const ImageSourceRenderData* getImageRenderData() const { return nullptr; }
     virtual const Tile* getRenderedTile(const UnwrappedTileID&) const { return nullptr; }
     virtual Immutable<std::vector<RenderTile>> getRawRenderTiles() const;
+    // Every tile this source still holds fully loaded data for, not only the ones its
+    // cover currently retains for rendering - see TilePyramid::getLoadedTiles(). Empty
+    // where a source has no such notion (e.g. image sources).
+    virtual std::vector<const Tile*> getLoadedTiles() const { return {}; }
 
     virtual std::unordered_map<std::string, std::vector<Feature>> queryRenderedFeatures(
         const ScreenLineString& geometry,

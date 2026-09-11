@@ -306,6 +306,17 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
     cache.deferPendingReleases();
 }
 
+std::vector<const Tile*> TilePyramid::getLoadedTiles() const {
+    std::vector<const Tile*> result;
+    result.reserve(tiles.size());
+    for (const auto& entry : tiles) {
+        result.push_back(entry.second.get());
+    }
+    const auto cached = cache.getTiles();
+    result.insert(result.end(), cached.begin(), cached.end());
+    return result;
+}
+
 void TilePyramid::handleWrapJump(float lng) {
     // On top of the regular z/x/y values, TileIDs have a `wrap` value that specify
     // which cppy of the world the tile belongs to. For example, at `lng: 10` you

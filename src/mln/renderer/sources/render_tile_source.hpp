@@ -28,6 +28,7 @@ public:
     RenderTiles getRenderTilesSortedByYPosition() const override;
     const Tile* getRenderedTile(const UnwrappedTileID&) const override;
     Immutable<std::vector<RenderTile>> getRawRenderTiles() const override { return renderTiles; }
+    std::vector<const Tile*> getLoadedTiles() const override { return tilePyramid.getLoadedTiles(); }
 
     std::unordered_map<std::string, std::vector<Feature>> queryRenderedFeatures(
         const ScreenLineString& geometry,

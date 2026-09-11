@@ -35,6 +35,11 @@ public:
     bool has(const OverscaledTileID& key);
     void clear();
 
+    /// Every tile currently held (peek only, nothing is popped or reordered). A tile
+    /// lands here, still fully loaded, when it stops being part of the retained/rendered
+    /// set - see TilePyramid::getLoadedTiles(), which is why this exists.
+    std::vector<const Tile*> getTiles() const;
+
     /// Set aside a tile to be destroyed later, without blocking
     void deferredRelease(std::unique_ptr<Tile>&&);
 

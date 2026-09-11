@@ -67,6 +67,15 @@ public:
     void dumpDebugLogs() const;
 
     const std::map<OverscaledTileID, std::unique_ptr<Tile>>& getTiles() const { return tiles; }
+
+    /// Every tile this pyramid still holds fully loaded data for: the retained/rendered
+    /// set (`tiles`) plus whatever a prior frame's cover dropped but hasn't evicted yet
+    /// (`cache`). A tile that has loaded keeps answering from here regardless of whether
+    /// this frame's cover happens to retain it, which is what a query keyed on tile
+    /// identity (e.g. DEMElevationProvider) needs: an answer that does not depend on the
+    /// very cover decision it feeds.
+    std::vector<const Tile*> getLoadedTiles() const;
+
     void clearAll();
 
     void updateFadingTiles();

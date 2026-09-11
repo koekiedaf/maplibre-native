@@ -284,9 +284,12 @@ public:
     std::optional<double> getTerrainCameraGroundRise() const { return terrainCameraGroundRise; }
 
     /// Extra clearance, in metres, `constrainCameraAboveTerrain` holds the camera above the
-    /// sampled ground. Default 0.0: the measured value (task 2.0b, section 5) becomes the built-in
-    /// default in a later commit once the gesture bench has produced it; until then the clamp
-    /// touches the raw DEM sample, same as the web.
+    /// sampled ground. Default 60, chosen by measurement rather than taste: the DEM this clamp
+    /// samples carries roughly 30 m posts, and along 8 bearings x 3 km at Cirque de Gavarnie and
+    /// Lauterbrunnen the greatest height a sampler at that spacing misses BETWEEN posts was 55.1 m
+    /// (p99 24 m, median 1.6 m). 60 m covers that worst case, so the camera is not put on top of a
+    /// ridge the sampler could not see. It also closes the near-field cover gap at the clamped
+    /// camera, which sitting exactly on the sampled surface does not.
     void setTerrainCameraMarginMeters(double metres) { terrainCameraMarginMeters = metres; }
     double getTerrainCameraMarginMeters() const { return terrainCameraMarginMeters; }
 
@@ -409,7 +412,7 @@ private:
     // height minus centre DEM height, same frame), and the clearance constrainCameraAboveTerrain
     // holds above it.
     std::optional<double> terrainCameraGroundRise;
-    double terrainCameraMarginMeters = 0.0;
+    double terrainCameraMarginMeters = 60.0;
 };
 
 } // namespace mln

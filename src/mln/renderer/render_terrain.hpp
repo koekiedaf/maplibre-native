@@ -93,7 +93,14 @@ public:
     /// back to 512 and covers a different (shallower) tile set than the in-update
     /// call, so every getRenderTarget() lookup missed and no terrain drawable was
     /// ever created - the map rendered empty.
-    void setFrameMeshCover(std::set<UnwrappedTileID> cover) { frameMeshCover = std::move(cover); }
+    /// DuckMaps fork only, task C5: also copies the cover into lastFrameMeshCover before
+    /// moving it into frameMeshCover, so the debug elevation trace can report the mesh
+    /// cover the frame actually used after update() consumes (and clears) frameMeshCover
+    /// below - see getLastFrameMeshCoverTileIds.
+    void setFrameMeshCover(std::set<UnwrappedTileID> cover) {
+        lastFrameMeshCover = cover;
+        frameMeshCover = std::move(cover);
+    }
 
     /**
      * @brief Update terrain rendering (create/update drawables)
@@ -217,6 +224,18 @@ public:
      * antimeridian each is currently wrapped to.
      */
     std::vector<CanonicalTileID> getResidentDemTileIds() const;
+
+    /**
+     * @brief DuckMaps fork only, task C5: the canonical z/x/y of every tile in the mesh
+     * cover Renderer::Impl computed for the last rendered frame (see setFrameMeshCover),
+     * for the debug elevation trace's `meshCover` field. This is the cover the frame's
+     * drape-target pool and terrain mesh actually used, not a recomputation -
+     * computeMeshCover() is not stable within a frame (see setFrameMeshCover's doc
+     * comment above), so calling it again here would not match what was drawn.
+     * Debug-only; not called unless the elevation trace is on. Empty before the first
+     * frame that has terrain.
+     */
+    std::vector<CanonicalTileID> getLastFrameMeshCoverTileIds() const;
 
     /**
      * @brief Get the terrain exaggeration multiplier
@@ -484,6 +503,10 @@ private:
     /// Mesh cover for the current frame, set by Renderer::Impl before the drape
     /// target pool is built; consumed (and cleared) by update()
     std::optional<std::set<UnwrappedTileID>> frameMeshCover;
+    /// DuckMaps fork only, task C5: a copy of the last frame's mesh cover (see
+    /// setFrameMeshCover above), kept for the debug elevation trace after update()
+    /// consumes and clears frameMeshCover.
+    std::set<UnwrappedTileID> lastFrameMeshCover;
 
     // DEM decode vector for the source's encoding (default: Mapbox Terrain-RGB)
     std::array<float, 4> demUnpackVector = {{6553.6f, 25.6f, 0.1f, 10000.0f}};

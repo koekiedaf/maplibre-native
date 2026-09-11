@@ -1006,7 +1006,45 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                     os << "\"" << static_cast<int>(id.z) << "/" << id.x << "/" << id.y << "\"";
                 }
             }
-            os << "],\"elevationQueries\":" << DEMElevationProvider::debugDrainElevationQueries();
+            // DuckMaps fork only, task C5: the terrain mesh cover the last rendered frame
+            // actually used (see RenderTerrain::setFrameMeshCover /
+            // getLastFrameMeshCoverTileIds), as a canonical-z histogram plus the count and
+            // min/max z, so the cover's zoom spread is visible in the trace without dumping
+            // every tile id. Same debug-only, off-by-default guard as the rest of this block.
+            std::map<int, int> meshCoverHistogram;
+            std::size_t meshCoverCount = 0;
+            uint8_t meshCoverMinZ = 0;
+            uint8_t meshCoverMaxZ = 0;
+            if (traceTerrain) {
+                const auto meshCoverIds = traceTerrain->getLastFrameMeshCoverTileIds();
+                meshCoverCount = meshCoverIds.size();
+                bool firstMeshTile = true;
+                for (const auto& id : meshCoverIds) {
+                    ++meshCoverHistogram[id.z];
+                    if (firstMeshTile || id.z < meshCoverMinZ) {
+                        meshCoverMinZ = id.z;
+                    }
+                    if (firstMeshTile || id.z > meshCoverMaxZ) {
+                        meshCoverMaxZ = id.z;
+                    }
+                    firstMeshTile = false;
+                }
+            }
+            os << "],\"meshCover\":[";
+            {
+                bool firstMeshEntry = true;
+                for (const auto& [z, count] : meshCoverHistogram) {
+                    if (!firstMeshEntry) {
+                        os << ",";
+                    }
+                    firstMeshEntry = false;
+                    os << "{\"z\":" << z << ",\"count\":" << count << "}";
+                }
+            }
+            os << "],\"meshCoverCount\":" << meshCoverCount
+               << ",\"meshCoverMinZ\":" << static_cast<int>(meshCoverMinZ)
+               << ",\"meshCoverMaxZ\":" << static_cast<int>(meshCoverMaxZ);
+            os << ",\"elevationQueries\":" << DEMElevationProvider::debugDrainElevationQueries();
             os << "}\n";
 
             const std::string line = os.str();

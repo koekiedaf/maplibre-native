@@ -848,6 +848,15 @@ std::vector<CanonicalTileID> RenderTerrain::getResidentDemTileIds() const {
     return ids;
 }
 
+std::vector<CanonicalTileID> RenderTerrain::getLastFrameMeshCoverTileIds() const {
+    std::vector<CanonicalTileID> ids;
+    ids.reserve(lastFrameMeshCover.size());
+    for (const auto& id : lastFrameMeshCover) {
+        ids.push_back(id.canonical);
+    }
+    return ids;
+}
+
 std::optional<RenderTerrain::TerrainData> RenderTerrain::getTerrainData(const UnwrappedTileID& tileID) const {
     // Find the DEM texture matching the requested tile, or its closest available ancestor
     const UnwrappedTileID* demTileID = nullptr;

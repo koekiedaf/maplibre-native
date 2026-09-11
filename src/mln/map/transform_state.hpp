@@ -230,8 +230,15 @@ public:
     /// them - a per-transition floor is not a floor at all, since the previous frame's clamp has
     /// already lowered the value the next frame floors against, and the ratchet from before the
     /// floor existed walks the zoom down exactly as it did without it. This records the zoom and
-    /// pitch on the false-to-true edge as the floors for the WHOLE gesture, and clears them on the
-    /// true-to-false edge, the same hook and reasoning as the centre-altitude freeze
+    /// pitch on the false-to-true edge as the floors for the gesture that is about to begin. They
+    /// are NOT cleared on the true-to-false edge: they survive the gesture, because the render
+    /// thread's own terrain-rise correction (the bare `CameraOptions()` `constrainCameraAboveTerrain`
+    /// also floors, below) keeps firing after the gesture has ended and must not be free to pull
+    /// the camera further out than the gesture that provoked it started from. They are refreshed
+    /// to the camera's current zoom and pitch by the next transition that requests a CENTRE
+    /// change while no gesture is in progress (see `constrainCameraAboveTerrain`) - a programmatic
+    /// move, which means the ground under the camera has changed by something other than a
+    /// gesture and the old floor is meaningless. The same hook and reasoning as the centre-altitude freeze
     /// (Map::Impl::onTerrainCenterElevationChanged skips while a gesture is in progress).
     void setGestureInProgress(bool val);
 
@@ -332,28 +339,37 @@ public:
     /// the MapLibre GL JS response section 3b of the collision design doc rejects, reintroduced
     /// by a narrower door. Both floors now stand together whenever either axis was requested, so
     /// a zoom-only gesture cannot lose ground on pitch and a pitch-only gesture cannot lose ground
-    /// on zoom. When the caller requested neither (a pan's centre change, or the bare
-    /// `CameraOptions()` the terrain-rise channel sends), both floors are inert and the clamp
-    /// still reduces freely, because panning onto higher ground genuinely does have to lift the
-    /// camera. The deliberate consequence: while a floor holds, the camera can sit closer to the
-    /// terrain than the margin asks, because it was already there and the alternative is moving a
-    /// camera the user did not ask to move; the next pan, unfloored, is what restores the
-    /// clearance. MapLibre GL JS does not need this floor because `Camera.applyUpdatedTransform`
-    /// (src/ui/camera.ts:915-944) clamps a clone of `_requestedCameraState` (camera.ts:873-878)
-    /// every frame and never writes the clamp back into the state driving the next frame, so
-    /// nothing accumulates; this engine clamps the state itself, so the floor has to do that job
-    /// instead.
+    /// on zoom. The floors apply to the bare `CameraOptions()` the terrain-rise channel sends too
+    /// (see below): that correction may stop a camera going under the terrain, but it may not
+    /// pull the map further out than the gesture that provoked it started from. Only a transition
+    /// that requested a CENTRE change is inert to the floors and may reduce either axis freely,
+    /// because panning onto higher ground genuinely does have to lift the camera. The deliberate
+    /// consequence: while a floor holds, the camera can sit closer to the terrain than the margin
+    /// asks, because it was already there and the alternative is moving a camera the user did not
+    /// ask to move; the next pan, unfloored, is what restores the clearance. MapLibre GL JS does
+    /// not need this floor because `Camera.applyUpdatedTransform` (src/ui/camera.ts:915-944)
+    /// clamps a clone of `_requestedCameraState` (camera.ts:873-878) every frame and never writes
+    /// the clamp back into the state driving the next frame, so nothing accumulates; this engine
+    /// clamps the state itself, so the floor has to do that job instead.
     ///
     /// `previousZoom`/`previousPitch` only floor a single transition, and an iOS pinch is not one
     /// transition: `MLNMapView`'s `handlePinchGesture` sends a separate
     /// `jumpTo(CameraOptions().withZoom(...).withAnchor(...))` for every touch-move, so this floor
     /// reset on every one of them and the ratchet walked the zoom down exactly as before the floor
     /// existed - measured live, a spread-apart pinch (zoom in) at zoom 15.000 still settled at
-    /// 14.873. While `isGestureInProgress()` is true, the floors recorded once by
-    /// `setGestureInProgress` at the gesture's start are used instead of `previousZoom`/
-    /// `previousPitch`, so the floor spans the whole gesture rather than resetting every frame.
-    void constrainCameraAboveTerrain(bool zoomRequested, bool pitchRequested, double previousZoom,
-                                     double previousPitch);
+    /// 14.873. `previousZoom`/`previousPitch` are used only as the fallback for a transition run
+    /// before any gesture has ever recorded a floor. Once `setGestureInProgress` has recorded one,
+    /// it is used instead, and it is NOT reset when the gesture ends: it survives until the next
+    /// transition that requests a CENTRE change while no gesture is in progress refreshes it to
+    /// the camera's current zoom and pitch (`centerRequested` below). That is what lets the
+    /// render thread's own unfloored-during-the-old-design terrain-rise correction keep firing
+    /// after a pinch has ended without ratcheting the camera past where the pinch began, and it is
+    /// also why the pinch's own anchor-drift `moveBy` - a centre change that runs WHILE the
+    /// gesture is in progress - does not refresh the floor: `centerRequested` is true for it, but
+    /// `isGestureInProgress()` is true too, so the refresh condition (centre requested AND no
+    /// gesture in progress) does not fire.
+    void constrainCameraAboveTerrain(bool zoomRequested, bool pitchRequested, bool centerRequested,
+                                     double previousZoom, double previousPitch);
 
     double zoomScale(double zoom) const;
     double scaleZoom(double scale) const;
@@ -429,10 +445,14 @@ private:
     bool scaling = false;
     bool panning = false;
     bool gestureInProgress = false;
-    // The zoom/pitch the moment the current gesture began (the false-to-true edge of
-    // setGestureInProgress), cleared on the true-to-false edge. See constrainCameraAboveTerrain.
-    std::optional<double> gestureFloorZoom;
-    std::optional<double> gestureFloorPitch;
+    // The zoom/pitch floor: set the moment a gesture begins (the false-to-true edge of
+    // setGestureInProgress) and NOT cleared when the gesture ends - it persists so the terrain-
+    // rise correction cannot ratchet the camera past where the gesture that provoked it started.
+    // Refreshed to the camera's current zoom/pitch by a transition that requests a CENTRE change
+    // while no gesture is in progress (a programmatic move, not a gesture). See
+    // constrainCameraAboveTerrain.
+    std::optional<double> terrainCameraFloorZoom;
+    std::optional<double> terrainCameraFloorPitch;
 
     // map position
     double x = 0, y = 0, z = 0;

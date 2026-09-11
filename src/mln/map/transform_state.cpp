@@ -771,11 +771,10 @@ bool TransformState::isGestureInProgress() const {
 void TransformState::setGestureInProgress(bool val) {
     if (val && !gestureInProgress) {
         // False-to-true edge: record the whole gesture's floors once, before its first frame.
-        gestureFloorZoom = getZoom();
-        gestureFloorPitch = getPitch();
-    } else if (!val && gestureInProgress) {
-        gestureFloorZoom.reset();
-        gestureFloorPitch.reset();
+        // These are NOT cleared on the true-to-false edge below - see the field's own comment and
+        // constrainCameraAboveTerrain for why they have to survive the gesture.
+        terrainCameraFloorZoom = getZoom();
+        terrainCameraFloorPitch = getPitch();
     }
     gestureInProgress = val;
 }
@@ -1083,10 +1082,23 @@ void TransformState::setCenterAltitude(double alt_m) {
     requestMatricesUpdate = true;
 }
 
-void TransformState::constrainCameraAboveTerrain(bool zoomRequested, bool pitchRequested, double previousZoom,
-                                                 double previousPitch) {
+void TransformState::constrainCameraAboveTerrain(bool zoomRequested, bool pitchRequested, bool centerRequested,
+                                                 double previousZoom, double previousPitch) {
     if (!terrainCameraGroundRise || !valid()) {
         return;
+    }
+
+    // A transition that requested a CENTRE change, run while no gesture is in progress, means the
+    // ground under the camera has just been changed by something other than a gesture - a
+    // programmatic jumpTo/flyTo/setLatLngZoom with a new centre - so whatever floor an earlier
+    // gesture left standing is meaningless now and is thrown away in favour of wherever the
+    // camera actually sits at this instant. This is gated on `!gestureInProgress` because a pinch
+    // itself sends a centre-changing `moveBy` for its own anchor drift while the gesture is still
+    // running; that must not be treated as a refresh, or it would corrupt the very floor the
+    // gesture is relying on mid-pinch.
+    if (centerRequested && !gestureInProgress) {
+        terrainCameraFloorZoom = getZoom();
+        terrainCameraFloorPitch = getPitch();
     }
 
     // The requirement is cameraAltitude >= groundUnderCamera + margin, and cameraAltitude ==
@@ -1125,11 +1137,13 @@ void TransformState::constrainCameraAboveTerrain(bool zoomRequested, bool pitchR
 
     // An iOS pinch arrives as one transition per touch-move, so a per-transition floor
     // (previousZoom/previousPitch) is not a floor at all: the previous touch-move's clamp has
-    // already lowered the state this touch-move's previousZoom is read from. While a gesture is
-    // in progress the floors recorded once at its start (setGestureInProgress) are used instead,
-    // so the floor spans the whole gesture rather than resetting every frame.
-    const double zoomFloor = (gestureInProgress && gestureFloorZoom) ? *gestureFloorZoom : previousZoom;
-    const double pitchFloor = (gestureInProgress && gestureFloorPitch) ? *gestureFloorPitch : previousPitch;
+    // already lowered the state this touch-move's previousZoom is read from. Once a gesture has
+    // ever recorded a floor (setGestureInProgress) it is used instead, whether or not a gesture is
+    // in progress right now - it survives gesture end and is only replaced by the centre-change
+    // refresh above - so the floor spans the whole gesture and outlives it. previousZoom/
+    // previousPitch are the fallback only for a transition run before any gesture has recorded one.
+    const double zoomFloor = terrainCameraFloorZoom.value_or(previousZoom);
+    const double pitchFloor = terrainCameraFloorPitch.value_or(previousPitch);
 
     // A pitch-only change (the two-finger tilt gesture) is answered as a tilt: clamp PITCH only
     // and leave the zoom exactly where the caller put it. Every other case - a zoom change, a
@@ -1137,6 +1151,14 @@ void TransformState::constrainCameraAboveTerrain(bool zoomRequested, bool pitchR
     // ZOOM first and then PITCH as a backstop, in case the zoom clamp ran into minZoom and the
     // camera is still under the terrain.
     const bool pitchOnly = pitchRequested && !zoomRequested;
+
+    // The floor applies to a transition that requested zoom, pitch, or both, and to the bare
+    // CameraOptions() the terrain-rise correction sends - that correction may stop a camera going
+    // under the terrain, but it may not pull the map further out than the gesture that provoked
+    // it started from. It does NOT apply to a transition that requested a CENTRE change: a pan
+    // may lower the zoom freely, which is how the camera lifts when the map is dragged onto
+    // higher ground, regardless of whether that same pan also asked for a new zoom or pitch.
+    const bool floorApplies = !centerRequested;
 
     if (!pitchOnly) {
         // Zoom clamp: solves cos(pitch) * C * metersPerPixel(lat, zoom) == R for zoom, since
@@ -1147,17 +1169,18 @@ void TransformState::constrainCameraAboveTerrain(bool zoomRequested, bool pitchR
             double zoomMax = util::log2(zoomArg);
             const double requestedZoom = getZoom();
             if (std::isfinite(zoomMax) && requestedZoom > zoomMax) {
-                if (zoomRequested || pitchRequested) {
-                    // A clamp may stop a change, never reverse it: whenever the caller asked for a
-                    // zoom change, a pitch change, or both, this axis is floored at the zoom from
-                    // before this transition, but never above what was requested (a zoom-out
-                    // request that the terrain clamps even further is left as a clamp, not raised
-                    // back up). The floor applies here even when only pitch was requested, and
-                    // below even when only zoom was requested, because the two clamps are one
-                    // constraint (cos(pitch) * D == R): whichever axis ends up absorbing the
+                if (floorApplies) {
+                    // A clamp may stop a change, never reverse it: this axis is floored at the
+                    // zoom recorded by the standing floor (a gesture's start, or the last centre-
+                    // change refresh), but never above what was requested (a zoom-out request
+                    // that the terrain clamps even further is left as a clamp, not raised back
+                    // up). The floor applies here even when only pitch was requested, and below
+                    // even when only zoom was requested, and even to the bare CameraOptions() the
+                    // terrain-rise channel sends requesting neither, because the two clamps are
+                    // one constraint (cos(pitch) * D == R): whichever axis ends up absorbing the
                     // remainder must not undo camera the user did not ask to move on that axis
-                    // either. Only a pan's centre change or the bare CameraOptions() the terrain-
-                    // rise channel sends - neither axis requested - leaves both floors inert.
+                    // either. Only a transition that requested a CENTRE change leaves both floors
+                    // inert.
                     zoomMax = std::min(std::max(zoomMax, zoomFloor), requestedZoom);
                 }
                 // setLatLngZoom changes zoom but not z, and getCenterAltitude() reinterprets that
@@ -1182,11 +1205,11 @@ void TransformState::constrainCameraAboveTerrain(bool zoomRequested, bool pitchR
         double pitchMax = std::acos(util::clamp(R / D_m, 0.0, 1.0));
         const double requestedPitch = getPitch();
         if (std::isfinite(pitchMax) && requestedPitch > pitchMax) {
-            if (zoomRequested || pitchRequested) {
-                // Same floor, same reason, for the pitch axis: whenever the caller asked for a
-                // zoom change, a pitch change, or both, this axis (whether it is carrying the
-                // caller's own request or just absorbing the backstop remainder from the zoom
-                // clamp above) may not be lowered past the pitch the transition started from.
+            if (floorApplies) {
+                // Same floor, same reason, for the pitch axis: this axis (whether it is carrying
+                // the caller's own request, absorbing the backstop remainder from the zoom clamp
+                // above, or answering the bare CameraOptions() terrain-rise correction) may not be
+                // lowered past the standing floor's pitch.
                 pitchMax = std::min(std::max(pitchMax, pitchFloor), requestedPitch);
             }
             setPitch(util::clamp(pitchMax, minPitch, maxPitch));

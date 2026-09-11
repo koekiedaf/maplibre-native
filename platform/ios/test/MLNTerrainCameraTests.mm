@@ -327,10 +327,109 @@ private:
   XCTAssertEqualWithAccuracy(mln::util::rad2deg(transform.getPitch()), startPitchDeg, 1e-6);
 }
 
-// The floor only guards a gesture that actually requested a zoom or a pitch change. A centre-only
-// change - no zoom, no pitch in the CameraOptions, the shape moveBy reduces to - requests neither,
-// so both floors stay inert and the clamp must still be free to reduce the zoom when panning
-// walks the camera onto terrain high enough to need it, exactly as before this task.
+// MEASURED, on the simulator, against the build the previous test's fix landed in: a real pinch
+// still ends further out than it started. The mechanism the previous fix left standing: the
+// gesture floor was cleared the instant the gesture ended (setGestureInProgress's true-to-false
+// edge), but the render thread's own terrain-rise correction - a bare jumpTo(CameraOptions()),
+// requesting neither axis - keeps arriving for a few frames AFTER the pinch's last touch-move,
+// because the reported rise lags the camera during the gesture and is still catching up once the
+// fingers lift. With the floor already gone, that correction is free to walk the zoom down past
+// where the gesture began, exactly as if there had never been a floor at all. The fix: the floor
+// is not cleared at gesture end, and it now applies to the bare CameraOptions() correction too -
+// this is the test for both halves at once. A pinch that ends with the zoom above start, followed
+// by the correction arriving afterwards with a large rise, must still end no lower than start.
+- (void)testFloorSurvivesGestureEndAndFloorsTheBareCorrectionAfterwards {
+  mln::Transform transform;
+  gavarnie(transform, 45.0, 1700.0);
+  const double startZoom = transform.getZoom();
+  const double startPitchDeg = mln::util::rad2deg(transform.getPitch());
+
+  transform.setGestureInProgress(true);
+  double requestedZoom = startZoom;
+  for (int i = 0; i < 5; i++) {
+    requestedZoom += 0.3;
+    transform.jumpTo(mln::CameraOptions().withZoom(requestedZoom));
+  }
+  transform.setGestureInProgress(false);
+
+  // The render thread's own terrain-rise correction, arriving after the pinch's last touch-move -
+  // a rise large enough that, unfloored, it would pull the camera well below where the gesture
+  // began.
+  transform.setTerrainCameraGroundRise(20000.0);
+  transform.jumpTo(mln::CameraOptions());
+
+  XCTAssertGreaterThanOrEqual(transform.getZoom(), startZoom - 1e-6);
+  XCTAssertEqualWithAccuracy(mln::util::rad2deg(transform.getPitch()), startPitchDeg, 1e-6);
+}
+
+// The other half of the rule: the floor a gesture leaves standing is not permanent. A transition
+// that requests a CENTRE change while no gesture is in progress - a programmatic move, the
+// harness's own jumpTo with a centre, a flyTo, setLatLngZoom - means the ground under the camera
+// has changed by something other than the gesture that set the old floor, so the old floor is
+// meaningless and is refreshed to wherever the camera now sits. Proven here by refreshing the
+// floor DOWN from the earlier pinch's floor, then showing the terrain-rise correction can now
+// clamp the zoom below that earlier, higher floor - which it could not do were the old floor
+// still standing.
+- (void)testCentreRequestedJumpWhileNoGestureIsInProgressRefreshesTheFloor {
+  mln::Transform transform;
+  gavarnie(transform, 45.0, 1700.0);
+  const double startZoom = transform.getZoom();
+
+  transform.setGestureInProgress(true);
+  transform.jumpTo(mln::CameraOptions().withZoom(startZoom + 1.5));
+  transform.setGestureInProgress(false);
+  const double gestureFloorZoom = transform.getZoom();
+
+  // A tiny reported rise: present, so the refresh below actually runs, but nowhere near enough to
+  // clamp this pan itself, which must not distort the very floor value being refreshed.
+  transform.setTerrainCameraGroundRise(1.0);
+
+  // A programmatic move to a new centre while no gesture is in progress - not a pinch, not the
+  // pinch's own anchor-drift moveBy (which would run WHILE the gesture is in progress and must
+  // not refresh the floor, per the previous test's mechanism). This must throw the pinch's floor
+  // away and replace it with the zoom the pan itself leaves the camera at.
+  transform.jumpTo(mln::CameraOptions().withCenter(mln::LatLng{42.700, -0.010}).withZoom(startZoom));
+
+  // Now the render thread's own terrain-rise correction, exactly as after the pinch above, but
+  // this time it is free to pull the zoom below the PINCH's floor: the intervening pan refreshed
+  // the standing floor down to startZoom, and the correction is floored against that fresher,
+  // lower value instead.
+  transform.setTerrainCameraGroundRise(20000.0);
+  transform.jumpTo(mln::CameraOptions());
+
+  XCTAssertGreaterThanOrEqual(transform.getZoom(), startZoom - 1e-6);
+  XCTAssertLessThan(transform.getZoom(), gestureFloorZoom);
+}
+
+// A pan-shaped change - a transition that requests a CENTRE change - is exempt from the floor
+// even when it also requests a new zoom, not only when it requests neither axis. A flyTo-shaped
+// move onto much higher ground, asking for a zoom above the standing floor a now-finished gesture
+// left behind, must be allowed to drop the zoom well below that floor to clear the new terrain:
+// that is what lifts (or in this case drops) the camera when the map is dragged onto different
+// ground, and it must not be blocked by an old, unrelated gesture's floor just because this move
+// also happened to name a zoom.
+- (void)testPanShapedChangeCanLowerZoomFreelyEvenWhenItAlsoRequestsZoom {
+  mln::Transform transform;
+  gavarnie(transform, 45.0, 1700.0);
+  const double startZoom = transform.getZoom();
+
+  transform.setGestureInProgress(true);
+  transform.jumpTo(mln::CameraOptions().withZoom(startZoom + 1.5));
+  transform.setGestureInProgress(false);
+  const double gestureFloorZoom = transform.getZoom();
+
+  transform.setTerrainCameraGroundRise(20000.0);
+  transform.jumpTo(mln::CameraOptions()
+                        .withCenter(mln::LatLng{42.700, -0.010})
+                        .withZoom(gestureFloorZoom + 1.0));
+
+  XCTAssertLessThan(transform.getZoom(), gestureFloorZoom);
+}
+
+// The floor does not guard a transition that requested a CENTRE change. A centre-only change -
+// no zoom, no pitch in the CameraOptions, the shape moveBy reduces to - is exempt, so the clamp
+// must still be free to reduce the zoom when panning walks the camera onto terrain high enough to
+// need it, exactly as before this task.
 - (void)testPanShapedChangeCanStillReduceZoomFreely {
   mln::Transform transform;
   gavarnie(transform, 45.0, 1700.0);

@@ -90,8 +90,17 @@ void TerrainContourLayerTweaker::execute(LayerGroupBase& layerGroup, const Paint
             .fade_lo = evaluated.get<TerrainContourFadeLo>() * pixelScale,
             .fade_hi = evaluated.get<TerrainContourFadeHi>() * pixelScale,
             // Constants, not paint properties - contours3d.js DEPTH_BIAS (0.0003) / SLOPE_BIAS
-            // (8.0), see that file's own comments for the derivation of both.
-            .depth_bias = 0.0003f,
+            // (8.0), see that file's own comments for the derivation of both. DEPTH_BIAS is
+            // re-derived here, not copied: contours3d.js's 0.0003 is a raw clip-z subtraction
+            // calibrated against a GL-convention clip volume of width 2 (z in [-1, 1]), i.e. a
+            // pull of 0.0003 / 2 = 0.00015 of the total depth range. This shader's vertex stage
+            // applies the SAME subtraction (p.z -= depth_bias * p.w) to a matrix that has already
+            // been remapped to Metal's [0, 1] clip convention (see the matrix build above) - a
+            // clip volume of width 1. Left at 0.0003, the same absolute subtraction would now
+            // consume 0.0003 / 1 of that narrower range, i.e. twice the intended fraction of the
+            // depth buffer's precision. Halved to keep the intended fraction (0.00015) constant
+            // across the remap.
+            .depth_bias = 0.00015f,
             .slope_bias = 8.0f,
         };
         context.emplaceOrUpdateUniformBuffer(evaluatedPropsUniformBuffer, &evaluatedPropsUBO);
@@ -103,6 +112,7 @@ void TerrainContourLayerTweaker::execute(LayerGroupBase& layerGroup, const Paint
 #if MLN_UBO_CONSOLIDATION
     int i = 0;
     std::vector<TerrainContourDrawableUBO> drawableUBOVector(layerGroup.getDrawableCount());
+    std::vector<TerrainContourTilePropsUBO> tilePropsUBOVector(layerGroup.getDrawableCount());
 #endif
 
     visitLayerGroupDrawables(layerGroup, [&](gfx::Drawable& drawable) {
@@ -111,16 +121,28 @@ void TerrainContourLayerTweaker::execute(LayerGroupBase& layerGroup, const Paint
         }
         const UnwrappedTileID tileID = drawable.getTileID()->toUnwrapped();
 
-        constexpr std::array<float, 2> noTranslation{0.f, 0.f};
-        const auto matrix = getTileMatrix(tileID,
-                                          parameters,
-                                          noTranslation,
-                                          style::TranslateAnchorType::Viewport,
-                                          /*nearClipped=*/false,
-                                          /*inViewportPixelUnits=*/false,
-                                          drawable,
-                                          /*aligned=*/false,
-                                          /*renderToTerrain=*/false);
+        // This mesh is drawn directly in world space over RenderTerrain's own surface (never
+        // draped), exactly like TerrainLayerTweaker's own drawables for the SAME tile and the
+        // SAME elevations - so it must be built the same way, not via LayerTweaker::getTileMatrix
+        // (which is the draped/2D-layer path: on non-GL backends its non-terrain branch does not
+        // remap clip z from GL's [-1, 1] convention to Metal/Vulkan/WebGPU's [0, 1], because 2D
+        // layers overwhelmingly project into the far half of the GL clip volume and never notice).
+        // A terrain mesh reaches into the near half at ordinary pitch, which is exactly why
+        // TerrainLayerTweaker::execute (terrain_layer_tweaker.cpp:67-86) builds its matrix from
+        // parameters.matrixForTile() and then applies this remap by hand, with a comment noting
+        // that without it "terrain that projects into the near half of the GL clip volume (z < 0)
+        // is not clipped away on those backends" - i.e. it IS clipped away without the remap. This
+        // layer draws the identical mesh at the identical elevations and was missing that same
+        // remap, so its geometry was silently clipped in its entirety on Metal: zero contour
+        // pixels at every pitch, including pitch 0, matches full clipping rather than a partial
+        // visual defect.
+        mat4 matrix = parameters.matrixForTile(tileID);
+#if !MLN_RENDER_BACKEND_OPENGL
+        matrix[2] = 0.5 * (matrix[2] + matrix[3]);
+        matrix[6] = 0.5 * (matrix[6] + matrix[7]);
+        matrix[10] = 0.5 * (matrix[10] + matrix[11]);
+        matrix[14] = 0.5 * (matrix[14] + matrix[15]);
+#endif
 
         // Bind the covering DEM tile so the vertex/fragment shaders can sample the terrain
         // elevation directly - RenderTerrain::getTerrainData, the same call
@@ -137,18 +159,39 @@ void TerrainContourLayerTweaker::execute(LayerGroupBase& layerGroup, const Paint
             drawable.setTexture(context.getPlaceholderTexture2D(), idTerrainContourDEMTexture);
         }
 
+        const auto demCoords = terrainData ? terrainData->demCoords : std::array<float, 4>{{0, 0, 0, 0}};
+        const auto demUnpack = parameters.terrain ? parameters.terrain->getDEMUnpackVector()
+                                                  : std::array<float, 4>{{0, 0, 0, 0}};
+        const float demDim = terrainData ? terrainData->demDim : 0.0f;
+        const float demExaggeration = parameters.terrain ? parameters.terrain->getExaggeration() : 0.0f;
+        const float demEnabled = terrainData ? 1.0f : 0.0f;
+
 #if MLN_UBO_CONSOLIDATION
         drawableUBOVector[i] = {
 #else
         const TerrainContourDrawableUBO drawableUBO = {
 #endif
             .matrix = util::cast<float>(matrix),
-            .dem_coords = terrainData ? terrainData->demCoords : std::array<float, 4>{{0, 0, 0, 0}},
-            .dem_unpack = parameters.terrain ? parameters.terrain->getDEMUnpackVector()
-                                             : std::array<float, 4>{{0, 0, 0, 0}},
-            .dem_dim = terrainData ? terrainData->demDim : 0.0f,
-            .dem_exaggeration = parameters.terrain ? parameters.terrain->getExaggeration() : 0.0f,
-            .dem_enabled = terrainData ? 1.0f : 0.0f,
+            .dem_coords = demCoords,
+            .dem_unpack = demUnpack,
+            .dem_dim = demDim,
+            .dem_exaggeration = demExaggeration,
+            .dem_enabled = demEnabled,
+            .pad0 = 0.0f,
+        };
+        // Fragment-only duplicate of the dem_* fields above, plus reference_w - see
+        // TerrainContourDrawableUBO's comment in terrain_contour_layer_ubo.hpp for why the
+        // fragment stage cannot simply read the struct above.
+#if MLN_UBO_CONSOLIDATION
+        tilePropsUBOVector[i] = {
+#else
+        const TerrainContourTilePropsUBO tilePropsUBO = {
+#endif
+            .dem_coords = demCoords,
+            .dem_unpack = demUnpack,
+            .dem_dim = demDim,
+            .dem_exaggeration = demExaggeration,
+            .dem_enabled = demEnabled,
             .reference_w = referenceW,
         };
 #if MLN_UBO_CONSOLIDATION
@@ -156,6 +199,7 @@ void TerrainContourLayerTweaker::execute(LayerGroupBase& layerGroup, const Paint
 #else
         auto& drawableUniforms = drawable.mutableUniformBuffers();
         drawableUniforms.createOrUpdate(idTerrainContourDrawableUBO, &drawableUBO, context);
+        drawableUniforms.createOrUpdate(idTerrainContourTilePropsUBO, &tilePropsUBO, context);
 #endif
     });
 
@@ -168,6 +212,15 @@ void TerrainContourLayerTweaker::execute(LayerGroupBase& layerGroup, const Paint
         drawableUniformBuffer->update(drawableUBOVector.data(), drawableUBOVectorSize);
     }
     layerUniforms.set(idTerrainContourDrawableUBO, drawableUniformBuffer);
+
+    const size_t tilePropsUBOVectorSize = sizeof(TerrainContourTilePropsUBO) * tilePropsUBOVector.size();
+    if (!tilePropsUniformBuffer || tilePropsUniformBuffer->getSize() < tilePropsUBOVectorSize) {
+        tilePropsUniformBuffer = context.createUniformBuffer(
+            tilePropsUBOVector.data(), tilePropsUBOVectorSize, false, true);
+    } else {
+        tilePropsUniformBuffer->update(tilePropsUBOVector.data(), tilePropsUBOVectorSize);
+    }
+    layerUniforms.set(idTerrainContourTilePropsUBO, tilePropsUniformBuffer);
 #endif
 }
 

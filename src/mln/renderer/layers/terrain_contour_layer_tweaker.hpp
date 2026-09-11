@@ -20,6 +20,10 @@ protected:
 
 #if MLN_UBO_CONSOLIDATION
     gfx::UniformBufferPtr drawableUniformBuffer;
+    // Fragment-only per-tile data (dem_* + reference_w), bound at idDrawableReservedFragmentOnlyUBO
+    // - see TerrainContourDrawableUBO's comment in terrain_contour_layer_ubo.hpp for why this is
+    // a separate buffer from drawableUniformBuffer rather than the fragment stage reading that one.
+    gfx::UniformBufferPtr tilePropsUniformBuffer;
 #endif
 };
 

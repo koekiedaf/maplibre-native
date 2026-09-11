@@ -88,10 +88,15 @@ enum {
 };
 
 // terrain-contour (DuckMaps fork): contour lines computed per-fragment from the terrain DEM,
-// drawn over RenderTerrain's own mesh. One shared drawable UBO, no per-tile props SSBO (see
-// docs/plans/2026-09-11-engine-layer-plumbing.md).
+// drawn over RenderTerrain's own mesh. Vertex-only drawable UBO (matrix + dem_*, task 2.4a) plus
+// a fragment-only tile-props UBO (dem_* duplicated + reference_w, task 2.4b) - see
+// docs/plans/2026-09-11-engine-layer-plumbing.md and TerrainContourDrawableUBO's own comment in
+// terrain_contour_layer_ubo.hpp for why the fragment stage needs its own copy rather than
+// reading idTerrainContourDrawableUBO (that id is idDrawableReservedVertexOnlyUBO, which
+// mtl::UniformBufferArray::bindMtl binds to the vertex stage only).
 enum {
-    idTerrainContourDrawableUBO = idDrawableReservedVertexOnlyUBO, // SSBO
+    idTerrainContourDrawableUBO = idDrawableReservedVertexOnlyUBO,    // SSBO
+    idTerrainContourTilePropsUBO = idDrawableReservedFragmentOnlyUBO, // SSBO
     terrainContourLayerSSBOCount = drawableReservedUBOCount
 };
 

@@ -34,6 +34,18 @@ constexpr auto terrainContourShaderPrelude = R"(
 
 enum {
     idTerrainContourDrawableUBO = idDrawableReservedVertexOnlyUBO,
+    // Fragment-only per-tile data. NOT the same buffer as idTerrainContourDrawableUBO above:
+    // mtl::UniformBufferArray::bindMtl (src/mln/mtl/uniform_buffer.cpp:39-51) binds a buffer at
+    // idDrawableReservedVertexOnlyUBO to the vertex stage only, so a fragment shader reading it
+    // sees an unbound argument-table slot - every field, including dem_enabled, reads back as
+    // 0.0 regardless of which tile's drawable is being drawn (see TerrainContourDrawableUBO's
+    // own comment in terrain_contour_layer_ubo.hpp for the full account of the bug this caused:
+    // zero contour pixels at every pitch). The fields the fragment stage needs are duplicated
+    // into TerrainContourTilePropsUBO, filled in lockstep with the drawable UBO by
+    // TerrainContourLayerTweaker::execute, and bound at this reserved fragment-only id instead -
+    // the same split hillshade/symbol/line/terrain all use for their own vertex- vs
+    // fragment-only per-drawable data.
+    idTerrainContourTilePropsUBO = idDrawableReservedFragmentOnlyUBO,
     idTerrainContourEvaluatedPropsUBO = drawableReservedUBOCount,
     terrainContourUBOCount
 };
@@ -46,11 +58,21 @@ struct alignas(16) TerrainContourDrawableUBO {
     /*  96 */ float dem_dim;
     /* 100 */ float dem_exaggeration;
     /* 104 */ float dem_enabled;
-
-    /* 108 */ float reference_w;
+    /* 108 */ float pad0;
     /* 112 */
 };
 static_assert(sizeof(TerrainContourDrawableUBO) == 7 * 16, "wrong size");
+
+struct alignas(16) TerrainContourTilePropsUBO {
+    /*  0 */ float4 dem_coords;
+    /* 16 */ float4 dem_unpack;
+    /* 32 */ float dem_dim;
+    /* 36 */ float dem_exaggeration;
+    /* 40 */ float dem_enabled;
+    /* 44 */ float reference_w;
+    /* 48 */
+};
+static_assert(sizeof(TerrainContourTilePropsUBO) == 3 * 16, "wrong size");
 
 struct alignas(16) TerrainContourEvaluatedPropsUBO {
     /*  0 */ float4 minor_color;
@@ -153,7 +175,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
 
 FragmentOut fragment fragmentMain(FragmentStage in [[stage_in]],
                                   device const uint32_t& uboIndex [[buffer(idGlobalUBOIndex)]],
-                                  device const TerrainContourDrawableUBO* drawableVector [[buffer(idTerrainContourDrawableUBO)]],
+                                  device const TerrainContourTilePropsUBO* tilePropsVector [[buffer(idTerrainContourTilePropsUBO)]],
                                   device const TerrainContourEvaluatedPropsUBO& props [[buffer(idTerrainContourEvaluatedPropsUBO)]],
                                   texture2d<float, access::sample> demTexture [[texture(0)]],
                                   sampler demSampler [[sampler(0)]]) {
@@ -174,7 +196,12 @@ FragmentOut fragment fragmentMain(FragmentStage in [[stage_in]],
     return out;
 #endif
 
-    device const TerrainContourDrawableUBO& drawable = drawableVector[uboIndex];
+    // idTerrainContourTilePropsUBO, NOT idTerrainContourDrawableUBO - the drawable UBO is bound
+    // at idDrawableReservedVertexOnlyUBO, which mtl::UniformBufferArray::bindMtl only binds to
+    // the vertex stage (see the long comment on TerrainContourDrawableUBO in
+    // terrain_contour_layer_ubo.hpp for the bug that reading it here caused). This tile-props
+    // UBO carries the same dem_* fields, duplicated for the fragment stage.
+    device const TerrainContourTilePropsUBO& tileProps = tilePropsVector[uboIndex];
 
     // Skirt curtains hang below the surface to hide cracks between neighbouring terrain tiles;
     // a contour line has no business being drawn on a near-vertical hidden curtain, so those
@@ -185,12 +212,12 @@ FragmentOut fragment fragmentMain(FragmentStage in [[stage_in]],
         return out;
     }
 
-    const float e = get_elevation(in.pos_extent, demTexture, demSampler, drawable.dem_coords, drawable.dem_unpack,
-                                  drawable.dem_dim, drawable.dem_exaggeration, drawable.dem_enabled);
+    const float e = get_elevation(in.pos_extent, demTexture, demSampler, tileProps.dem_coords, tileProps.dem_unpack,
+                                  tileProps.dem_dim, tileProps.dem_exaggeration, tileProps.dem_enabled);
 
     // position.w from a Metal fragment [[position]] is already 1/w_clip, the same quantity
     // GLSL's gl_FragCoord.w carries - no conversion needed at this call site.
-    const float widthScale = max(drawable.reference_w * in.position.w, 0.0);
+    const float widthScale = max(tileProps.reference_w * in.position.w, 0.0);
 
     const float gradIndex = props.index_interval > 0.0 ? fwidth(e / props.index_interval) : 0.0;
     const float gradMinor = props.minor_interval > 0.0 ? fwidth(e / props.minor_interval) : 0.0;

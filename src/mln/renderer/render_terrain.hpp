@@ -181,6 +181,44 @@ public:
     std::optional<double> queryElevationForLatLng(const LatLng& latLng) const;
 
     /**
+     * @brief DuckMaps fork only, task C1: debug instrumentation for the elevation query.
+     *
+     * Result of `probeElevationForLatLng`: the exaggerated elevation `queryElevationForLatLng`
+     * would have returned, plus the identity of the DEM tile that actually served it, so a trace
+     * can show that the elevation of a fixed point is a function of which DEM tile happens to be
+     * resident, not of the point.
+     */
+    struct ElevationProbe {
+        bool hit = false;    ///< false when no loaded DEM tile covers the point at all
+        float meters = 0.0f; ///< exaggerated elevation in metres; meaningless when !hit
+        uint8_t demZ = 0;    ///< canonical z of the DEM tile that served the sample
+        uint32_t demX = 0;   ///< canonical x of the DEM tile that served the sample
+        uint32_t demY = 0;   ///< canonical y of the DEM tile that served the sample
+        bool exact = false;  ///< true when demZ equalled the requested sample tile's z (no
+                              ///< ancestor fallback)
+    };
+
+    /**
+     * @brief DuckMaps fork only, task C1: same "sample as deep as the finest DEM tile loaded"
+     * walk as `queryElevationForLatLng`, but also reports which DEM tile served the sample.
+     * Debug-only; not called unless the elevation trace (`DUCKMAPS_ELEVATION_TRACE`) is on.
+     *
+     * @param latLng the position to sample
+     * @return an ElevationProbe with hit=false when no loaded DEM tile covers the point
+     */
+    ElevationProbe probeElevationForLatLng(const LatLng& latLng) const;
+
+    /**
+     * @brief DuckMaps fork only, task C1: the canonical z/x/y of every DEM tile currently
+     * resident in the terrain's DEM source (the same `demSource->getRawRenderTiles()` scanned
+     * by `getElevation`/`queryElevation`/`probeElevationForLatLng`), for the debug elevation
+     * trace's `demTiles` field. Debug-only; not called unless the elevation trace is on. Not
+     * wrap-aware: the trace only needs which physical tiles are loaded, not which copy of the
+     * antimeridian each is currently wrapped to.
+     */
+    std::vector<CanonicalTileID> getResidentDemTileIds() const;
+
+    /**
      * @brief Get the terrain exaggeration multiplier
      */
     float getExaggeration() const;
@@ -346,6 +384,29 @@ private:
      * @return Elevation in meters, or nullopt when no loaded DEM tile covers the point
      */
     std::optional<float> queryElevation(const UnwrappedTileID& tileID, float x, float y) const;
+
+    /**
+     * @brief DuckMaps fork only, task C1: the scan-and-bilinear body shared by `getElevation`,
+     * `queryElevation` and `probeElevationForLatLng`, factored out so the probe is not a third
+     * copy. Behaviour-identical to the two bodies it replaces: same tile walk (requested tile or
+     * its closest loaded ancestor among `demSource->getRawRenderTiles()`, picking the candidate
+     * with the highest `canonical.z`), same bilinear interpolation. `hit` is false in every case
+     * `getElevation` used to fall back to a bare 0.0f (no DEM source, past a pole, no covering
+     * tile, not a decoded RasterDEM tile, no bucket, no decoded image) and every case
+     * `queryElevation` used to return `std::nullopt`.
+     * @param tileID The tile containing the coordinate
+     * @param x X coordinate within the tile, may be outside [0, EXTENT)
+     * @param y Y coordinate within the tile, may be outside [0, EXTENT)
+     */
+    struct ElevationSample {
+        bool hit = false;
+        float meters = 0.0f;
+        uint8_t demZ = 0;
+        uint32_t demX = 0;
+        uint32_t demY = 0;
+        bool exact = false;
+    };
+    ElevationSample findElevationSample(const UnwrappedTileID& tileID, float x, float y) const;
 
     /**
      * @brief Generate terrain mesh geometry

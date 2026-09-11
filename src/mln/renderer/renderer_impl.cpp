@@ -33,6 +33,13 @@
 #include <mln/renderer/dem_elevation_provider.hpp>
 #include <mln/renderer/layers/terrain_layer_tweaker.hpp>
 #include <mln/util/tile_cover.hpp>
+#include <mln/util/geo.hpp>             // elevation trace: complete LatLng type (task C1)
+#include <mln/util/monotonic_timer.hpp> // elevation trace: tMs (task C1)
+
+#include <cstdio>  // elevation trace: fopen/fwrite/fflush (task C1)
+#include <cstdlib> // elevation trace: getenv (task C1)
+#include <iomanip> // elevation trace: setprecision (task C1)
+#include <sstream> // elevation trace: ostringstream (task C1)
 
 #if MLN_RENDER_BACKEND_METAL
 #include <mln/mtl/renderer_backend.hpp>
@@ -808,6 +815,87 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             centerElevationSettling = ++centerElevationSettleFrames <= kMaxCenterElevationSettleFrames;
         } else {
             centerElevationSettleFrames = 0;
+        }
+    }
+
+    // DuckMaps fork only, task C1: debug-only, off-by-default per-frame elevation trace. Purely
+    // observational - it reads transformState and calls RenderTerrain's own (also new, also
+    // read-only) probe accessors, and changes no camera or elevation behaviour. The env var is
+    // read once, on the first frame rendered by this process; unset or empty skips this whole
+    // block every frame after, including the probe calls, so tracing costs nothing when off.
+    {
+        struct ElevationTraceSink {
+            bool enabled = false;
+            std::FILE* file = nullptr;
+        };
+        static const ElevationTraceSink sink = [] {
+            ElevationTraceSink s;
+            const char* path = std::getenv("DUCKMAPS_ELEVATION_TRACE");
+            if (path && *path) {
+                s.file = std::fopen(path, "a");
+                s.enabled = (s.file != nullptr);
+            }
+            return s;
+        }();
+
+        if (sink.enabled) {
+            static uint64_t elevationTraceFrame = 0;
+            static double elevationTraceStartS = -1.0;
+            const double nowS = util::MonotonicTimer::now().count();
+            if (elevationTraceStartS < 0.0) {
+                elevationTraceStartS = nowS;
+            }
+            const double tMs = (nowS - elevationTraceStartS) * 1000.0;
+
+            auto* traceTerrain = orchestrator.getRenderTerrain();
+            const auto& transformState = updateParameters->transformState;
+            const LatLng traceCenterLatLng = transformState.getLatLng();
+            const LatLng traceCameraLatLng = transformState.getCameraLatLng();
+
+            const RenderTerrain::ElevationProbe centerProbe =
+                traceTerrain ? traceTerrain->probeElevationForLatLng(traceCenterLatLng)
+                             : RenderTerrain::ElevationProbe{};
+            const RenderTerrain::ElevationProbe cameraProbe =
+                traceTerrain ? traceTerrain->probeElevationForLatLng(traceCameraLatLng)
+                             : RenderTerrain::ElevationProbe{};
+
+            std::ostringstream os;
+            os << std::fixed << std::setprecision(8);
+            os << "{\"frame\":" << elevationTraceFrame << ",\"tMs\":" << tMs << ",\"lng\":"
+               << traceCenterLatLng.longitude() << ",\"lat\":" << traceCenterLatLng.latitude()
+               << ",\"zoom\":" << transformState.getZoom() << ",\"pitch\":" << transformState.getPitch()
+               << ",\"bearing\":" << transformState.getBearing()
+               << ",\"centerAltitudeM\":" << transformState.getCenterAltitude() // already metres:
+               // TransformState::getCenterAltitude() returns z (pixel-space altitude) multiplied
+               // by metres-per-pixel at the centre latitude/zoom, so no pixel->metre conversion
+               // is needed here.
+               << ",\"exaggeration\":" << (traceTerrain ? traceTerrain->getExaggeration() : 0.0f)
+               << ",\"gestureInProgress\":" << (transformState.isGestureInProgress() ? "true" : "false")
+               << ",\"terrain\":" << (traceTerrain ? "true" : "false") << ",\"center\":{\"m\":"
+               << centerProbe.meters << ",\"demZ\":" << static_cast<int>(centerProbe.demZ)
+               << ",\"demX\":" << centerProbe.demX << ",\"demY\":" << centerProbe.demY
+               << ",\"exact\":" << (centerProbe.exact ? "true" : "false")
+               << ",\"hit\":" << (centerProbe.hit ? "true" : "false") << "}" << ",\"cameraGround\":{\"m\":"
+               << cameraProbe.meters << ",\"demZ\":" << static_cast<int>(cameraProbe.demZ)
+               << ",\"demX\":" << cameraProbe.demX << ",\"demY\":" << cameraProbe.demY
+               << ",\"exact\":" << (cameraProbe.exact ? "true" : "false")
+               << ",\"hit\":" << (cameraProbe.hit ? "true" : "false") << "}" << ",\"demTiles\":[";
+            if (traceTerrain) {
+                bool firstDemTile = true;
+                for (const auto& id : traceTerrain->getResidentDemTileIds()) {
+                    if (!firstDemTile) {
+                        os << ",";
+                    }
+                    firstDemTile = false;
+                    os << "\"" << static_cast<int>(id.z) << "/" << id.x << "/" << id.y << "\"";
+                }
+            }
+            os << "]}\n";
+
+            const std::string line = os.str();
+            std::fwrite(line.data(), 1, line.size(), sink.file);
+            std::fflush(sink.file); // the process is killed, not quit; flush every line
+            ++elevationTraceFrame;
         }
     }
 

@@ -109,14 +109,25 @@ struct DashPeriod {
     float on = 1.0f;
 };
 
-DashPeriod computeDashPeriodExtent(const std::array<float, 2>& dasharray,
+// terrain-line-dasharray is std::vector<float> (task 2.2b, matching line-dasharray's own
+// evaluated type - see scripts/style-spec.mjs's comment on this property for why). Only the
+// first two entries are meaningful here (on, off); a vector of length 0 or 1 has no "off" length
+// to speak of and is treated the same as [0, 0] - no dash pattern, draw solid - rather than
+// rejected, since an empty/short dasharray is a legitimate (if unusual) style value, not a style
+// error, and the shader's own dash_period == 0 convention already means exactly that.
+DashPeriod computeDashPeriodExtent(const std::vector<float>& dasharray,
                                    float widthPxAtAnchorZoom,
                                    const CanonicalTileID& tileID) {
-    const float units = dasharray[0] + dasharray[1];
+    if (dasharray.size() < 2) {
+        return {};
+    }
+    const float on0 = dasharray[0];
+    const float off0 = dasharray[1];
+    const float units = on0 + off0;
     if (!(units > 0.0f)) {
         return {};
     }
-    const float on = dasharray[0] / units;
+    const float on = on0 / units;
     const double worldPxAtAnchorZoom = util::tileSize_D * std::exp2(DASH_ANCHOR_ZOOM);
     const double periodMercator = worldPxAtAnchorZoom > 0.0
                                        ? (static_cast<double>(units) * widthPxAtAnchorZoom) / worldPxAtAnchorZoom
@@ -142,10 +153,18 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
 #endif
 
     const float referenceW = computeReferenceClipW(parameters);
-    // pixelRatio isn't in our own UBO (see u_half_px's derivation): the tweaker bakes the
-    // device-pixel half-width straight from the evaluated CSS-pixel width, once per frame.
+    // FAULT 1 FIX (task 2.2b): terrain-line-width/-blur/-offset are all in CSS pixels (points),
+    // NOT device pixels, and so is the shader's own "pixel" space. The vertex shader converts
+    // to/from that space via u_units_to_pixels, which is 1 / PaintParameters::pixelsToGLUnits,
+    // and pixelsToGLUnits is 2 / state.getSize() (paint_parameters.cpp:96) - state.getSize() is
+    // the map's LOGICAL size in points, not the framebuffer's device-pixel size. Multiplying the
+    // evaluated CSS-pixel width by parameters.pixelRatio here (as this line used to) therefore
+    // made every ribbon `pixelRatio` times too wide on screen - e.g. 3x on a dpr-3 device - since
+    // it double-counted a device-pixel conversion the shader's own coordinate space never
+    // performs. u_half_px must stay in the SAME CSS-pixel space u_units_to_pixels already
+    // operates in, so no pixelRatio multiply belongs here at all.
     const float widthPx = evaluated.get<TerrainLineWidth>();
-    const float halfPx = widthPx * parameters.pixelRatio / 2.0f;
+    const float halfPx = widthPx / 2.0f;
     const auto dasharray = evaluated.get<TerrainLineDasharray>();
     // The dash calculation anchors its width lookup at a fixed zoom (DASH_ANCHOR_ZOOM), never
     // at the current frame zoom above - see computeDashPeriodExtent()'s comment.

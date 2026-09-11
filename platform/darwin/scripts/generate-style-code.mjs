@@ -12,14 +12,13 @@ delete styleSpec.layer.type.values["location-indicator"];
 delete styleSpec["layout_location-indicator"]
 delete styleSpec["paint_location-indicator"];
 
-// DuckMaps fork only, task 2.2a: terrain-line has no Objective-C/Swift peer class yet (darwin
-// outcome (b) - see the task's final report). Excluded here the same way location-indicator is
-// above, rather than adding platform/darwin/bazel/files.bzl entries for a peer this task does
-// not build; registered addLayerTypeCoreOnly in MLNStyleLayerManager.mm instead of addLayerType,
-// so style JSON parses and renders it but Swift/ObjC cannot yet find or mutate it (task 2.5).
-delete styleSpec.layer.type.values["terrain-line"];
-delete styleSpec["layout_terrain-line"];
-delete styleSpec["paint_terrain-line"];
+// Task 2.2b: terrain-line-dasharray is now std::vector<float> (matching line-dasharray's own
+// evaluated type and this generator's own arrayType()==='dasharray' hardcode - see
+// scripts/style-spec.mjs's comment on the property and 1246a22df7f0's task 2.2b-i note this
+// commit resolves). With that the darwin generator produces MLNTerrainLineStyleLayer cleanly for
+// all nine paint properties (verified: `bazel build //platform/darwin:generated_code
+// //platform/darwin:symbols-to-check`), so the 2.2a/2.2b-i exclusion is gone and the peer is
+// wired up for real below (files.bzl, MLNStyleLayerManager.mm).
 
 // DuckMaps fork only, task 2.4a: terrain-contour has no Objective-C/Swift peer class either,
 // same reasoning as terrain-line above - registered addLayerTypeCoreOnly in

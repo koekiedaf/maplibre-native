@@ -255,7 +255,7 @@ modifiedReferenceSpec["paint_terrain-line"] = {
       "minimum": 0,
       "units": "pixels",
       "transition": true,
-      "doc": "Full ribbon width in CSS pixels at the map centre; half-width in device pixels (width * pixelRatio / 2) is shader u_half_px.",
+      "doc": "Full ribbon width in CSS pixels (points) at the map centre - the same coordinate space PaintParameters::units_to_pixels operates in (state.getSize()'s LOGICAL size, not the device-pixel framebuffer). Half-width, still in CSS pixels, is shader u_half_px; task 2.2b removed a pixelRatio multiply here that had made every ribbon pixelRatio times too wide on screen.",
       "expression": {
           "interpolated": true,
           "parameters": ["zoom"]
@@ -264,11 +264,27 @@ modifiedReferenceSpec["paint_terrain-line"] = {
   },
   "terrain-line-blur": {
       "type": "number",
-      "default": 1,
+      // Task 2.2b: default lowered from 1 to 0.5 CSS pixel. This value, like terrain-line-width,
+      // is in CSS pixels (points), the same space u_units_to_pixels operates in - see that
+      // property's doc. The web engine's own u_edge_px is a FIXED 1 DEVICE pixel, which is
+      // 1/pixelRatio CSS px: 0.5 at the common dpr-2 target, ~0.33 at dpr-3. Our engine has no
+      // per-instance dpr-aware default (a style constant cannot read the device it will render
+      // on), so 0.5 CSS px is chosen as the closest single value to the web's look on the most
+      // common target (dpr 2, where it matches exactly) while still being visibly thinner than
+      // the old default of 1 - which, at the CSS-pixel widths this fork typically styles trails
+      // at (around 1.5-2 CSS px, per the flat style's own line-width), fed into the shader's
+      // `a = clamp((half_px - d) / edge_px + 0.5, 0, 1)` coverage ramp and washed a body-width
+      // ribbon out to little more than its own feather - a "1 CSS px line under a 1 CSS px
+      // feather" problem the task brief called out by name. This default only affects paint
+      // properties that do NOT set their own terrain-line-blur - the halo passes the flat
+      // style's own line-blur (2 CSS px) explicitly (container/server/app/map/native_lines.py),
+      // so they are unaffected by this change and keep looking like the flat style's own blurred
+      // halo.
+      "default": 0.5,
       "minimum": 0,
       "units": "pixels",
       "transition": true,
-      "doc": "Anti-aliasing edge feather in device pixels (shader u_edge_px); 1 for a crisp line, larger for a halo layer.",
+      "doc": "Anti-aliasing edge feather in CSS pixels (points), matching terrain-line-width's own units (shader u_edge_px); a small value for a crisp line, larger for a halo layer.",
       "expression": {
           "interpolated": true,
           "parameters": ["zoom"]
@@ -278,19 +294,28 @@ modifiedReferenceSpec["paint_terrain-line"] = {
   "terrain-line-dasharray": {
       "type": "array",
       "value": "number",
-      "length": 2,
-      // [0, 0] rather than [] - functionally identical (both mean "no dash pattern, draw a
-      // continuous line", the tweaker's dash_period == 0 case) but an empty default array makes
-      // the generator emit an ambiguous PropertyValue<std::array<float, 2>> constructor call
-      // (ambiguous between the constant and expression overloads) for a fixed-length array type.
-      // Not worth a generator/template change for; every other fixed-length array property in
-      // this spec (line-translate, location-indicator's location) already supplies a non-empty
-      // default for the same reason.
+      // Task 2.2b: no "length": 2 here any more. It used to be a fixed-length
+      // std::array<float, 2>, deliberately typed differently from line-dasharray
+      // (std::vector<float>) per 2.2a's own design note - but that is exactly what made the
+      // darwin peer generator's mbglType()/arrayType() (which hardcode every "*-dasharray"-named
+      // property to std::vector<float>, matching line-dasharray) fail to generate
+      // MLNTerrainLineStyleLayer for this one property (task 2.2b-i, reverted in commit
+      // 1246a22d; the other eight properties generated cleanly). Typing it std::vector<float>
+      // here instead - a plain, non-cross-faded, non-data-driven PaintProperty<std::vector<float>>,
+      // exactly like line-dasharray's own evaluated type, just without the cross-fade machinery -
+      // matches the darwin generator's existing hardcoded assumption for free, unblocking the
+      // peer (see platform/darwin/scripts/generate-style-code.mjs). The tweaker
+      // (TerrainLineLayerTweaker::execute) reads only the first two entries as [on, off] and
+      // ignores anything past index 1 (a vector of length 0 or 1 is treated as "no dash", the
+      // same as [0, 0] - see the tweaker's comment at the point that reads this property).
+      // [0, 0] rather than [] as the default for the same ambiguous-constructor reason 2.2a's
+      // note described (still applies to a length-less array's PropertyValue<T> constant vs.
+      // expression overload resolution).
       "default": [0, 0],
       "minimum": 0,
       "units": "line widths",
       "transition": true,
-      "doc": "Dash on/off lengths in width units, exactly like line-dasharray. [0, 0] (the default) means a continuous line.",
+      "doc": "Dash on/off lengths in width units, exactly like line-dasharray. Only the first two entries are read (on, off); [0, 0] (the default) means a continuous line.",
       "expression": {
           "interpolated": false,
           "parameters": ["zoom"]
@@ -302,7 +327,7 @@ modifiedReferenceSpec["paint_terrain-line"] = {
       "default": 0,
       "units": "pixels",
       "transition": true,
-      "doc": "Constant sideways offset in device pixels (shader u_rail_offset), for the track ladder's two rails.",
+      "doc": "Constant sideways offset in CSS pixels (points), matching terrain-line-width's own units (shader u_rail_offset), for the track ladder's two rails.",
       "expression": {
           "interpolated": true,
           "parameters": ["zoom"]

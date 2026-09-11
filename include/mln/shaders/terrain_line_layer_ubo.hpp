@@ -47,15 +47,18 @@ static_assert(sizeof(TerrainLineDrawableUBO) == 8 * 16);
 struct alignas(16) TerrainLineEvaluatedPropsUBO {
     /*  0 */ Color color;
     /* 16 */ float opacity;
-    // terrain-line-width * pixelRatio / 2, in device pixels. Doubles as u_cap_px (the web's
-    // drawFamilyPasses sets cap = halfPx too, routes3d.js:1120-1121) - square caps extend the
-    // ribbon by the same half width, so it is not a separate property, just this value reused.
+    // terrain-line-width / 2, in CSS pixels (points) - see TerrainLineLayerTweaker::execute's
+    // FAULT 1 FIX comment: this is NOT device pixels, and must not be multiplied by pixelRatio.
+    // Doubles as u_cap_px (the web's drawFamilyPasses sets cap = halfPx too, routes3d.js:
+    // 1120-1121) - square caps extend the ribbon by the same half width, so it is not a separate
+    // property, just this value reused.
     /* 20 */ float half_px;
-    /* 24 */ float edge_px;     // terrain-line-blur, the AA feather (u_edge_px)
-    /* 28 */ float rail_offset; // terrain-line-offset, in device pixels (u_rail_offset)
+    /* 24 */ float edge_px;     // terrain-line-blur, the AA feather, CSS pixels (u_edge_px)
+    /* 28 */ float rail_offset; // terrain-line-offset, CSS pixels (u_rail_offset)
     /* 32 */ float depth_bias;  // constant DEPTH_BIAS = 0.00002, matching routes3d.js:100
                                 // 2.2b fields: parsed and evaluated now so 2.2b is shader-only, but not yet read by the
-                                // shader (no terrain occlusion test or distance fade in this first cut).
+                                // shader (no terrain occlusion test or distance fade in this first cut - deferred past
+                                // 2.2b; see task brief. Left inert here on purpose).
     /* 36 */ float ghost_opacity;
     /* 40 */ float fade;
     /* 44 */ float fade_distance;

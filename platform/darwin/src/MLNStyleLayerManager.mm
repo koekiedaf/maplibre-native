@@ -11,6 +11,7 @@
 #import "MLNLineStyleLayer_Private.h"
 #import "MLNRasterStyleLayer_Private.h"
 #import "MLNSymbolStyleLayer_Private.h"
+#import "MLNTerrainLineStyleLayer_Private.h"
 
 #import "MLNCustomDrawableStyleLayer_Private.h"
 
@@ -84,10 +85,11 @@ LayerManagerDarwin::LayerManagerDarwin() {
   addLayerType(std::make_unique<CustomDrawableStyleLayerPeerFactory>());
 #endif
 
-  // DuckMaps fork only, task 2.2a: no Objective-C/Swift peer class yet (darwin outcome (b) - see
-  // the task's final report), so style JSON parses and renders terrain-line but Swift/ObjC
-  // cannot find or mutate the layer through MLNStyle yet (task 2.5 will need to add one).
-  addLayerTypeCoreOnly(std::make_unique<TerrainLineLayerFactory>());
+  // DuckMaps fork, task 2.2b: terrain-line-dasharray is now std::vector<float> (matching
+  // line-dasharray's own evaluated type), which unblocks the darwin generator for all nine paint
+  // properties (task 2.2a/2.2b-i's own dasharray-shaped blocker, see the generator's own comment
+  // in generate-style-code.mjs). terrain-line now has a real Objective-C/Swift peer.
+  addLayerType(std::make_unique<TerrainLineStyleLayerPeerFactory>());
 
   // DuckMaps fork only, task 2.4a: same reasoning as terrain-line above - no Objective-C/Swift
   // peer class yet, style JSON parses and renders terrain-contour but Swift/ObjC cannot find or

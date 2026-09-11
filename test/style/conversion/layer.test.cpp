@@ -206,7 +206,7 @@ TEST(StyleConversion, TerrainLineProperties) {
     EXPECT_EQ((PropertyValue<float>{0.75f}), terrainLine->getTerrainLineOpacity());
     EXPECT_EQ((PropertyValue<float>{4.5f}), terrainLine->getTerrainLineWidth());
     EXPECT_EQ((PropertyValue<float>{1.5f}), terrainLine->getTerrainLineBlur());
-    EXPECT_EQ((PropertyValue<std::array<float, 2>>{std::array<float, 2>{{4.f, 2.f}}}),
+    EXPECT_EQ((PropertyValue<std::vector<float>>{std::vector<float>{4.f, 2.f}}),
              terrainLine->getTerrainLineDasharray());
     EXPECT_EQ((PropertyValue<float>{3.0f}), terrainLine->getTerrainLineOffset());
     EXPECT_EQ((PropertyValue<float>{0.3f}), terrainLine->getTerrainLineGhostOpacity());

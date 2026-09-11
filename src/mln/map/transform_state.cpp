@@ -768,6 +768,18 @@ bool TransformState::isGestureInProgress() const {
     return gestureInProgress;
 }
 
+void TransformState::setGestureInProgress(bool val) {
+    if (val && !gestureInProgress) {
+        // False-to-true edge: record the whole gesture's floors once, before its first frame.
+        gestureFloorZoom = getZoom();
+        gestureFloorPitch = getPitch();
+    } else if (!val && gestureInProgress) {
+        gestureFloorZoom.reset();
+        gestureFloorPitch.reset();
+    }
+    gestureInProgress = val;
+}
+
 // MARK: - Projection
 
 double TransformState::zoomScale(double zoom) const {
@@ -1111,6 +1123,14 @@ void TransformState::constrainCameraAboveTerrain(bool zoomRequested, bool pitchR
         return;
     }
 
+    // An iOS pinch arrives as one transition per touch-move, so a per-transition floor
+    // (previousZoom/previousPitch) is not a floor at all: the previous touch-move's clamp has
+    // already lowered the state this touch-move's previousZoom is read from. While a gesture is
+    // in progress the floors recorded once at its start (setGestureInProgress) are used instead,
+    // so the floor spans the whole gesture rather than resetting every frame.
+    const double zoomFloor = (gestureInProgress && gestureFloorZoom) ? *gestureFloorZoom : previousZoom;
+    const double pitchFloor = (gestureInProgress && gestureFloorPitch) ? *gestureFloorPitch : previousPitch;
+
     // A pitch-only change (the two-finger tilt gesture) is answered as a tilt: clamp PITCH only
     // and leave the zoom exactly where the caller put it. Every other case - a zoom change, a
     // centre change, both at once, or neither (the terrain-elevation-changed correction) - clamps
@@ -1138,7 +1158,7 @@ void TransformState::constrainCameraAboveTerrain(bool zoomRequested, bool pitchR
                     // remainder must not undo camera the user did not ask to move on that axis
                     // either. Only a pan's centre change or the bare CameraOptions() the terrain-
                     // rise channel sends - neither axis requested - leaves both floors inert.
-                    zoomMax = std::min(std::max(zoomMax, previousZoom), requestedZoom);
+                    zoomMax = std::min(std::max(zoomMax, zoomFloor), requestedZoom);
                 }
                 // setLatLngZoom changes zoom but not z, and getCenterAltitude() reinterprets that
                 // raw z at whatever zoom is current - so the centre altitude has to be re-pinned
@@ -1167,7 +1187,7 @@ void TransformState::constrainCameraAboveTerrain(bool zoomRequested, bool pitchR
                 // zoom change, a pitch change, or both, this axis (whether it is carrying the
                 // caller's own request or just absorbing the backstop remainder from the zoom
                 // clamp above) may not be lowered past the pitch the transition started from.
-                pitchMax = std::min(std::max(pitchMax, previousPitch), requestedPitch);
+                pitchMax = std::min(std::max(pitchMax, pitchFloor), requestedPitch);
             }
             setPitch(util::clamp(pitchMax, minPitch, maxPitch));
         }

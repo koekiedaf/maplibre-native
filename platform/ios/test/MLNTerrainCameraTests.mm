@@ -274,6 +274,59 @@ private:
   XCTAssertLessThanOrEqual(resultPitchDeg, 70.0 + 1e-6);
 }
 
+// The defect this round exists to prevent: an iOS pinch is not one transition. MLNMapView's
+// handlePinchGesture sends a separate jumpTo(CameraOptions().withZoom(...).withAnchor(...)) for
+// every touch-move, so Transform::startTransition captures a fresh previousZoom on each one. A
+// pure sequence of zoom-requested jumpTo calls alone cannot ratchet below start under either the
+// old or the new code, because each one is floored against the actual zoom left by the one before
+// it. What ratchets it down is the OTHER caller sharing this same funnel while the gesture runs:
+// the render thread's own terrain-rise correction (Map::Impl::onTerrainCameraGroundRiseChanged)
+// posts a bare jumpTo(CameraOptions()) - requesting neither axis - on every frame the camera's
+// ground point creeps onto higher terrain, which is exactly the frames a zoom-in pinch produces.
+// That correction is deliberately UNFLOORED even after this fix (rule 2: a change that requests
+// neither axis reduces freely), so it can and does pull the zoom down mid-gesture. What must not
+// happen is the gesture ending there: the next touch-move's own floored jumpTo has to pull it back
+// up to no lower than where the gesture started. Under the old per-transition floor it does not,
+// because that floor reads previousZoom fresh from the state the unfloored correction just
+// lowered, and re-floors against that lowered value instead of the gesture's own start - so it
+// ends the gesture below start, identical to having no floor at all. Under the new gesture floor
+// it does, because the floor is the zoom recorded once at the gesture's start, not the state's own
+// zoom a moment ago.
+- (void)testGestureFloorSpansTheWholeGestureNotJustOneTransition {
+  mln::Transform transform;
+  gavarnie(transform, 45.0, 1700.0);
+  const double startZoom = transform.getZoom();
+  const double startPitchDeg = mln::util::rad2deg(transform.getPitch());
+  XCTAssertEqualWithAccuracy(startZoom, 14.2, 1e-6, @"comfortably clear: no rise reported yet");
+
+  transform.setGestureInProgress(true);
+
+  // Each step is one touch-move: a jumpTo asking for a little more zoom (the pinch's own
+  // request), immediately followed by a growing reported rise and a bare jumpTo(CameraOptions())
+  // - the render thread's terrain-rise correction, sent as the camera's ground point walks onto
+  // higher terrain while the pinch zooms in, exactly as Map::Impl::onTerrainCameraGroundRiseChanged
+  // sends it. At least five zoom-in steps, as the task requires.
+  double requestedZoom = startZoom;
+  double rise = 500.0;
+  for (int i = 0; i < 6; i++) {
+    requestedZoom += 0.2;
+    transform.jumpTo(mln::CameraOptions().withZoom(requestedZoom));
+
+    rise += 400.0;
+    transform.setTerrainCameraGroundRise(rise);
+    transform.jumpTo(mln::CameraOptions());
+  }
+  // The gesture ends on its own touch-move's floored jumpTo, not on a trailing correction, exactly
+  // as a real pinch ends on the finger's last position rather than a render-thread tick.
+  requestedZoom += 0.2;
+  transform.jumpTo(mln::CameraOptions().withZoom(requestedZoom));
+
+  transform.setGestureInProgress(false);
+
+  XCTAssertGreaterThanOrEqual(transform.getZoom(), startZoom - 1e-6);
+  XCTAssertEqualWithAccuracy(mln::util::rad2deg(transform.getPitch()), startPitchDeg, 1e-6);
+}
+
 // The floor only guards a gesture that actually requested a zoom or a pitch change. A centre-only
 // change - no zoom, no pitch in the CameraOptions, the shape moveBy reduces to - requests neither,
 // so both floors stay inert and the clamp must still be free to reduce the zoom when panning

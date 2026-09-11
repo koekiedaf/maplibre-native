@@ -224,7 +224,16 @@ public:
     bool isPanning() const;
     void setPanningInProgress(bool val) { panning = val; }
     bool isGestureInProgress() const;
-    void setGestureInProgress(bool val) { gestureInProgress = val; }
+    /// An iOS pinch is not one transition: `MLNMapView`'s `handlePinchGesture` sends a fresh
+    /// `jumpTo(CameraOptions().withZoom(...).withAnchor(...))` for every touch-move, so
+    /// `Transform::startTransition` captures a new `previousZoom`/`previousPitch` on every one of
+    /// them - a per-transition floor is not a floor at all, since the previous frame's clamp has
+    /// already lowered the value the next frame floors against, and the ratchet from before the
+    /// floor existed walks the zoom down exactly as it did without it. This records the zoom and
+    /// pitch on the false-to-true edge as the floors for the WHOLE gesture, and clears them on the
+    /// true-to-false edge, the same hook and reasoning as the centre-altitude freeze
+    /// (Map::Impl::onTerrainCenterElevationChanged skips while a gesture is in progress).
+    void setGestureInProgress(bool val);
 
     // Conversion
     ScreenCoordinate latLngToScreenCoordinate(const LatLng&) const;
@@ -334,6 +343,15 @@ public:
     /// every frame and never writes the clamp back into the state driving the next frame, so
     /// nothing accumulates; this engine clamps the state itself, so the floor has to do that job
     /// instead.
+    ///
+    /// `previousZoom`/`previousPitch` only floor a single transition, and an iOS pinch is not one
+    /// transition: `MLNMapView`'s `handlePinchGesture` sends a separate
+    /// `jumpTo(CameraOptions().withZoom(...).withAnchor(...))` for every touch-move, so this floor
+    /// reset on every one of them and the ratchet walked the zoom down exactly as before the floor
+    /// existed - measured live, a spread-apart pinch (zoom in) at zoom 15.000 still settled at
+    /// 14.873. While `isGestureInProgress()` is true, the floors recorded once by
+    /// `setGestureInProgress` at the gesture's start are used instead of `previousZoom`/
+    /// `previousPitch`, so the floor spans the whole gesture rather than resetting every frame.
     void constrainCameraAboveTerrain(bool zoomRequested, bool pitchRequested, double previousZoom,
                                      double previousPitch);
 
@@ -411,6 +429,10 @@ private:
     bool scaling = false;
     bool panning = false;
     bool gestureInProgress = false;
+    // The zoom/pitch the moment the current gesture began (the false-to-true edge of
+    // setGestureInProgress), cleared on the true-to-false edge. See constrainCameraAboveTerrain.
+    std::optional<double> gestureFloorZoom;
+    std::optional<double> gestureFloorPitch;
 
     // map position
     double x = 0, y = 0, z = 0;

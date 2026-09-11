@@ -775,6 +775,13 @@ void TransformState::setGestureInProgress(bool val) {
         // constrainCameraAboveTerrain for why they have to survive the gesture.
         terrainCameraFloorZoom = getZoom();
         terrainCameraFloorPitch = getPitch();
+        // Task C2: the plane this gesture is solved on, grabbed once here. It is the centre's own
+        // altitude at this instant and then stops moving, so the ground the fingers grabbed stays
+        // where they grabbed it even though the camera's orbit altitude goes on following the
+        // terrain under the centre for the whole gesture.
+        gesturePlaneAltitude = getCenterAltitude();
+    } else if (!val && gestureInProgress) {
+        gesturePlaneAltitude.reset();
     }
     gestureInProgress = val;
 }

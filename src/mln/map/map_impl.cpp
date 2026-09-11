@@ -324,22 +324,28 @@ void Map::Impl::onTerrainCenterElevationChanged(double elevationMeters) {
     if (!centerClampedToGround) {
         return;
     }
-    // Not while a finger is down. The centre altitude is both the camera's orbit height and the
-    // plane every gesture is solved on (TransformState::getGroundPlaneAltitude), and it arrives
-    // here one frame behind the camera. Letting it move mid-gesture makes the same drag land
-    // differently depending on how fast the frames came, and at Gavarnie pitch 45 it pulled a
-    // 120 point drag back to almost nothing as the clamp chased the terrain the drag was
-    // crossing. It catches up the moment the gesture ends. MapLibre GL JS holds the same thing
-    // still for the same reason, as its elevationFreeze.
-    if (transform.getState().isGestureInProgress()) {
-        return;
-    }
-    // Sub-metre differences are the terrain cover shifting under a camera that just moved,
-    // not the ground actually changing height; acting on them would chase itself.
-    constexpr double minimumChangeMeters = 0.5;
-    if (std::abs(transform.getState().getCenterAltitude() - elevationMeters) < minimumChangeMeters) {
-        return;
-    }
+    // Task C2: this used to drop the message whenever a finger was down, and to drop it again
+    // below a 0.5 m deadband. Both filters had their memory on the wrong side of the boundary.
+    // Renderer::Impl::render advances its own `lastReportedCenterElevation` when it SENDS, so
+    // every value discarded here was one the render side already believed delivered, and it sent
+    // nothing further until the terrain differed from that stale reported value by more than its
+    // own 0.25 m gate. Measured (task C1, development/app-bench/traces/c1-marbore.jsonl and
+    // c1-wall.jsonl): a scripted pinch and pan at Marbore left the camera orbiting a plane
+    // 292.49 m below the ground under the centre, on every frame to the end of the trace, and at
+    // the Gavarnie wall 126.57 m. The eventual correction, whenever some later frame happened to
+    // cross the gate, paid the whole accumulated debt in one step. That is David's altitude flip
+    // and his click on pinch release, and it was a lost message rather than a DEM query.
+    //
+    // So there is now exactly one filter, the render side's 0.25 m gate, and its memory is the
+    // value the camera actually holds, because everything it sends is applied here. The gesture
+    // is still protected, but by the right number: the plane a gesture is solved on is frozen at
+    // the grabbed altitude for the gesture's length (TransformState::setGestureInProgress), so
+    // the camera's orbit altitude is free to follow the ground continuously without moving the
+    // ground under the fingers. MapLibre GL JS separates the same two numbers, and its own
+    // changelog records the same symptom as a bug it fixed by sampling the rendered surface
+    // rather than by freezing harder ("Fix the camera jumping at the end of a pan or zoom gesture
+    // on terrain", #7989, #3982; "gestures are now solved against the elevation of the terrain
+    // under the gesture instead of the frozen center elevation", #8067).
     // Raising the centre onto the terrain moves the orbit plane, not the centre's lng/lat,
     // so this settles rather than feeding back into the next frame's sample.
     transform.jumpTo(CameraOptions().withCenterAltitude(elevationMeters));

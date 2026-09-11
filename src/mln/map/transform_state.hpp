@@ -261,14 +261,24 @@ public:
     /// so a sea-level solve grabs a point centerAltitude*tan(pitch) or more beyond the ground
     /// under the finger and amplifies every pan, pinch and tilt by that much.
     ///
-    /// It is the centre altitude and nothing else, deliberately. The plane and the camera's own
-    /// orbit height have to be the same number: freezing one without the other makes a drag
-    /// solve against a plane the camera is no longer on, and the clamp then pulls the centre
-    /// back every frame - measured as a 120 point drag that moved 19 m instead of 480. What IS
-    /// held still for the length of a gesture is the centre altitude itself, in
-    /// Map::Impl::onTerrainCenterElevationChanged, which is MapLibre GL JS's own elevationFreeze
-    /// rule; both numbers then stay consistent because there is only one of them.
-    double getGroundPlaneAltitude() const { return getCenterAltitude(); }
+    /// While a gesture is running it is the altitude the gesture GRABBED, captured once on the
+    /// gesture's first frame (`setGestureInProgress`) and held until the fingers lift; otherwise
+    /// it is the centre's own altitude. Task C2 separated the two, and the separation is the
+    /// whole point: the camera's orbit altitude has to keep following the ground under the centre
+    /// every frame (see `Map::Impl::onTerrainCenterElevationChanged`), while the plane a gesture
+    /// is solved on must not move under the fingers that grabbed it. MapLibre GL JS holds the
+    /// same two numbers apart, as `HandlerManager._terrainGestureElevation` against the
+    /// transform's own elevation.
+    ///
+    /// Task 2.0 made these one number and recorded why: an earlier attempt at a separate frozen
+    /// plane turned a 120 point drag into 19 m instead of 480. That attempt failed for a reason
+    /// that is now fixed rather than avoided - `Transform::moveBy` re-cast the CENTRE as a ray on
+    /// the frozen plane, and a centre ray solved on any plane but the centre's own lands
+    /// (plane - centerAltitude) * tan(pitch) away, which the moving centre altitude then fought
+    /// every frame. `moveBy` now takes the difference of two rays on the SAME plane, so the
+    /// plane's own offset cancels exactly and a frozen plane cannot drift the centre. That is the
+    /// rule `moveLatLng` below already followed and the one GL JS's `setLocationAtPoint` states.
+    double getGroundPlaneAltitude() const { return gesturePlaneAltitude.value_or(getCenterAltitude()); }
     // Implements mapbox-gl-js pointCoordinate() : MercatorCoordinate.
     // `targetZ` is the world z of the plane to intersect, in metres above sea level.
     TileCoordinate screenCoordinateToTileCoordinate(const ScreenCoordinate&,
@@ -445,6 +455,12 @@ private:
     bool scaling = false;
     bool panning = false;
     bool gestureInProgress = false;
+
+    /// The ground plane the running gesture was solved on, in metres above sea level, captured on
+    /// the gesture's false-to-true edge and cleared when it ends. Empty means no gesture, and
+    /// `getGroundPlaneAltitude` then reads the centre's own altitude. See that accessor for why
+    /// this is not the same number as the camera's orbit altitude.
+    std::optional<double> gesturePlaneAltitude;
     // The zoom/pitch floor: set the moment a gesture begins (the false-to-true edge of
     // setGestureInProgress) and NOT cleared when the gesture ends - it persists so the terrain-
     // rise correction cannot ratchet the camera past where the gesture that provoked it started.

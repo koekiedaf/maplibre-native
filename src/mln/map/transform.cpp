@@ -422,16 +422,34 @@ void Transform::moveBy(const ScreenCoordinate& offset, const AnimationOptions& a
         }
     }
 
-    ScreenCoordinate pointOnScreen = state.getEdgeInsets().getCenter(state.getSize().width, state.getSize().height) -
-                                     centerOffset;
+    const ScreenCoordinate centerOnScreen = state.getEdgeInsets().getCenter(state.getSize().width,
+                                                                           state.getSize().height);
+    const ScreenCoordinate pointOnScreen = centerOnScreen - centerOffset;
+
     // Solved on the terrain's ground plane, not sea level. With 3D terrain the camera orbits a
     // centre `getGroundPlaneAltitude()` metres up, so a sea-level solve would land the new centre
     // roughly that height times tan(pitch) beyond the ground under the finger and turn a
-    // hundred-point drag into a flight of kilometres. At pitch 0 this plane is exactly the
-    // camera-to-centre distance away, so a drag moves exactly its own pixels of ground.
-    // Use unwrapped LatLng to carry information about moveBy direction.
+    // hundred-point drag into a flight of kilometres.
+    //
+    // Task C2: the new centre is the current centre PLUS the difference of two rays cast on the
+    // same plane, not a single ray re-casting the centre. A centre ray solved on a plane at
+    // altitude P lands (P - centerAltitude) * tan(pitch) away from the true centre; taking the
+    // difference of the two rays cancels that term exactly, whatever P is, so the pan is correct
+    // even while the gesture's frozen plane and the camera's own centre altitude differ - which
+    // they now do for the whole length of a gesture. Casting a single centre ray is what made the
+    // earlier attempt at a separate gesture plane move a 120 point drag 19 m instead of 480
+    // (recorded in 2026-09-11-terrain-camera.md, section 7). It is also `moveLatLng`'s own rule
+    // and MapLibre GL JS's `setLocationAtPoint` rule: take the centre exactly, never re-cast it.
+    // Unwrapped LatLng throughout, to carry the direction of the move across the antimeridian.
+    const double plane = state.getGroundPlaneAltitude();
+    const double moveScale = state.getScale();
+    const auto centerCoord = Projection::project(state.getLatLng(LatLng::Unwrapped), moveScale);
+    const auto fromCoord = Projection::project(screenCoordinateToLatLng(centerOnScreen, plane, LatLng::Unwrapped),
+                                               moveScale);
+    const auto toCoord = Projection::project(screenCoordinateToLatLng(pointOnScreen, plane, LatLng::Unwrapped),
+                                             moveScale);
     easeTo(CameraOptions().withCenter(
-               screenCoordinateToLatLng(pointOnScreen, state.getGroundPlaneAltitude(), LatLng::Unwrapped)),
+               Projection::unproject(centerCoord + toCoord - fromCoord, moveScale, LatLng::Unwrapped)),
            animation);
 }
 

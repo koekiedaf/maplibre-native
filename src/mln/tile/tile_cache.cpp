@@ -156,15 +156,6 @@ bool TileCache::has(const OverscaledTileID& key) {
     return tiles.find(key) != tiles.end();
 }
 
-std::vector<const Tile*> TileCache::getTiles() const {
-    std::vector<const Tile*> result;
-    result.reserve(tiles.size());
-    for (const auto& entry : tiles) {
-        result.push_back(entry.second.get());
-    }
-    return result;
-}
-
 void TileCache::clear() {
     for (auto& item : tiles) {
         deferredRelease(std::move(item.second));

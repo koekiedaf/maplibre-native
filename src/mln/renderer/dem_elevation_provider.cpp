@@ -3,6 +3,7 @@
 #include <mln/geometry/dem_data.hpp>
 #include <mln/renderer/buckets/hillshade_bucket.hpp>
 #include <mln/renderer/render_source.hpp>
+#include <mln/renderer/render_tile.hpp>
 #include <mln/tile/raster_dem_tile.hpp>
 
 #include <algorithm>
@@ -64,21 +65,18 @@ DEMElevationProvider::DEMElevationProvider(const RenderSource* demSource_, doubl
     // not per query). It is the fallback for tiles with no loaded DEM, so the cover
     // dilation can re-test a not-yet-loaded frontier neighbour as if it were about as
     // tall/deep as the terrain already in view.
-    //
-    // Deliberately getLoadedTiles(), not getRawRenderTiles(): this aggregate must not
-    // depend on which tiles this source's own cover happened to retain last frame, or
-    // it inherits the same self-reference getTileElevationRange below is built to avoid.
     if (!demSource) {
         return;
     }
-    loadedTiles = demSource->getLoadedTiles();
+    const auto renderTiles = demSource->getRawRenderTiles();
     double minEle = std::numeric_limits<double>::max();
     double maxEle = std::numeric_limits<double>::lowest();
-    for (const auto* tile : loadedTiles) {
-        if (!tile || tile->kind != Tile::Kind::RasterDEM) {
+    for (const auto& renderTile : *renderTiles) {
+        const auto& tile = renderTile.getTile();
+        if (tile.kind != Tile::Kind::RasterDEM) {
             continue;
         }
-        const auto* demTile = static_cast<const RasterDEMTile*>(tile);
+        const auto* demTile = static_cast<const RasterDEMTile*>(&tile);
         const auto* bucket = const_cast<RasterDEMTile*>(demTile)->getBucket();
         if (!bucket) {
             continue;
@@ -97,15 +95,8 @@ std::optional<Range<double>> DEMElevationProvider::getTileElevationRange(const C
         return std::nullopt;
     }
 
-    // getLoadedTiles(), not getRawRenderTiles(): a tile that has loaded keeps answering
-    // from its own data every frame from here on, whether or not this frame's cover
-    // retains it for rendering. That is what makes the answer for a given tile id
-    // monotone once loaded - see TilePyramid::getLoadedTiles() and the header comment
-    // on this class for the closed loop this breaks: a tile whose own true elevation
-    // range fails the frustum test would otherwise be dropped from the render set,
-    // which used to make its OWN next query fall back to the (taller) aggregate range,
-    // pass the test, and be added back - forever alternating between the two answers.
-    if (loadedTiles.empty()) {
+    const auto renderTiles = demSource->getRawRenderTiles();
+    if (renderTiles->empty()) {
         return std::nullopt;
     }
 
@@ -113,16 +104,17 @@ std::optional<Range<double>> DEMElevationProvider::getTileElevationRange(const C
     // range covers this tile's area, so it stays conservative, just looser.
     const DEMData* best = nullptr;
     uint8_t bestZoom = 0;
-    for (const auto* tile : loadedTiles) {
-        if (!tile || tile->kind != Tile::Kind::RasterDEM) {
+    for (const auto& renderTile : *renderTiles) {
+        const auto& tile = renderTile.getTile();
+        if (tile.kind != Tile::Kind::RasterDEM) {
             continue;
         }
-        const auto& candidate = tile->id.canonical;
+        const auto& candidate = renderTile.id.canonical;
         const bool covers = candidate == id || id.isChildOf(candidate);
         if (!covers || (best && candidate.z <= bestZoom)) {
             continue;
         }
-        const auto* demTile = static_cast<const RasterDEMTile*>(tile);
+        const auto* demTile = static_cast<const RasterDEMTile*>(&tile);
         const auto* bucket = const_cast<RasterDEMTile*>(demTile)->getBucket();
         if (!bucket) {
             continue;

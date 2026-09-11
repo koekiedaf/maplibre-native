@@ -100,8 +100,30 @@ std::optional<Range<double>> DEMElevationProvider::getTileElevationRange(const C
         return std::nullopt;
     }
 
-    // The tile's own DEM, or failing that the deepest loaded ancestor: an ancestor's
-    // range covers this tile's area, so it stays conservative, just looser.
+    // The deepest loaded STRICT ancestor of this tile, never the tile's own DEM. An
+    // ancestor's range contains its descendants' by construction, so this stays
+    // conservative, just looser.
+    //
+    // Answering from the tile's own DEM is what made the cover oscillate at frame rate
+    // (task C1, and proved in task C2c's trace). This provider is the elevation input to
+    // the DEM source's own tile cover: RenderOrchestrator::createRenderTree builds one
+    // per frame and hands the same instance to every source's update, the DEM source
+    // included. So while the tile's own DEM could answer, the answer for a tile depended
+    // on whether that tile was currently rendered, and the cover is what decides that.
+    // Measured at Gavarnie with the camera provably still, four z15 tiles alternated
+    // every frame between their own range (15/16387/12078: 2517 to 2784 m, a 267 m box
+    // up at two and a half kilometres, which fails the elevated frustum test and drops
+    // the tile) and the aggregate `loadedRange` fallback that answered the moment it was
+    // dropped (0 to 3346 m, a box three kilometres tall starting at sea level, which
+    // passes and puts it back). 602 changes in 605 still frames.
+    //
+    // Restricting the answer to strict ancestors breaks that dependency rather than
+    // hiding it. A tile's elevation answer now comes only from levels ABOVE it, and the
+    // cover walk is itself top-down and terminates at the root, so the dependency graph
+    // has no cycle left to oscillate around. It is also TIGHTER than what the tiles in
+    // question were actually getting: a z14 parent's range over four z15 tiles is far
+    // narrower than the whole view's 0 to 3346. Nothing is smoothed, held for a number
+    // of frames or clamped, and a tile that genuinely leaves the view still leaves it.
     const DEMData* best = nullptr;
     uint8_t bestZoom = 0;
     for (const auto& renderTile : *renderTiles) {
@@ -110,7 +132,10 @@ std::optional<Range<double>> DEMElevationProvider::getTileElevationRange(const C
             continue;
         }
         const auto& candidate = renderTile.id.canonical;
-        const bool covers = candidate == id || id.isChildOf(candidate);
+        // Strictly coarser, and covering. `isChildOf` reports true for a z0 parent even
+        // when the tile is itself z0, so the level test is spelled out rather than left
+        // to it.
+        const bool covers = candidate.z < id.z && id.isChildOf(candidate);
         if (!covers || (best && candidate.z <= bestZoom)) {
             continue;
         }
@@ -121,9 +146,6 @@ std::optional<Range<double>> DEMElevationProvider::getTileElevationRange(const C
         }
         best = &bucket->getDEMData();
         bestZoom = candidate.z;
-        if (candidate == id) {
-            break; // exact match; nothing looser can improve on it
-        }
     }
 
     if (!best) {

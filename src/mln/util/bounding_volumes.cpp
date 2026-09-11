@@ -149,10 +149,29 @@ Frustum Frustum::fromInvProjMatrix(const mat4& invProj, double worldSize, double
 
     const double scale = std::pow(2.0, zoom);
 
-    // Transform points to tile space
+    // Transform points to tile space. X and Y come out of the camera pipeline in world
+    // pixels (at the transform's current zoom), so dividing by worldSize and rescaling
+    // by 2^zoom turns them into tile units at the requested zoom, matching how tile
+    // AABBs are expressed here. Z is different: Camera::getWorldToCamera takes elevation
+    // in meters and folds pixelsPerMeter into the matrix itself before rotating, so its
+    // inverse hands Z back already in meters - it never went through a worldSize-at-zoom
+    // scaling the way X/Y did, and rescaling it by worldSize/2^zoom on top divides a
+    // metres value by a zoom-dependent factor that has nothing to do with it. That
+    // shrank the frustum's real, meters-scale depth range to a fraction of a tile unit
+    // (visible as `frustumZ` collapsing towards zero at higher zoom), while a tile's
+    // elevation-extended AABB is built from the DEM's real meters converted to tile
+    // units on its own terms (`metersToTileUnits` in util::tileCover) - so a genuinely
+    // in-view, correctly elevated tile could land entirely outside the mis-scaled
+    // frustum Z bounds and read as `Separate`. Matches maplibre-gl-js
+    // Frustum.fromInvProjectionMatrix / unprojectClipSpacePoint, which scales only x, y
+    // and w by `scale`, leaving z as `1 / v[3]` (metres) untouched.
     for (auto& coord : cornerCoords) {
         matrix::transformMat4(coord, coord, invProj);
-        for (auto& component : coord) component *= 1.0 / coord[3] / worldSize * scale;
+        const double invW = 1.0 / coord[3];
+        coord[0] *= invW / worldSize * scale;
+        coord[1] *= invW / worldSize * scale;
+        coord[2] *= invW;
+        coord[3] *= invW / worldSize * scale;
     }
 
     std::array<vec3i, 6> frustumPlanePointIndices = {{

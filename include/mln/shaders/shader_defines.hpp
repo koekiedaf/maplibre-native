@@ -428,6 +428,9 @@ enum {
 
 enum {
     idTerrainLineDEMTexture,
+    // 2.2b: terrain occlusion, bound exactly like idSymbolDepthTexture - see
+    // TerrainLineLayerTweaker::execute and RenderTerrain::getDepthTexture.
+    idTerrainLineDepthTexture,
     terrainLineTextureCount
 };
 

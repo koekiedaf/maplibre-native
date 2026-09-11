@@ -54,6 +54,73 @@ float computeReferenceClipW(const PaintParameters& parameters) {
     return static_cast<float>(clip[3]);
 }
 
+// Task 2.2b, occlusion: the frame's own conversion from "metres of terrain depth" to "NDC z per
+// unit clip-w-squared" - the single constant occlusion_far the fragment shader divides by its
+// own fragment's w^2 (min(occlusion_eps, occlusion_far / w^2), matching the web's identical
+// min-of-two-margins form, routes3d.js:473, ground-web-engine.md section 1). This is a literal
+// port of the web's occlusionFar(m) (routes3d.js:1381-1394), operating on WORLD mercator-PIXEL
+// coordinates at this frame's own scale (the same space computeReferenceClipW's worldXY/worldZ
+// above already uses) rather than gl-js's normalised [0,1] mercator space - the two derivations
+// are the same projection-space calculus, just re-expressed in this engine's own coordinate
+// convention.
+//
+// Derivation (units at each step):
+//   - For a perspective projection, clip z and clip w are both AFFINE in world position, so
+//     moving a real-world distance t (metres) along the view axis unit vector u from a reference
+//     point (world position p0, clip z0/w0 there): z_clip(t) = z0 + a*t, w_clip(t) = w0 + b*t,
+//     where a = dz_clip/dmetre and b = dw_clip/dmetre are FRAME CONSTANTS along that one
+//     direction (units: clip units per metre).
+//   - z_ndc(t) = z_clip(t) / w_clip(t). Its derivative wrt t (units: NDC-z per metre) is
+//     [a*w_clip(t) - z_clip(t)*b] / w_clip(t)^2 - and substituting z_clip(t)=z0+a*t,
+//     w_clip(t)=w0+b*t, the a*t and b*t cross terms cancel algebraically, leaving
+//     [a*w0 - z0*b] / w_clip(t)^2: the NUMERATOR is the same real number at every point along
+//     the whole view axis, not just at the reference point - that is the "k" computed once below
+//     and stored as occlusion_far / OCCLUSION_EPS_M_DEFAULT, and dividing it by any OTHER
+//     fragment's own w^2 in the shader reproduces d(z_ndc)/dmetre AT THAT FRAGMENT for free.
+//   - a and b are read directly off state.getProjectionMatrix()'s own rows (units: clip units
+//     per world-mercator-pixel), the same convention TransformState::matrixFor / gl-js's
+//     mainMatrix both use (matrix::transformMat4's out[3] = m[3]*x+m[7]*y+m[11]*z+m[15]*w is
+//     exactly gl-js's mat4 layout too), scaled from "per world-pixel" to "per metre" by
+//     1/metresPerPixel (the same metresPerPixel computeReferenceClipW/execute() already compute
+//     from Projection::getMetersPerPixelAtLatitude - reused here rather than recomputed).
+//   - The view axis direction u is taken as the gradient of clip w wrt world position,
+//     normalised - the direction w changes fastest, i.e. the camera's own view axis, with no
+//     assumption about near/far planes (matching the web's own comment, routes3d.js:1370-1380).
+//   - z0/w0 are evaluated at the map centre at world Z = 0 (sea level, NOT the centre's own
+//     terrain elevation - occlusion_far is a pure projection-geometry constant, unlike
+//     reference_w above which deliberately does sample the centre's real elevation for its own,
+//     unrelated purpose).
+//   - occlusion_far = k * OCCLUSION_EPS_M_DEFAULT (metres): the final unit is "NDC-z per
+//     clip-w-squared", i.e. exactly what occlusion_far / w^2 must be in the shader to yield an
+//     NDC-z margin equivalent to OCCLUSION_EPS_M_DEFAULT real metres of terrain depth at that
+//     fragment's own distance from the camera.
+constexpr double OCCLUSION_EPS_M_DEFAULT = 60.0; // metres of terrain depth; web's OCCLUSION_EPS_M_DEFAULT (routes3d.js:173)
+
+float computeOcclusionFar(const PaintParameters& parameters, double metresPerPixel) {
+    if (!(metresPerPixel > 0.0)) {
+        return 0.0f;
+    }
+    const auto& state = parameters.state;
+    const mat4& m = state.getProjectionMatrix();
+    const double mz = 1.0 / metresPerPixel; // world-mercator-pixel units per metre
+
+    const double gx = m[3], gy = m[7], gz = m[11];
+    const double g = std::sqrt(gx * gx + gy * gy + gz * gz);
+    if (!(g > 0.0)) {
+        return 0.0f;
+    }
+    const double ux = gx / g, uy = gy / g, uz = gz / g;
+    const double a = (m[2] * ux + m[6] * uy + m[10] * uz) * mz; // dz_clip/dmetre along the view axis
+    const double b = g * mz;                                   // dw_clip/dmetre along the view axis
+
+    const LatLng center = state.getLatLng();
+    const Point<double> worldXY = Projection::project(center, state.getScale());
+    const double zc0 = m[2] * worldXY.x + m[6] * worldXY.y + m[14]; // clip z at the centre, world Z = 0
+    const double w0 = m[3] * worldXY.x + m[7] * worldXY.y + m[15];  // clip w at the centre, world Z = 0
+    const double k = std::abs(a * w0 - zc0 * b);
+    return static_cast<float>(k * OCCLUSION_EPS_M_DEFAULT);
+}
+
 // The web's DASH_ANCHOR_ZOOM (routes3d.js:1171, groundDashPeriod at :1174-1187): the dash
 // pattern's period is computed from the line width evaluated at this FIXED zoom, never at the
 // zoom the camera happens to be at, so the dash never re-subdivides or rescales while zooming.
@@ -109,14 +176,25 @@ struct DashPeriod {
     float on = 1.0f;
 };
 
-DashPeriod computeDashPeriodExtent(const std::array<float, 2>& dasharray,
+// terrain-line-dasharray is std::vector<float> (task 2.2b, matching line-dasharray's own
+// evaluated type - see scripts/style-spec.mjs's comment on this property for why). Only the
+// first two entries are meaningful here (on, off); a vector of length 0 or 1 has no "off" length
+// to speak of and is treated the same as [0, 0] - no dash pattern, draw solid - rather than
+// rejected, since an empty/short dasharray is a legitimate (if unusual) style value, not a style
+// error, and the shader's own dash_period == 0 convention already means exactly that.
+DashPeriod computeDashPeriodExtent(const std::vector<float>& dasharray,
                                    float widthPxAtAnchorZoom,
                                    const CanonicalTileID& tileID) {
-    const float units = dasharray[0] + dasharray[1];
+    if (dasharray.size() < 2) {
+        return {};
+    }
+    const float on0 = dasharray[0];
+    const float off0 = dasharray[1];
+    const float units = on0 + off0;
     if (!(units > 0.0f)) {
         return {};
     }
-    const float on = dasharray[0] / units;
+    const float on = on0 / units;
     const double worldPxAtAnchorZoom = util::tileSize_D * std::exp2(DASH_ANCHOR_ZOOM);
     const double periodMercator = worldPxAtAnchorZoom > 0.0
                                        ? (static_cast<double>(units) * widthPxAtAnchorZoom) / worldPxAtAnchorZoom
@@ -142,10 +220,18 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
 #endif
 
     const float referenceW = computeReferenceClipW(parameters);
-    // pixelRatio isn't in our own UBO (see u_half_px's derivation): the tweaker bakes the
-    // device-pixel half-width straight from the evaluated CSS-pixel width, once per frame.
+    // FAULT 1 FIX (task 2.2b): terrain-line-width/-blur/-offset are all in CSS pixels (points),
+    // NOT device pixels, and so is the shader's own "pixel" space. The vertex shader converts
+    // to/from that space via u_units_to_pixels, which is 1 / PaintParameters::pixelsToGLUnits,
+    // and pixelsToGLUnits is 2 / state.getSize() (paint_parameters.cpp:96) - state.getSize() is
+    // the map's LOGICAL size in points, not the framebuffer's device-pixel size. Multiplying the
+    // evaluated CSS-pixel width by parameters.pixelRatio here (as this line used to) therefore
+    // made every ribbon `pixelRatio` times too wide on screen - e.g. 3x on a dpr-3 device - since
+    // it double-counted a device-pixel conversion the shader's own coordinate space never
+    // performs. u_half_px must stay in the SAME CSS-pixel space u_units_to_pixels already
+    // operates in, so no pixelRatio multiply belongs here at all.
     const float widthPx = evaluated.get<TerrainLineWidth>();
-    const float halfPx = widthPx * parameters.pixelRatio / 2.0f;
+    const float halfPx = widthPx / 2.0f;
     const auto dasharray = evaluated.get<TerrainLineDasharray>();
     // The dash calculation anchors its width lookup at a fixed zoom (DASH_ANCHOR_ZOOM), never
     // at the current frame zoom above - see computeDashPeriodExtent()'s comment.
@@ -171,6 +257,16 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
     }
     auto& layerUniforms = layerGroup.mutableUniformBuffers();
     layerUniforms.set(idTerrainLineEvaluatedPropsUBO, evaluatedPropsUniformBuffer);
+
+    // Task 2.2b, occlusion + distance fade: frame constants, computed once and duplicated into
+    // every drawable's UBO below (the same pattern reference_w above already uses) rather than
+    // recomputed per tile.
+    const auto& state = parameters.state;
+    const LatLng frameCenter = state.getLatLng();
+    const double metresPerPixel = Projection::getMetersPerPixelAtLatitude(frameCenter.latitude(), state.getZoom());
+    const float metresPerPixelF = static_cast<float>(metresPerPixel);
+    const float occlusionFar = computeOcclusionFar(parameters, metresPerPixel);
+    const Point<double> centerWorldXY = Projection::project(frameCenter, state.getScale());
 
 #if MLN_UBO_CONSOLIDATION
     int i = 0;
@@ -211,16 +307,49 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
             drawable.setTexture(context.getPlaceholderTexture2D(), idTerrainLineDEMTexture);
         }
 
-        // The terrain surface writes depth, at the resolution of its own coarse (128x128)
-        // triangulated mesh; this ribbon is elevated onto the terrain from the DEM directly,
-        // per vertex, and would self-occlude against the mesh's own approximation of the same
-        // surface if depth-tested against it. Depth stays on without terrain (there being no
-        // terrain surface underneath to conflict with). No depth-texture occlusion test in this
-        // first cut (2.2b) - the ribbon simply draws on top of the terrain while one is active,
-        // exactly like circle (docs/plans/2026-09-11-engine-layer-plumbing.md A2 point 4).
+        // 2.2b DECISION: keep depth TEST off while terrain is on (unchanged from the first cut),
+        // now for a reason rather than as a deferred debt. The terrain surface writes depth at
+        // the resolution of its own coarse (128x128) triangulated mesh; this ribbon is elevated
+        // per vertex from the DEM directly (get_elevation, full DEM resolution), so at any given
+        // screen pixel the ribbon's own sampled height and the mesh's coarsely-interpolated
+        // triangle height can differ by a small amount even where the ribbon is genuinely lying
+        // on the surface it follows - depth-testing against the mesh's own buffer would
+        // self-occlude/flicker the ribbon against its own host surface. Hiding the ribbon behind
+        // real hills in front of it is instead the occlusion test's job below, against the
+        // DEDICATED depth texture and WITH the eps margin precisely because that margin is
+        // designed to tolerate this kind of surface-vs-mesh disagreement without producing false
+        // occlusion. Depth stays on without terrain (no terrain surface underneath to conflict
+        // with either way).
         drawable.setEnableDepth(!terrainEnabled);
 
+        // Bind the terrain occlusion depth texture exactly like idSymbolDepthTexture
+        // (symbol_layer_tweaker.cpp:182): always a valid sampler (falls back to the far-plane
+        // placeholder when terrain is off or has not rendered a depth pass yet), so the shader's
+        // sampler declaration is always satisfied even though drawable.depth_enabled gates
+        // whether it is ever actually sampled.
+        if (parameters.terrain) {
+            drawable.setTexture(parameters.terrain->getDepthTexture(context), idTerrainLineDepthTexture);
+        } else {
+            drawable.setTexture(context.getPlaceholderTexture2D(), idTerrainLineDepthTexture);
+        }
+
         const auto dashPeriod = computeDashPeriodExtent(dasharray, widthPxAtAnchorZoom, tileID.canonical);
+
+        // Task 2.2b, distance fade: this tile's own placement in world-pixel space, relative to
+        // the map centre - kept as a delta (see TerrainLineDrawableUBO::origin_offset_x's
+        // comment for why), computed the same way TransformState::matrixFor derives a tile's own
+        // world-pixel origin and scale (src/mln/map/transform_state.cpp:115-124), reusing that
+        // tile's already-computed matrix scale would require unpacking it back out, so it is
+        // recomputed directly here from the same inputs (tileID, state.getScale()).
+        const uint64_t tileScale = uint64_t(1) << tileID.canonical.z;
+        const double worldPxPerTile = Projection::worldSize(state.getScale()) / static_cast<double>(tileScale);
+        const double tileOriginX = (static_cast<double>(tileID.canonical.x) +
+                                    static_cast<double>(tileID.wrap) * static_cast<double>(tileScale)) *
+                                   worldPxPerTile;
+        const double tileOriginY = static_cast<double>(tileID.canonical.y) * worldPxPerTile;
+        const float worldPxPerExtent = static_cast<float>(worldPxPerTile / util::EXTENT);
+        const float originOffsetX = static_cast<float>(tileOriginX - centerWorldXY.x);
+        const float originOffsetY = static_cast<float>(tileOriginY - centerWorldXY.y);
 
 #if MLN_UBO_CONSOLIDATION
         drawableUBOVector[i] = {
@@ -237,8 +366,12 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
             .reference_w = referenceW,
             .dash_period = dashPeriod.periodExtent,
             .dash_on = dashPeriod.on,
-            .pad1 = 0,
-            .pad2 = 0,
+            .occlusion_far = occlusionFar,
+            .metres_per_pixel = metresPerPixelF,
+            .origin_offset_x = originOffsetX,
+            .origin_offset_y = originOffsetY,
+            .world_px_per_extent = worldPxPerExtent,
+            .depth_enabled = terrainEnabled ? 1.0f : 0.0f,
         };
 #if MLN_UBO_CONSOLIDATION
         drawable.setUBOIndex(i++);

@@ -36,8 +36,18 @@ layout (std140) uniform TerrainLineDrawableUBO {
     // EXTENT-unit distance space - see TerrainLineLayerTweaker's dash conversion comment.
     highp float u_dash_period;
     highp float u_dash_on;
-    lowp float drawable_pad1;
-    lowp float drawable_pad2;
+    // 2.2b occlusion: see TerrainLineLayerTweaker::computeOcclusionFar's comment.
+    highp float u_occlusion_far;
+    // 2.2b distance fade: metres per world pixel at the map centre, and this tile's own origin
+    // as a world-pixel delta from the map centre plus the EXTENT->world-pixel scale - see
+    // TerrainLineDrawableUBO's own field comments (include/mln/shaders/terrain_line_layer_ubo.hpp).
+    highp float u_metres_per_pixel;
+    highp float u_origin_offset_x;
+    highp float u_origin_offset_y;
+    highp float u_world_px_per_extent;
+    // 2.2b occlusion: whether terrain is on for this frame at all (a real depth texture is
+    // bound) - see TerrainLineDrawableUBO::depth_enabled's comment.
+    lowp float u_depth_enabled;
 };
 
 uniform sampler2D u_dem;

@@ -34,11 +34,45 @@ struct alignas(16) TerrainLineDrawableUBO {
     // dash_period == 0 means "no dashing, draw solid" (also the default: an empty dasharray).
     /* 112 */ float dash_period;
     /* 116 */ float dash_on;
-    /* 120 */ float pad1;
-    /* 124 */ float pad2;
-    /* 128 */
+
+    // 2.2b occlusion: the frame-constant numerator of the metres-derived occlusion margin (see
+    // TerrainLineLayerTweaker::computeOcclusionFar's comment) - the fragment shader divides this
+    // by ITS OWN fragment's clip w^2 to reproduce a roughly constant real-world-metres occlusion
+    // tolerance across distance, matching the web's min(NDC-constant, metres-form/w^2) margin
+    // (routes3d.js:133-173, ground-web-engine.md section 1).
+    /* 120 */ float occlusion_far;
+    // Real-world metres per world-pixel at the map centre (Projection::getMetersPerPixelAtLatitude),
+    // a frame constant duplicated per-drawable like reference_w above. Used by the vertex shader
+    // to convert the distance-fade anchor's world-pixel distance into metres, matching
+    // terrain-line-fade-distance's own units.
+    /* 124 */ float metres_per_pixel;
+
+    // 2.2b distance fade: this tile's own placement in world-pixel space, relative to the map
+    // centre (TerrainLineLayerTweaker::execute's fade-geometry comment) - kept as a delta from
+    // the centre, not an absolute world-pixel coordinate, so the float stays small (the map
+    // centre itself can be an enormous world-pixel value at high zoom, well past float32's
+    // precision for sub-pixel differences). The vertex shader adds a_pos.xy * world_px_per_extent
+    // to this to get each vertex's own world-pixel delta from the centre, then multiplies by
+    // metres_per_pixel to get the ground distance the web's own v_fade smoothstep operates on
+    // (routes3d.js:56-58) - ours anchored at the map centre rather than the web's near/far
+    // anchor, the honest native equivalent per the task brief.
+    /* 128 */ float origin_offset_x;
+    /* 132 */ float origin_offset_y;
+    // (tile size in world pixels at this tile's own zoom) / EXTENT - converts a_pos.xy (EXTENT
+    // units) into a world-pixel delta from this tile's own origin.
+    /* 136 */ float world_px_per_extent;
+    // 2.2b occlusion: whether terrain is on for this frame at all (a REAL depth texture is
+    // bound, not the 1x1 far-plane placeholder) - deliberately NOT the same condition as
+    // dem_enabled above. dem_enabled is per-tile ("did THIS tile's own DEM texture load"), so a
+    // tile whose DEM has not arrived yet would otherwise wrongly skip the occlusion test even
+    // though terrain is genuinely on and other tiles' ribbons must already be tested against it.
+    // This mirrors symbol's own explicit `depth_enabled` field (symbol_layer_ubo.hpp), which
+    // carries the identical comment for the identical reason - terrain-line copies the pattern
+    // rather than reusing dem_enabled.
+    /* 140 */ float depth_enabled;
+    /* 144 */
 };
-static_assert(sizeof(TerrainLineDrawableUBO) == 8 * 16);
+static_assert(sizeof(TerrainLineDrawableUBO) == 9 * 16);
 
 /// Evaluated (per-layer, zoom-evaluated) properties that do not depend on the tile. All nine
 /// paint properties are non-data-driven (PropertyValue<T>, never DataDrivenPropertyValue<T>), so
@@ -47,19 +81,25 @@ static_assert(sizeof(TerrainLineDrawableUBO) == 8 * 16);
 struct alignas(16) TerrainLineEvaluatedPropsUBO {
     /*  0 */ Color color;
     /* 16 */ float opacity;
-    // terrain-line-width * pixelRatio / 2, in device pixels. Doubles as u_cap_px (the web's
-    // drawFamilyPasses sets cap = halfPx too, routes3d.js:1120-1121) - square caps extend the
-    // ribbon by the same half width, so it is not a separate property, just this value reused.
+    // terrain-line-width / 2, in CSS pixels (points) - see TerrainLineLayerTweaker::execute's
+    // FAULT 1 FIX comment: this is NOT device pixels, and must not be multiplied by pixelRatio.
+    // Doubles as u_cap_px (the web's drawFamilyPasses sets cap = halfPx too, routes3d.js:
+    // 1120-1121) - square caps extend the ribbon by the same half width, so it is not a separate
+    // property, just this value reused.
     /* 20 */ float half_px;
-    /* 24 */ float edge_px;     // terrain-line-blur, the AA feather (u_edge_px)
-    /* 28 */ float rail_offset; // terrain-line-offset, in device pixels (u_rail_offset)
+    /* 24 */ float edge_px;     // terrain-line-blur, the AA feather, CSS pixels (u_edge_px)
+    /* 28 */ float rail_offset; // terrain-line-offset, CSS pixels (u_rail_offset)
     /* 32 */ float depth_bias;  // constant DEPTH_BIAS = 0.00002, matching routes3d.js:100
-                                // 2.2b fields: parsed and evaluated now so 2.2b is shader-only, but not yet read by the
-                                // shader (no terrain occlusion test or distance fade in this first cut).
+    // 2.2b occlusion/ghost/fade: terrain-line-ghost-opacity (alpha multiplier when occluded,
+    // instead of discarding - default 0, so the default behaviour is still a discard), and the
+    // distance-fade amount/distance pair (terrain-line-fade, terrain-line-fade-distance), all
+    // read by the shader now (terrain_line.fragment.glsl / .vertex.glsl).
     /* 36 */ float ghost_opacity;
     /* 40 */ float fade;
     /* 44 */ float fade_distance;
-    /* 48 */ float pad1;
+    // NDC-z occlusion margin constant, routes3d.js OCCLUSION_EPS_DEFAULT (:133) - not a paint
+    // property, a fixed constant like depth_bias above, carried in the UBO for the same reason.
+    /* 48 */ float occlusion_eps;
     /* 52 */ float pad2;
     /* 56 */ float pad3;
     /* 60 */ float pad4;

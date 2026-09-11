@@ -33,9 +33,9 @@ public:
     void setTerrainLineColorTransition(const TransitionOptions&);
     TransitionOptions getTerrainLineColorTransition() const;
 
-    static PropertyValue<std::array<float, 2>> getDefaultTerrainLineDasharray();
-    const PropertyValue<std::array<float, 2>>& getTerrainLineDasharray() const;
-    void setTerrainLineDasharray(const PropertyValue<std::array<float, 2>>&);
+    static PropertyValue<std::vector<float>> getDefaultTerrainLineDasharray();
+    const PropertyValue<std::vector<float>>& getTerrainLineDasharray() const;
+    void setTerrainLineDasharray(const PropertyValue<std::vector<float>>&);
     void setTerrainLineDasharrayTransition(const TransitionOptions&);
     TransitionOptions getTerrainLineDasharrayTransition() const;
 

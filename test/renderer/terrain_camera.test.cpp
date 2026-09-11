@@ -120,3 +120,15 @@ TEST(TerrainCamera, ClampingCanBeTurnedOff) {
 
     EXPECT_NEAR(test.renderAndGetAltitude(8), 0.0, 0.001);
 }
+
+// A gesture is solved on the camera's own centre altitude, and that number arrives from the
+// renderer a frame behind the camera. Letting it move under a finger makes the same drag land
+// differently depending on how fast the frames came, so it is held still until the finger lifts.
+TEST(TerrainCamera, CentreElevationIsHeldStillWhileAGestureRuns) {
+    TerrainCameraTest test;
+    test.map.setGestureInProgress(true);
+    EXPECT_NEAR(test.renderAndGetAltitude(8), 0.0, 0.001);
+
+    test.map.setGestureInProgress(false);
+    EXPECT_NEAR(test.renderAndGetAltitude(8), plateauMeters, 5.0);
+}

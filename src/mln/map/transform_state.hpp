@@ -244,6 +244,14 @@ public:
     /// wrong plane once terrain is on - the view ray crosses the real surface long before z=0,
     /// so a sea-level solve grabs a point centerAltitude*tan(pitch) or more beyond the ground
     /// under the finger and amplifies every pan, pinch and tilt by that much.
+    ///
+    /// It is the centre altitude and nothing else, deliberately. The plane and the camera's own
+    /// orbit height have to be the same number: freezing one without the other makes a drag
+    /// solve against a plane the camera is no longer on, and the clamp then pulls the centre
+    /// back every frame - measured as a 120 point drag that moved 19 m instead of 480. What IS
+    /// held still for the length of a gesture is the centre altitude itself, in
+    /// Map::Impl::onTerrainCenterElevationChanged, which is MapLibre GL JS's own elevationFreeze
+    /// rule; both numbers then stay consistent because there is only one of them.
     double getGroundPlaneAltitude() const { return getCenterAltitude(); }
     // Implements mapbox-gl-js pointCoordinate() : MercatorCoordinate.
     // `targetZ` is the world z of the plane to intersect, in metres above sea level.

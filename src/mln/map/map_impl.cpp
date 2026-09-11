@@ -324,6 +324,16 @@ void Map::Impl::onTerrainCenterElevationChanged(double elevationMeters) {
     if (!centerClampedToGround) {
         return;
     }
+    // Not while a finger is down. The centre altitude is both the camera's orbit height and the
+    // plane every gesture is solved on (TransformState::getGroundPlaneAltitude), and it arrives
+    // here one frame behind the camera. Letting it move mid-gesture makes the same drag land
+    // differently depending on how fast the frames came, and at Gavarnie pitch 45 it pulled a
+    // 120 point drag back to almost nothing as the clamp chased the terrain the drag was
+    // crossing. It catches up the moment the gesture ends. MapLibre GL JS holds the same thing
+    // still for the same reason, as its elevationFreeze.
+    if (transform.getState().isGestureInProgress()) {
+        return;
+    }
     // Sub-metre differences are the terrain cover shifting under a camera that just moved,
     // not the ground actually changing height; acting on them would chase itself.
     constexpr double minimumChangeMeters = 0.5;

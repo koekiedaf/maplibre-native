@@ -1347,3 +1347,4 @@ TEST(Transform, AnchoredZoomKeepsTheAnchoredGroundPointStill) {
     const LatLng anchorAfter = transform.screenCoordinateToLatLng(anchor, 1700.0);
     EXPECT_LT(groundDistanceM(anchorBefore, anchorAfter), 5.0);
 }
+

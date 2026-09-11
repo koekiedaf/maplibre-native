@@ -162,6 +162,25 @@ public:
     double getElevationForLatLng(const LatLng& latLng) const;
 
     /**
+     * @brief Exaggerated terrain height under a geographic position, honestly reporting
+     * when there is nothing to sample
+     *
+     * Same walk as `getElevationForLatLng` (sample at the finest DEM zoom currently loaded,
+     * matching the sample tile or its closest loaded ancestor), but returns `std::nullopt`
+     * instead of 0 wherever that walk does not land on a real, decoded DEM tile: no DEM
+     * source, no DEM tile loaded anywhere in view, past a pole, or the resolved tile/ancestor
+     * has no bucket or no decoded image (which is also what happens when nothing has loaded
+     * there yet and only the flat 1x1 placeholder DEM would be available for rendering).
+     * `getElevationForLatLng` cannot be reused for this because it folds all of those cases
+     * into the same 0.0 as genuine sea level; this is the version that keeps them apart.
+     *
+     * @param latLng the position to sample
+     * @return height in metres of the rendered surface, or nullopt when no loaded DEM tile
+     * covers it
+     */
+    std::optional<double> queryElevationForLatLng(const LatLng& latLng) const;
+
+    /**
      * @brief Get the terrain exaggeration multiplier
      */
     float getExaggeration() const;
@@ -296,6 +315,22 @@ public:
     Immutable<style::Terrain::Impl> impl;
 
 private:
+    /**
+     * @brief Get elevation at a specific tile coordinate, honestly reporting when there is no
+     * loaded DEM tile to sample
+     *
+     * Same tile walk as `getElevation` (the requested tile, or its closest loaded ancestor,
+     * among the DEM source's raw render tiles), but returns `std::nullopt` in every case
+     * `getElevation` instead returns a bare 0.0f for lack of anything better: no DEM source,
+     * off the tile grid past a pole, no covering tile found, the covering tile is not a decoded
+     * RasterDEM tile, or it has no bucket / no decoded image yet.
+     * @param tileID The tile containing the coordinate
+     * @param x X coordinate within the tile, may be outside [0, EXTENT)
+     * @param y Y coordinate within the tile, may be outside [0, EXTENT)
+     * @return Elevation in meters, or nullopt when no loaded DEM tile covers the point
+     */
+    std::optional<float> queryElevation(const UnwrappedTileID& tileID, float x, float y) const;
+
     /**
      * @brief Generate terrain mesh geometry
      *

@@ -145,6 +145,26 @@ private:
   XCTAssertEqualWithAccuracy(transform.getZoom(), 20.0, 1e-6);
 }
 
+// (b') The existing "no terrain" test above only asks for a zoom change, so a bug that clamped
+// pitch specifically while leaving zoom alone under a nullopt rise would slip past it. This is
+// the defect this task actually fixes: `RenderTerrain::getElevationForLatLng` cannot tell "no
+// DEM loaded here" from genuine sea level, so when the camera's own ground point is off screen
+// (common at higher pitch) and its DEM tile has simply not loaded, the old code read that back
+// as a rise of exactly -centerElevation and the clamp fired on a fabricated number instead of
+// switching itself off. Reported as std::nullopt (the render side already found no data for
+// either sample), a combined zoom-and-pitch request must be honoured on both axes untouched.
+- (void)testNoReportedGroundLeavesBothZoomAndPitchUntouched {
+  mln::Transform transform;
+  gavarnie(transform, 45.0, 1753.24);
+  // No setTerrainCameraGroundRise call: nullopt, as if the camera's own DEM tile were simply not
+  // loaded (the reported defect), not as if the terrain were flat sea level.
+
+  transform.jumpTo(mln::CameraOptions().withZoom(20.0).withPitch(60.0));
+
+  XCTAssertEqualWithAccuracy(transform.getZoom(), 20.0, 1e-6);
+  XCTAssertEqualWithAccuracy(mln::util::rad2deg(transform.getPitch()), 60.0, 1e-6);
+}
+
 // (c) A pitch-only change - the two-finger tilt gesture's own shape, jumpTo with pitch and an
 // anchor but no zoom - is clamped as a tilt: pitch alone, zoom left exactly where it was. No
 // zoom floor needed to make this fire; a plain jumpTo(CameraOptions().withPitch(...)) never asks

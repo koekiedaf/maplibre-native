@@ -767,13 +767,27 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // thread's clamp never has to compare against its own (possibly still-catching-up)
         // centre altitude - the two DEM samples that make up the rise come from the same frame,
         // so they cannot be out of step with each other, only with what the map thread does with
-        // them next. nullopt (not zero) when there is no render terrain, so the
-        // camera-above-terrain clamp is off entirely instead of clamped to a flat sea level.
-        const std::optional<double> cameraGroundRise =
-            terrain ? std::optional<double>(
-                          terrain->getElevationForLatLng(updateParameters->transformState.getCameraLatLng()) -
-                          centerElevation)
+        // them next.
+        //
+        // Both samples are taken with queryElevationForLatLng, not getElevationForLatLng: the
+        // camera's own ground point is very often off screen (behind the visible area at higher
+        // pitch), so its DEM tile can simply not be loaded yet even though the map is well inside
+        // the built world - not over the sea. getElevationForLatLng cannot tell those two cases
+        // apart and folds a missing tile into 0.0, which used to be read back downstream as "sea
+        // level" and turn the clamp off exactly where the camera is most likely to be near a
+        // hillside. Reporting nullopt whenever EITHER sample has no DEM to read - here, or with
+        // no render terrain at all - is the honest answer: we cannot see the ground under the
+        // camera this frame, so the clamp stays off rather than clamping to a fabricated rise.
+        const std::optional<double> queriedCenterElevation =
+            terrain ? terrain->queryElevationForLatLng(updateParameters->transformState.getLatLng())
                     : std::nullopt;
+        const std::optional<double> queriedCameraElevation =
+            terrain ? terrain->queryElevationForLatLng(updateParameters->transformState.getCameraLatLng())
+                    : std::nullopt;
+        const std::optional<double> cameraGroundRise =
+            (queriedCenterElevation && queriedCameraElevation)
+                ? std::optional<double>(*queriedCameraElevation - *queriedCenterElevation)
+                : std::nullopt;
         const bool cameraGroundValidityChanged =
             cameraGroundRise.has_value() != lastReportedCameraGroundRise.has_value();
         const bool cameraGroundChanged =

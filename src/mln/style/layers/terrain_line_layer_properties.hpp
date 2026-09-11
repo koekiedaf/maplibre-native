@@ -17,15 +17,15 @@ namespace mln {
 namespace style {
 
 struct TerrainLineBlur : PaintProperty<float> {
-    static float defaultValue() { return 1.f; }
+    static float defaultValue() { return 0.5f; }
 };
 
 struct TerrainLineColor : PaintProperty<Color> {
     static Color defaultValue() { return Color::black(); }
 };
 
-struct TerrainLineDasharray : PaintProperty<std::array<float, 2>> {
-    static std::array<float, 2> defaultValue() { return {{0.f, 0.f}}; }
+struct TerrainLineDasharray : PaintProperty<std::vector<float>> {
+    static std::vector<float> defaultValue() { return {0.f, 0.f}; }
 };
 
 struct TerrainLineFade : PaintProperty<float> {

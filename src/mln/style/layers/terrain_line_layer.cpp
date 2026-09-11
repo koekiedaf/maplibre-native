@@ -67,7 +67,7 @@ void TerrainLineLayer::Impl::stringifyLayout(rapidjson::Writer<rapidjson::String
 // Paint properties
 
 PropertyValue<float> TerrainLineLayer::getDefaultTerrainLineBlur() {
-    return {1.f};
+    return {0.5f};
 }
 
 const PropertyValue<float>& TerrainLineLayer::getTerrainLineBlur() const {
@@ -120,15 +120,15 @@ TransitionOptions TerrainLineLayer::getTerrainLineColorTransition() const {
     return impl().paint.template get<TerrainLineColor>().options;
 }
 
-PropertyValue<std::array<float, 2>> TerrainLineLayer::getDefaultTerrainLineDasharray() {
-    return {{{0.f, 0.f}}};
+PropertyValue<std::vector<float>> TerrainLineLayer::getDefaultTerrainLineDasharray() {
+    return {{0.f, 0.f}};
 }
 
-const PropertyValue<std::array<float, 2>>& TerrainLineLayer::getTerrainLineDasharray() const {
+const PropertyValue<std::vector<float>>& TerrainLineLayer::getTerrainLineDasharray() const {
     return impl().paint.template get<TerrainLineDasharray>().value;
 }
 
-void TerrainLineLayer::setTerrainLineDasharray(const PropertyValue<std::array<float, 2>>& value) {
+void TerrainLineLayer::setTerrainLineDasharray(const PropertyValue<std::vector<float>>& value) {
     if (value == getTerrainLineDasharray())
         return;
     auto impl_ = mutableImpl();
@@ -487,7 +487,7 @@ std::optional<Error> TerrainLineLayer::setPropertyInternal(const std::string& na
     }
     if (property == Property::TerrainLineDasharray) {
         Error error;
-        const auto& typedValue = convert<PropertyValue<std::array<float, 2>>>(value, error, false, false);
+        const auto& typedValue = convert<PropertyValue<std::vector<float>>>(value, error, false, false);
         if (!typedValue) {
             return error;
         }

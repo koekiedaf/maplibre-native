@@ -93,3 +93,25 @@ cc_test(
         "//platform/linux:impl",
     ],
 )
+
+# TEMPORARY probe target, task 2.2b fault-2 diagnosis. Not part of the final commit.
+cc_test(
+    name = "dash_probe",
+    srcs = [
+        "style/conversion/layer.test.cpp",
+        "_probe_dash.test.cpp",
+        "_probe_layer_manager.cpp",
+    ],
+    copts = CPP_FLAGS + MAPLIBRE_FLAGS,
+    args = ["--gtest_filter=Probe.*"],
+    linkopts = ["-licucore", "-framework", "CoreGraphics", "-framework", "CoreText", "-framework", "ImageIO", "-framework", "Foundation"],
+    deps = [
+        "testutils",
+        "//:mbgl-core",
+        "//platform/default:mbgl-default",
+        "//platform/darwin:darwin-objc",
+        "//platform/darwin:darwin-objcpp",
+        "//platform/darwin:darwin-loop",
+        "@googletest//:gtest_main",
+    ],
+)

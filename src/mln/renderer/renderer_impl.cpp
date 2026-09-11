@@ -890,7 +890,8 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                     os << "\"" << static_cast<int>(id.z) << "/" << id.x << "/" << id.y << "\"";
                 }
             }
-            os << "]}\n";
+            os << "],\"elevationQueries\":" << DEMElevationProvider::debugDrainElevationQueries();
+            os << "}\n";
 
             const std::string line = os.str();
             std::fwrite(line.data(), 1, line.size(), sink.file);

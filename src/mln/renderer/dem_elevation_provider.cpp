@@ -7,9 +7,56 @@
 #include <mln/tile/raster_dem_tile.hpp>
 
 #include <algorithm>
+#include <cstdlib>
+#include <iomanip>
 #include <limits>
+#include <map>
+#include <sstream>
 
 namespace mln {
+
+namespace {
+
+// Debug-only instrumentation for the DUCKMAPS_ELEVATION_TRACE diagnosis. Checked once
+// (getenv is not free to call every query) and otherwise entirely inert.
+bool elevationTraceEnabled() {
+    static const bool enabled = [] {
+        const char* path = std::getenv("DUCKMAPS_ELEVATION_TRACE");
+        return path && *path;
+    }();
+    return enabled;
+}
+
+std::map<std::string, std::string>& elevationTraceLog() {
+    static std::map<std::string, std::string> log;
+    return log;
+}
+
+std::string tileIdKey(const CanonicalTileID& id) {
+    return std::to_string(static_cast<int>(id.z)) + "/" + std::to_string(id.x) + "/" + std::to_string(id.y);
+}
+
+} // namespace
+
+std::string DEMElevationProvider::debugDrainElevationQueries() {
+    if (!elevationTraceEnabled()) {
+        return "[]";
+    }
+    auto& log = elevationTraceLog();
+    std::ostringstream os;
+    os << "[";
+    bool first = true;
+    for (const auto& entry : log) {
+        if (!first) {
+            os << ",";
+        }
+        first = false;
+        os << "{\"id\":\"" << entry.first << "\"," << entry.second << "}";
+    }
+    os << "]";
+    log.clear();
+    return os.str();
+}
 
 DEMElevationProvider::DEMElevationProvider(const RenderSource* demSource_, double exaggeration_)
     : demSource(demSource_),
@@ -83,12 +130,30 @@ std::optional<Range<double>> DEMElevationProvider::getTileElevationRange(const C
         // No DEM covers this tile. Fall back to the range of terrain loaded in view
         // (nullopt only if nothing is loaded), so the cover dilation's frustumCull can
         // decide the tile on its (assumed) elevation instead of treating it as flat.
+        if (elevationTraceEnabled()) {
+            std::ostringstream os;
+            os << std::fixed << std::setprecision(2);
+            if (loadedRange) {
+                os << "\"branch\":\"loaded\",\"min\":" << loadedRange->min << ",\"max\":" << loadedRange->max;
+            } else {
+                os << "\"branch\":\"none\"";
+            }
+            elevationTraceLog()[tileIdKey(id)] = os.str();
+        }
         return loadedRange;
     }
 
     // Exaggeration is applied to the mesh in the terrain vertex shader, so the bounds
     // have to carry it too, or an exaggerated peak would still be culled.
-    return Range<double>{best->getMinElevation() * exaggeration, best->getMaxElevation() * exaggeration};
+    const Range<double> result{best->getMinElevation() * exaggeration, best->getMaxElevation() * exaggeration};
+    if (elevationTraceEnabled()) {
+        std::ostringstream os;
+        os << std::fixed << std::setprecision(2);
+        os << "\"branch\":\"" << (bestZoom == id.z ? "own" : "ancestor") << "\",\"srcZ\":"
+           << static_cast<int>(bestZoom) << ",\"min\":" << result.min << ",\"max\":" << result.max;
+        elevationTraceLog()[tileIdKey(id)] = os.str();
+    }
+    return result;
 }
 
 } // namespace mln

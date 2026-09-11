@@ -5,6 +5,7 @@
 #include <mln/util/tile_cover.hpp>
 
 #include <optional>
+#include <string>
 
 namespace mln {
 
@@ -32,6 +33,13 @@ public:
     explicit DEMElevationProvider(const RenderSource* demSource, double exaggeration);
 
     std::optional<Range<double>> getTileElevationRange(const CanonicalTileID&) const override;
+
+    /// Debug-only, for the DUCKMAPS_ELEVATION_TRACE diagnosis (see Renderer::Impl::render):
+    /// every getTileElevationRange query made anywhere this frame is recorded, deduplicated
+    /// by tile id (the answer is deterministic per id within one frame, so last write wins),
+    /// and drained into the trace line once per frame. Returns "[]" and touches nothing when
+    /// the trace variable is unset - no cost, no behaviour change.
+    static std::string debugDrainElevationQueries();
 
 private:
     const RenderSource* demSource;

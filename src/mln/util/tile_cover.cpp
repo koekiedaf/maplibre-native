@@ -237,13 +237,6 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
     const double requestedCenterZoom = transform.getZoom() + (unclampedZ - std::floor(transform.getZoom()));
     const util::TileZoomFunction tileZoom(util::rad2deg(transform.getFieldOfView()));
 
-    // Elevation has to reach the frustum in the aabb's units (tiles at zoom z).
-    // Renderable heights are in meters and Camera::getWorldToCamera scales them by
-    // pixelsPerMeter = worldSize / (cos(lat) * 2pi * R); pixels are then tiles at
-    // zoom z scaled by numTiles / worldSize, so worldSize cancels out.
-    const double metersToTileUnits = numTiles / (std::cos(util::deg2rad(transform.getLatLng().latitude())) *
-                                                 util::M2PI * util::EARTH_RADIUS_M);
-
     // The tile's bounds including its terrain: the flat footprint given the height of
     // the DEM covering it. Relief rising towards the camera takes up screen space that
     // the flat footprint does not, so a tile can be in view when its footprint is not;
@@ -255,6 +248,16 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
     // decide what is visible, not how finely it is subdivided. It also keeps this
     // change from perturbing tile selection on maps that have no terrain-shaped reason
     // to change.
+    //
+    // Elevation goes into the aabb as raw metres, not scaled to tile units: Z out of
+    // Frustum::fromInvProjMatrix is metres too (Camera::getWorldToCamera takes elevation
+    // in metres and folds pixelsPerMeter into the matrix before rotating, so its inverse
+    // hands Z back in metres, never having gone through a worldSize-at-zoom scaling the
+    // way X/Y did). Scaling this by a tile-units factor while the frustum's Z stayed in
+    // metres was the bug: a genuinely visible, correctly elevated tile's aabb landed
+    // outside the frustum's real Z bounds and read as `Separate`, dropping every
+    // descendant tile and, wherever every world copy failed the same way, blanking the
+    // frame.
     const auto elevatedAABB = [&](const Node& node) -> AABB {
         if (!state.elevationProvider) {
             return node.aabb;
@@ -264,8 +267,8 @@ std::vector<OverscaledTileID> tileCover(const TileCoverParameters& state,
             return node.aabb; // no DEM loaded here yet: flat, as before
         }
         AABB elevated = node.aabb;
-        elevated.min[2] = range->min * metersToTileUnits;
-        elevated.max[2] = range->max * metersToTileUnits;
+        elevated.min[2] = range->min;
+        elevated.max[2] = range->max;
         return elevated;
     };
 
@@ -412,9 +415,6 @@ std::set<UnwrappedTileID> frustumCull(const TileCoverParameters& state, const st
     const double numTiles = std::exp2(static_cast<double>(refZ));
     const double worldSize = Projection::worldSize(transform.getScale());
     const Frustum frustum = Frustum::fromInvProjMatrix(transform.getInvProjectionMatrix(), worldSize, refZ, flippedY);
-    // Meters to tile-units at refZ; see the same conversion in tileCover.
-    const double metersToTileUnits = numTiles / (std::cos(util::deg2rad(transform.getLatLng().latitude())) *
-                                                 util::M2PI * util::EARTH_RADIUS_M);
 
     std::set<UnwrappedTileID> result;
     for (const auto& id : tiles) {
@@ -424,9 +424,11 @@ std::set<UnwrappedTileID> frustumCull(const TileCoverParameters& state, const st
         AABB aabb({{x0, y0, 0.0}}, {{x0 + span, y0 + span, 0.0}});
 
         if (state.elevationProvider) {
+            // Raw metres, matching the frustum's own Z units - see the comment on
+            // elevatedAABB in tileCover above.
             if (const auto range = state.elevationProvider->getTileElevationRange(id.canonical)) {
-                aabb.min[2] = range->min * metersToTileUnits;
-                aabb.max[2] = range->max * metersToTileUnits;
+                aabb.min[2] = range->min;
+                aabb.max[2] = range->max;
             }
         }
 

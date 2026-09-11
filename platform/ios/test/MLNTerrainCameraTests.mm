@@ -5,6 +5,7 @@
 #include <mln/math/angles.hpp>
 #include <mln/util/geo.hpp>
 #include <mln/util/projection.hpp>
+#include <mln/util/tile_cover.hpp>
 
 #include <cmath>
 
@@ -37,6 +38,20 @@ void gavarnie(mln::Transform &transform, double pitchDegrees, double centerAltit
                        .withPitch(pitchDegrees)
                        .withCenterAltitude(centerAltitudeM));
 }
+
+// A DEM elevation lookup that reports the same range for every tile, standing in for a real
+// DEM source's decoded data: `RenderTerrain::computeMeshCover` and every source's own cover
+// query this for the elevation range of a tile they're testing for visibility.
+class ConstantElevationProvider final : public mln::util::TileElevationProvider {
+public:
+  explicit ConstantElevationProvider(mln::Range<double> range) : range_(range) {}
+  std::optional<mln::Range<double>> getTileElevationRange(const mln::CanonicalTileID &) const override {
+    return range_;
+  }
+
+private:
+  mln::Range<double> range_;
+};
 
 } // namespace
 
@@ -220,6 +235,43 @@ void gavarnie(mln::Transform &transform, double pitchDegrees, double centerAltit
                              expectedDistance * 0.02);
   // Bearing 0 is north up, so the camera sits behind (south of) the centre it looks at.
   XCTAssertLessThan(cameraGround.latitude(), center.latitude());
+}
+
+// Regression guard for the reported defect: with 3D terrain on, Gavarnie at pitch 0 drew only
+// the style's flat background above zoom ~16.45, over mountainous ground only - flat regions
+// (Utrecht) and lower zooms (13-16) were unaffected. util::tileCover's elevation-aware
+// visibility test (used for the terrain mesh's own cover and, once terrain is on, every
+// source's cover) is the code under test here, isolated from rendering entirely.
+//
+// The cause: `Frustum::fromInvProjMatrix` (src/mln/util/bounding_volumes.cpp) scaled the
+// projected Z coordinate by the same tile-units-at-zoom factor as X and Y, but Z comes back
+// out of the inverse projection already in metres (`Camera::getWorldToCamera` folds
+// `pixelsPerMeter` into its own matrix before rotating, precisely so elevation can be supplied
+// in metres; its inverse hands metres back). That extra division shrank the frustum's real
+// depth range towards zero as zoom rose, while a tile's elevation-extended aabb
+// (`elevatedAABB` in tile_cover.cpp) was built from the DEM's real metres - so real, in-view
+// relief (Gavarnie's several hundred metres) landed entirely outside the mis-scaled frustum
+// bounds and read as fully separate. Every one of the tile-cover's 7 world copies failed the
+// same way at the tile actually on screen, so the traversal's root gave up immediately and the
+// cover came back empty - blanking the frame. Before the fix this asserted false: the elevated
+// query returned zero tiles at zoom 17 exactly as measured on device.
+- (void)testElevatedTileCoverIsNotEmptyForRealMountainRelief {
+  mln::Transform transform;
+  gavarnie(transform, 0.0, 1200.0);
+  transform.jumpTo(mln::CameraOptions().withZoom(17.0));
+
+  // Gavarnie's own relief, in metres, as reported by the DEM tiles the defect was measured
+  // against (the elevated aabb's z-range immediately before it started rejecting the tile).
+  ConstantElevationProvider elevation(mln::Range<double>{900.0, 1500.0});
+
+  mln::util::TileCoverParameters params{.transformState = transform.getState(),
+                                         .elevationProvider = &elevation};
+  params.tileLodMode = mln::TileLodMode::Adaptive;
+
+  const auto tiles = mln::util::tileCover(params, 15, mln::Range<uint8_t>{8, 15}, 17);
+  XCTAssertFalse(tiles.empty(),
+                 @"elevation-aware tile cover returned nothing for a camera and relief that are "
+                 @"genuinely on screen");
 }
 
 @end

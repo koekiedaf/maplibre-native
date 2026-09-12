@@ -17,8 +17,30 @@
 #include <mln/util/string.hpp>
 
 #include <cmath>
+#include <cstdlib>
 
 namespace mln {
+
+// DuckMaps fork only, task M1: an off-by-default DIAGNOSTIC. With
+// DUCKMAPS_DRAPE_FORCE_REBAKE set to a non-empty value, every drape target
+// re-bakes on every frame and every render-once (hillshade prepare) target
+// re-renders on every frame, so no target can be holding a texture baked at an
+// earlier moment of the load. It exists to answer one question by experiment
+// rather than by argument: five runs of one harness link settle with an
+// identical DEM tile set, an identical mesh cover, identical per-mesh-tile DEM
+// bindings, identical drape-target coverage and an identical set of draped
+// (layer group, covering tile) pairs, and still draw frames differing by tens
+// of thousands of pixels. If forcing the re-bake makes those runs identical,
+// the difference is a baked texture whose covering tile ids did not change
+// while its CONTENT did, and the fix belongs in what the signature covers. This
+// is a measurement switch, never a product path: unset (every normal run,
+// including every bench.py run) the check is a single already-loaded bool.
+namespace {
+const bool gDrapeForceRebake = [] {
+    const char* v = std::getenv("DUCKMAPS_DRAPE_FORCE_REBAKE");
+    return v && *v;
+}();
+} // namespace
 
 // TEMP Stage-2 diagnostic: per-frame count of drape targets (re-)rendered vs skipped (cache
 // hit). If `rendered` stays high while panning, the drape cache is not holding - the suspected
@@ -305,7 +327,7 @@ RenderTarget::RenderResult RenderTarget::render(RenderOrchestrator& orchestrator
     // that renders once. This must NOT apply to the terrain depth target (a non-drape
     // target that re-renders on camera movement), hence the explicit opt-in flag rather
     // than keying on !drapeTileID. Matches gl-js prepare-to-FBO reuse.
-    if (renderOnce && renderedOnce) {
+    if (renderOnce && renderedOnce && !gDrapeForceRebake) {
         return RenderResult::Skipped;
     }
     if (drapeTileID) {
@@ -325,7 +347,7 @@ RenderTarget::RenderResult RenderTarget::render(RenderOrchestrator& orchestrator
                 targetSignature = it->second;
             }
         }
-        if (bakedSignature && *bakedSignature == targetSignature) {
+        if (bakedSignature && *bakedSignature == targetSignature && !gDrapeForceRebake) {
             return RenderResult::Skipped;
         }
 
@@ -341,7 +363,7 @@ RenderTarget::RenderResult RenderTarget::render(RenderOrchestrator& orchestrator
         // texture is already correct: keep it. This is what makes panning cheap,
         // since panning changes none of them, and it is the maplibre-gl-js
         // behaviour (render a terrain tile's texture only when its stack changes).
-        if (coverage.sameContentAs(bakedCoverage)) {
+        if (coverage.sameContentAs(bakedCoverage) && !gDrapeForceRebake) {
             bakedSignature = targetSignature;
             return RenderResult::Skipped;
         }

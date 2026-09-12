@@ -21,7 +21,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <optional>
 #include <sstream>
+#include <tuple>
 
 namespace mln {
 
@@ -54,33 +56,6 @@ std::string lineTileIdDebugKey(const UnwrappedTileID& id) {
     return os.str();
 }
 
-// The web engine's referenceClipW() (routes3d.js:1223-1231): the clip-space w at the ground
-// under the map centre, at the centre's own sampled elevation. Scaling the ribbon's half-width
-// by (this / this vertex's own w) is what keeps its on-screen width constant at the map centre
-// while it grows or shrinks with depth away from it, the way a real-world object would as the
-// camera tilts.
-//
-// TransformState::getProjectionMatrix() operates on WORLD mercator-pixel coordinates (the same
-// space TransformState::matrixFor() converts tile-local EXTENT coordinates into -
-// TransformState::getCameraToTileDistance() is the same pattern for one tile's centre instead of
-// the map centre). World Z is expressed in that same pixel unit, converted from metres exactly
-// as TransformState::setCenterAltitude() does (metres / metresPerPixelAtLatitude).
-float computeReferenceClipW(const PaintParameters& parameters) {
-    const auto& state = parameters.state;
-    const LatLng center = state.getLatLng();
-    const double elevationM = (parameters.terrain && parameters.terrain->isEnabled())
-                                  ? parameters.terrain->getElevationForLatLng(center)
-                                  : 0.0;
-    const double metresPerPixel = Projection::getMetersPerPixelAtLatitude(center.latitude(), state.getZoom());
-    const Point<double> worldXY = Projection::project(center, state.getScale());
-    const double worldZ = metresPerPixel > 0.0 ? elevationM / metresPerPixel : 0.0;
-
-    vec4 worldPos = {{worldXY.x, worldXY.y, worldZ, 1.0}};
-    vec4 clip;
-    matrix::transformMat4(clip, worldPos, state.getProjectionMatrix());
-    return static_cast<float>(clip[3]);
-}
-
 // Task 2.2b: the map centre's own position expressed in tileID's EXTENT-unit local coordinate
 // space - the same units a_pos/a_other carry, unclamped (the point need not fall inside this
 // tile's own footprint). Identical in spirit to terrain_contour_layer_tweaker.cpp's own
@@ -88,11 +63,11 @@ float computeReferenceClipW(const PaintParameters& parameters) {
 // this stays exact for whichever tile's own EXTENT space the caller uses), duplicated here rather
 // than shared because that file's copy lives in its own anonymous namespace.
 //
-// This is fade_ref: the web anchors its fade to its own near-far anchor (state.nearFarAnchor,
+// This is also fade_ref: the web anchors its fade to its own near-far anchor (state.nearFarAnchor,
 // held still through small pans - routes3d.js:930-934), a hand-over point between its 3D ribbon
 // and a 2D flat drawing beyond it. This engine has no such hand-over (there is no 2D fallback
 // drawing to hand over to), so fade_ref anchors to the live map centre instead - the same centre
-// computeReferenceClipW above already reads via state.getLatLng().
+// computeReferenceClipW below already reads via state.getLatLng().
 Point<double> tileLocalPosition(const UnwrappedTileID& tileID, const LatLng& latLng) {
     const TileCoordinate coord = TileCoordinate::fromLatLng(static_cast<double>(tileID.canonical.z), latLng);
     const double tileScale = std::exp2(static_cast<double>(tileID.canonical.z));
@@ -100,11 +75,58 @@ Point<double> tileLocalPosition(const UnwrappedTileID& tileID, const LatLng& lat
             (coord.p.y - static_cast<double>(tileID.canonical.y)) * util::EXTENT};
 }
 
+// The web engine's referenceClipW() (routes3d.js:1223-1231): the clip-space w at the ground
+// under the map centre, at the centre's own sampled elevation. Scaling the ribbon's half-width
+// by (this / this vertex's own w) is what keeps its on-screen width constant at the map centre
+// while it grows or shrinks with depth away from it, the way a real-world object would as the
+// camera tilts.
+//
+// FAULT 2 FIX (this task): this function used to rebuild its own world-pixel position via
+// Projection::project(center, state.getScale()) and multiply it by state.getProjectionMatrix()
+// directly, converting the centre's elevation from metres to world pixels BY HAND first
+// (dividing by Projection::getMetersPerPixelAtLatitude). That divide was a second, spurious
+// conversion: every matrix built off TransformState::getProjMatrix already scales whatever z it
+// is given by pixelsPerMeter INTERNALLY, unconditionally - see Camera::getWorldToCamera's own
+// comment ("Height value (z) of renderables is in meters. Scale z coordinate by pixelsPerMeter")
+// and this shader's own vertex stage, which passes the DEM's decoded elevation straight through
+// in metres with no conversion at all (get_elevation, terrain_line.vertex.glsl). Pre-dividing by
+// metresPerPixel and then letting the matrix divide by it again (pixelsPerMeter = 1 /
+// metresPerPixel) scaled the elevation's contribution to clip-w by a second, spurious factor of
+// pixelsPerMeter - a factor that grows with zoom (pixelsPerMeter roughly doubles each zoom
+// level), which is exactly why the reported error grew with zoom rather than staying constant:
+// at the fixed reference LATITUDE the elevation term dominates the wrong way as pixelsPerMeter
+// grows, dragging referenceW away from what every vertex's own w0 (computed correctly, via the
+// per-tile matrix and raw-metres elevation) expects, until widthScale = referenceW / w0 collapses
+// toward zero at zoom 16.5-17.
+//
+// This is exactly the fault terrain_contour_layer_tweaker.cpp's own computeReferenceClipW found
+// and fixed first (task 2.4c, journal 2026-09-11) - that fix was never ported to this sibling
+// file, which still carried the original, buggy pattern until now. Fixed the same way: drop the
+// manual conversion entirely, pass elevationM straight through in metres, and evaluate it with
+// the SAME kind of matrix a drawable's own geometry uses (a per-tile matrix, not
+// state.getProjectionMatrix() alone) at the reference point expressed in that tile's own
+// EXTENT-unit local coordinates (tileLocalPosition below) rather than at a separately-computed
+// world-pixel position. Two same-zoom tiles' matrices differ only by a translation, so any tile
+// gives the identical, exact w - execute() below picks one deterministically.
+float computeReferenceClipW(const PaintParameters& parameters, const UnwrappedTileID& tileID, const mat4& matrix) {
+    const auto& state = parameters.state;
+    const LatLng center = state.getLatLng();
+    const double elevationM = (parameters.terrain && parameters.terrain->isEnabled())
+                                  ? parameters.terrain->getElevationForLatLng(center)
+                                  : 0.0;
+    const Point<double> local = tileLocalPosition(tileID, center);
+
+    vec4 localPos = {{local.x, local.y, elevationM, 1.0}};
+    vec4 clip;
+    matrix::transformMat4(clip, localPos, matrix);
+    const float w = static_cast<float>(clip[3]);
+    return w > 1e-4f ? w : 1e-4f;
+}
+
 // Task 2.2b: metres per EXTENT unit at THIS TILE's own zoom (tileID.z - which, unlike the
 // frame-level facts above, can differ per tile once overzoomed tiles are in play). One EXTENT
 // unit is 1/util::EXTENT of one full tile width, and one tile always spans util::tileSize_D
-// world-pixel units in the mercator projection at that tile's own zoom (the same world-pixel
-// convention computeReferenceClipW's comment lays out at the frame zoom instead).
+// world-pixel units in the mercator projection at that tile's own zoom.
 // Projection::getMetersPerPixelAtLatitude(lat, zoom) converts world-pixel units at a given zoom to
 // metres; multiplying by (tileSize_D / EXTENT) finishes the conversion down to one EXTENT unit.
 // This is the same "which zoom, which exponent" question computeDashPeriodExtent's own comment
@@ -225,17 +247,19 @@ DashPeriod computeDashPeriodExtent(const std::vector<float>& dasharray,
 //
 // The four inputs, and where this engine gets each one (routes3d.js reads all four off its own
 // mainMatrix/state in normalised [0,1] mercator world units; this port uses the SAME world-PIXEL
-// mercator convention computeReferenceClipW() above already uses with the SAME projection matrix,
-// which differs from the web's only by a constant scale baked consistently into both the matrix
-// and the positions, so the derivation carries over unchanged):
+// mercator convention with the SAME projection matrix, which differs from the web's only by a
+// constant scale baked consistently into both the matrix and the positions, so the derivation
+// carries over unchanged). Unlike computeReferenceClipW above, this stays in world-pixel space
+// deliberately rather than a per-tile local frame - z here is metres of TERRAIN DEPTH along the
+// view axis, a frame-level rate with no tile of its own to be local to, not a position to
+// transform:
 //   1. the projection matrix m       - parameters.transformParams.projMatrix (paint_parameters.hpp)
 //   2. the map centre in mercator    - Projection::project(state.getLatLng(), state.getScale())
 //                                      (util/projection.hpp), at z = 0 (sea level, matching the
 //                                      web's own zc0/w0 - see routes3d.js:1389-1392)
 //   3. metres-to-mercator factor mz  - 1 / Projection::getMetersPerPixelAtLatitude(lat, zoom)
-//                                      (util/projection.hpp), i.e. world-pixel units per metre -
-//                                      the exact reciprocal of computeReferenceClipW's own
-//                                      metresPerPixel, at the SAME latitude/zoom
+//                                      (util/projection.hpp), i.e. world-pixel units per metre,
+//                                      at the SAME latitude/zoom
 //   4. the centre's clip z and w     - zc0 = m[2]*pc.x + m[6]*pc.y + m[14] (no z term - sea level)
 //                                      w0  = m[3]*pc.x + m[7]*pc.y + m[15]
 float occlusionFarNDC(const PaintParameters& parameters, float occlusionEpsM) {
@@ -277,7 +301,58 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
     const auto debugGroup = parameters.encoder->createDebugGroup(label.c_str());
 #endif
 
-    const float referenceW = computeReferenceClipW(parameters);
+    // computeReferenceClipW needs one drawable's own (tileID, matrix) pair to be exact - see
+    // that function's comment. WHICH tile is not a free choice: visiting layerGroup drawables in
+    // insertion order (tile load order) would pick a different reference tile from one run to
+    // the next even for byte-identical frames, and any two same-zoom tiles' matrices differ by a
+    // translation, so a different tile is not a rounding error, it is a different, equally
+    // valid-looking w - see terrain_contour_layer_tweaker.cpp's identical fix (task C6) for the
+    // measured effect this had there. The reference point IS the map centre, so the exact tile
+    // to evaluate it in is the tile that CONTAINS the map centre, at the deepest zoom present -
+    // a property of the frame, not of load order. Where no drawable covers the centre (the
+    // centre is off this layer's own cover), fall back to the lowest tile key present, equally
+    // arbitrary in appearance and equally deterministic.
+    std::optional<UnwrappedTileID> referenceTile;
+    const LatLng referenceCentre = parameters.state.getLatLng();
+    const auto tileHoldsCentre = [&](const UnwrappedTileID& id) {
+        const Point<double> local = tileLocalPosition(id, referenceCentre);
+        return local.x >= 0.0 && local.x <= util::EXTENT && local.y >= 0.0 && local.y <= util::EXTENT;
+    };
+    const auto tileKey = [](const UnwrappedTileID& id) {
+        return std::tuple{id.wrap, id.canonical.z, id.canonical.x, id.canonical.y};
+    };
+    visitLayerGroupDrawables(layerGroup, [&](gfx::Drawable& drawable) {
+        if (!drawable.getTileID() || !checkTweakDrawable(drawable)) {
+            return;
+        }
+        const UnwrappedTileID candidate = drawable.getTileID()->toUnwrapped();
+        if (!referenceTile) {
+            referenceTile = candidate;
+            return;
+        }
+        const bool candidateHolds = tileHoldsCentre(candidate);
+        const bool currentHolds = tileHoldsCentre(*referenceTile);
+        if (candidateHolds != currentHolds) {
+            if (candidateHolds) {
+                referenceTile = candidate;
+            }
+            return;
+        }
+        if (candidateHolds) {
+            if (candidate.canonical.z > referenceTile->canonical.z ||
+                (candidate.canonical.z == referenceTile->canonical.z && tileKey(candidate) < tileKey(*referenceTile))) {
+                referenceTile = candidate;
+            }
+        } else if (tileKey(candidate) < tileKey(*referenceTile)) {
+            referenceTile = candidate;
+        }
+    });
+
+    float referenceW = 1e-4f;
+    if (referenceTile) {
+        const mat4 referenceMatrix = parameters.matrixForTile(*referenceTile);
+        referenceW = computeReferenceClipW(parameters, *referenceTile, referenceMatrix);
+    }
 
     // Task 2.2b: the fade's reference point and scale. The centre is a frame-level fact (read
     // once here, like referenceW above); fade_ref/fade_k are still PER-TILE (tileLocalPosition and

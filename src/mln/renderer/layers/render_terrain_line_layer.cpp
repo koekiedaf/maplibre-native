@@ -207,8 +207,18 @@ void RenderTerrainLineLayer::update(gfx::ShaderRegistry& shaders,
         // ::render walks that same order to issue draw calls (mtl/tile_layer_group.cpp), so the
         // lower-numbered halo drawable is guaranteed to draw, and blend, before the body one -
         // see shaders/mtl/terrain_line.hpp's top-of-file comment.
-        constexpr gfx::DrawPriority TerrainLineHaloDrawPriority = 0;
-        constexpr gfx::DrawPriority TerrainLineBodyDrawPriority = 1;
+        // Task Q3: the pass number is the HIGH part of the priority and the tile is the low
+        // part, so all halos still draw before all bodies AND, within a pass, the tiles draw in
+        // a fixed order instead of the order they happened to load. Before this, every halo
+        // drawable shared priority 0 and every body drawable priority 1, and
+        // DrawableLessByPriority broke that tie on the drawable's creation id - which is tile
+        // load order. The ribbons are alpha-blended and dashed, so that showed up as a
+        // run-to-run difference along the ribbon itself (measured at the Gavarnie wall: the
+        // difference mask between two otherwise identical runs traces the alpine trail and a
+        // stream and nothing else). See gfx::tileDrawOrderPriority.
+        const gfx::DrawPriority tileOrder = gfx::tileDrawOrderPriority(tileID.toUnwrapped());
+        const gfx::DrawPriority TerrainLineHaloDrawPriority = 0 * gfx::kTileDrawOrderPassStride + tileOrder;
+        const gfx::DrawPriority TerrainLineBodyDrawPriority = 1 * gfx::kTileDrawOrderPassStride + tileOrder;
 
         auto makeBuilder = [&](const char* name, gfx::DrawPriority priority) {
             auto b = context.createDrawableBuilder(name);

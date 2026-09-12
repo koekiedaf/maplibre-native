@@ -314,6 +314,39 @@ protected:
 using DrawablePtr = std::shared_ptr<Drawable>;
 using UniqueDrawable = std::unique_ptr<Drawable>;
 
+/// DuckMaps fork only, task Q3: a draw priority that orders a tile layer group's drawables by
+/// their TILE rather than by the moment they were created.
+///
+/// DrawableLessByPriority below breaks a priority tie on `getID()`, which is a counter handed
+/// out when a drawable is built, so a layer whose drawables all share one priority is drawn in
+/// the order its tiles happened to LOAD. For an opaque layer that costs nothing. For an
+/// alpha-blended one it is a source of run-to-run difference that no amount of fixing the
+/// inputs can remove, because src-over blending is not commutative: two partially transparent
+/// fragments landing on the same pixel give a different result in a different order, and
+/// neighbouring terrain tiles share their seam pixels. Measured at the Gavarnie wall on 12
+/// September: over five runs of one harness link the terrain-contour tile SET, the DEM tile
+/// set, every tile's bound DEM zoom and sub-tile offset, every drape target's content hash,
+/// the full draped (group, tile) set and the tweaker's reference w were all bit-identical,
+/// while the raw draw order took three distinct values and the frames differed by up to 20 388
+/// pixels, concentrated in the far field where tiles are small on screen and seams are dense.
+///
+/// The key is a pure function of the tile id, so the order is a property of the cover and not
+/// of the network. Coarse before fine, then column, then row; `wrap` is offset rather than
+/// shifted so a negative world copy still orders monotonically. 16 bits of wrap-and-zoom, 22
+/// bits of x and 22 of y fit in 60, which leaves room for a caller to add a pass number above
+/// it (terrain-line's halo pass and body pass do exactly that).
+inline DrawPriority tileDrawOrderPriority(const UnwrappedTileID& id) {
+    const int64_t wrapAndZoom = (static_cast<int64_t>(id.wrap) + 512) * 32 + id.canonical.z;
+    return (wrapAndZoom << 44) | (static_cast<int64_t>(id.canonical.x) << 22) |
+           static_cast<int64_t>(id.canonical.y);
+}
+
+/// One more than the largest value tileDrawOrderPriority can return, so a caller that needs
+/// several ordered passes over the same tiles can lay them out as
+/// `pass * kTileDrawOrderPassStride + tileDrawOrderPriority(id)` and keep every drawable of
+/// pass N before every drawable of pass N+1.
+inline constexpr DrawPriority kTileDrawOrderPassStride = static_cast<int64_t>(1) << 60;
+
 /// Comparator for sorting drawable pointers primarily by draw priority
 struct DrawableLessByPriority {
     DrawableLessByPriority(bool descending = false)

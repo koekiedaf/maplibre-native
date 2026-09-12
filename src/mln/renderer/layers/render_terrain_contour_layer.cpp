@@ -180,6 +180,13 @@ void RenderTerrainContourLayer::update(gfx::ShaderRegistry& shaders,
         std::vector<uint16_t> indexData = terrainMesh.indices;
         builder->setSegments(gfx::Triangles(), std::move(indexData), segments.data(), segments.size());
 
+        // Task Q3: order this layer group's drawables by TILE, not by the moment each tile
+        // happened to load. This layer is alpha-blended and neighbouring terrain tiles share
+        // their seam pixels, and src-over is not commutative, so a load-order draw sequence is
+        // a run-to-run difference nothing upstream can remove - see
+        // gfx::tileDrawOrderPriority's own comment for the measurement that found it.
+        builder->setDrawPriority(gfx::tileDrawOrderPriority(tileID.toUnwrapped()));
+
         builder->flush(context);
 
         for (auto& drawable : builder->clearDrawables()) {

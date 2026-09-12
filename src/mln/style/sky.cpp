@@ -53,5 +53,13 @@ float Sky::getAtmosphereBlend() const {
     return impl->atmosphereBlend;
 }
 
+float Sky::calculateFogBlendOpacity(double pitchDegrees) {
+    // Ported verbatim - see the doc comment in sky.hpp for the exact source line and why the
+    // thresholds must not change.
+    return pitchDegrees < 60.0 ? 0.0f
+           : pitchDegrees < 70.0 ? static_cast<float>((pitchDegrees - 60.0) / 10.0)
+                                 : 1.0f;
+}
+
 } // namespace style
 } // namespace mln

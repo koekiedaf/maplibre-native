@@ -134,6 +134,22 @@ public:
     void matrixFor(mat4&, const UnwrappedTileID&) const;
     void getProjMatrix(mat4& matrix, uint16_t nearZ = 1, bool aligned = false) const;
 
+    /// DuckMaps fork only: maplibre-gl-js's own terrain ground fog matrix (mercator_transform.ts
+    /// `_calcMatrices`, `this._fogMatrix`) - see the .cpp for the exact port. Built by EXACTLY
+    /// the same sequence as `getProjMatrix`'s view-projection matrix, with the near plane
+    /// replaced by `max(cameraToCenterDistance / 2, cameraToSeaLevelDistance)` (the web's own
+    /// `s`) instead of `getProjMatrix`'s `nearZ` parameter; the far plane is unchanged.
+    ///
+    /// This matrix is NEVER used to rasterize anything - the terrain shader's only use of it is
+    /// `v_fog_depth = pos.z / pos.w * 0.5 + 0.5`, the OpenGL clip convention (z in [-1, 1]).
+    /// Unlike the view-projection matrix, it must therefore NOT receive
+    /// `TerrainLayerTweaker::execute`'s Metal/Vulkan/WebGPU z-remap to [0, 1] clip space - that
+    /// remap exists so rasterized geometry is not clipped away on those backends, which does not
+    /// apply here since this matrix rasterizes nothing. Multiply a tile's own local matrix into
+    /// the result exactly as `matrixFor`/`calculatePosMatrix` do for the view-projection matrix
+    /// (see TerrainLayerTweaker::execute).
+    void getFogMatrix(mat4& matrix) const;
+
     // Dimensions
     Size getSize() const;
     void setSize(const Size& size_);
@@ -407,6 +423,13 @@ public:
 
 private:
     bool rotatedNorth() const;
+
+    /// The shared body of `getProjMatrix` and `getFogMatrix`: identical to maplibre-gl-js's
+    /// `_calcMatrices` view-projection sequence, taking the near plane as a `double` so
+    /// `getFogMatrix` can pass its own computed near plane (a `double`) without truncating it
+    /// through `getProjMatrix`'s `uint16_t nearZ` parameter. `getProjMatrix` itself is
+    /// unchanged behaviour: it just forwards its `uint16_t` to this as a `double`.
+    void getProjMatrixImpl(mat4& projMatrix, double nearZ, bool aligned) const;
 
     // Viewport center offset, from [size.width / 2, size.height / 2], defined
     // by |edgeInsets| in screen coordinates, with top left origin.

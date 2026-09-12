@@ -126,6 +126,30 @@ void TransformState::matrixFor(mat4& matrix, const UnwrappedTileID& tileID) cons
 }
 
 void TransformState::getProjMatrix(mat4& projMatrix, uint16_t nearZ, bool aligned) const {
+    getProjMatrixImpl(projMatrix, static_cast<double>(nearZ), aligned);
+}
+
+void TransformState::getFogMatrix(mat4& fogMatrix) const {
+    if (size.isEmpty()) {
+        return;
+    }
+
+    // maplibre-gl-6.mjs's own `s` in `_calcMatrices`:
+    //   s = Math.max(cameraToCenterDistance / 2, cameraToCenterDistance + elevation *
+    //       pixelPerMeter / Math.cos(limitedPitch))
+    // `cameraToSeaLevelDistance` below is exactly that second term - this engine's
+    // `getProjMatrix` already computes the identical quantity (`z` is world-space elevation in
+    // the same pixel units the web's `elevation * pixelPerMeter` is), so it is recomputed here
+    // rather than duplicated with a different name.
+    const double cameraToCenterDistance = getCameraToCenterDistance();
+    const double limitedPitch = util::clamp(getPitch(), 0.0, maxMercatorHorizonAngle);
+    const double cameraToSeaLevelDistance = cameraToCenterDistance + std::abs(z) / std::cos(limitedPitch);
+    const double fogNearZ = std::max(cameraToCenterDistance / 2.0, cameraToSeaLevelDistance);
+
+    getProjMatrixImpl(fogMatrix, fogNearZ, /*aligned=*/false);
+}
+
+void TransformState::getProjMatrixImpl(mat4& projMatrix, double nearZ, bool aligned) const {
     if (size.isEmpty()) {
         return;
     }

@@ -9,6 +9,7 @@
 namespace mln {
 
 class RenderTerrain;
+class RenderOrchestrator; // DuckMaps fork only: for the sky, see execute()'s own comment
 class LayerGroupBase;
 class PaintParameters;
 
@@ -23,8 +24,14 @@ using UniformBufferPtr = std::shared_ptr<UniformBuffer>;
  */
 class TerrainLayerTweaker : util::noncopyable {
 public:
-    explicit TerrainLayerTweaker(const RenderTerrain* terrain_)
-        : terrain(terrain_) {}
+    // DuckMaps fork only: `orchestrator_` reaches this tweaker the same way `terrain_` already
+    // does - a raw pointer stored at construction and dereferenced fresh on every `execute()`
+    // call, since RenderOrchestrator (a value member of Renderer::Impl) outlives every frame
+    // just as the RenderTerrain this tweaker belongs to does. It is how this tweaker reaches the
+    // style's `sky` root property for the terrain ground fog (RenderOrchestrator::getSky()).
+    explicit TerrainLayerTweaker(const RenderTerrain* terrain_, const RenderOrchestrator* orchestrator_)
+        : terrain(terrain_),
+          orchestrator(orchestrator_) {}
 
     ~TerrainLayerTweaker() = default;
 
@@ -36,6 +43,7 @@ protected:
 #endif
 
     const RenderTerrain* terrain = nullptr;
+    const RenderOrchestrator* orchestrator = nullptr;
 };
 
 } // namespace mln

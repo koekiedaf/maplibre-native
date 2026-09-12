@@ -262,7 +262,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
 
     // Create tweaker if we don't have one
     if (!tweaker) {
-        tweaker = std::make_unique<TerrainLayerTweaker>(this);
+        tweaker = std::make_unique<TerrainLayerTweaker>(this, &orchestrator);
     }
 
     // The skirts are baked into the shared mesh, so a change of setting has to drop the mesh

@@ -19,9 +19,11 @@ enum {
 struct alignas(16) TerrainDrawableUBO {
     /*  0 */ float4x4 matrix;
     /* 64 */ float4 dem_coords;
-    /* 80 */
+    /* 80 */ float4x4 fog_matrix; // DuckMaps fork only: see terrain_layer_ubo.hpp's own comment.
+                                  // Vertex-stage only, correctly placed here in the vertex-only UBO.
+    /* 144 */
 };
-static_assert(sizeof(TerrainDrawableUBO) == 5 * 16, "wrong size");
+static_assert(sizeof(TerrainDrawableUBO) == 9 * 16, "wrong size");
 
 struct alignas(16) TerrainTilePropsUBO {
     /*  0 */ float2 dem_tl;
@@ -38,9 +40,16 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
     /* 20 */ float elevation_offset;
     /* 24 */ float pad1;
     /* 28 */ float pad2;
-    /* 32 */
+    // DuckMaps fork only: see terrain_layer_ubo.hpp's own comment. Read by both stages.
+    /* 32 */ float4 fog_color;
+    /* 48 */ float4 horizon_color;
+    /* 64 */ float fog_ground_blend;
+    /* 68 */ float fog_ground_blend_opacity;
+    /* 72 */ float horizon_fog_blend;
+    /* 76 */ float pad3;
+    /* 80 */
 };
-static_assert(sizeof(TerrainEvaluatedPropsUBO) == 32, "wrong size");
+static_assert(sizeof(TerrainEvaluatedPropsUBO) == 80, "wrong size");
 
 )";
 
@@ -65,6 +74,7 @@ struct FragmentStage {
     float4 position [[position, invariant]];
     float2 uv;
     float elevation;
+    float fog_depth; // DuckMaps fork only: see vertexMain's own comment.
 };
 
 FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
@@ -94,10 +104,27 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     const float ele_delta = (float(vertx.pos.z) == 1.0) ? props.elevation_offset : 0.0;
     float4 position = drawable.matrix * float4(pos.x, pos.y, elevation - ele_delta, 1.0);
 
+    // DuckMaps fork only: maplibre-gl-js's own terrain ground fog vertex stage (search the
+    // bundle for `vec4 pos=u_fog_matrix*vec4(a_pos3d.xy,ele,1.0)`), ported verbatim. Uses
+    // `elevation`, the surface height, NOT `elevation - ele_delta` above - the web's own fog
+    // vertex uses `ele`, never `ele - ele_delta`, so the skirt curtain drops the drawn surface
+    // without perturbing the fog depth the skirt fades into.
+    //
+    // `drawable.fog_matrix` (TransformState::getFogMatrix, see its own comment) is built and
+    // kept in the OpenGL clip convention (z in [-1,1]) ON PURPOSE: it is never used to
+    // rasterize anything, only to produce this one depth number, so it must NOT receive the
+    // Metal/Vulkan/WebGPU [0,1]-clip-space z-remap that TerrainLayerTweaker::execute applies to
+    // `drawable.matrix` above. The `* 0.5 + 0.5` below is therefore exactly the web's own
+    // `v_fog_depth = pos.z / pos.w * 0.5 + 0.5`, not a Metal-specific conversion - do NOT "fix"
+    // it to match Metal's clip-space convention, and do NOT clamp or nudge the result.
+    const float4 fog_pos = drawable.fog_matrix * float4(pos.x, pos.y, elevation, 1.0);
+    const float fog_depth = fog_pos.z / fog_pos.w * 0.5 + 0.5;
+
     return {
         .position  = position,
         .uv        = uv,
         .elevation = elevation,
+        .fog_depth = fog_depth,
     };
 }
 
@@ -115,7 +142,27 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
     // 1.0 - uv.y. Metal's NDC is Y-up, so the RTT is stored upright and the V must NOT
     // be flipped here - sampling 1.0 - uv.y flips the draped map vertically (north/south
     // swapped about the view). Sample uv.y directly on Metal.
-    return half4(mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y)));
+    const float4 surface_color = mapTexture.sample(mapSampler, float2(in.uv.x, in.uv.y));
+
+    // DuckMaps fork only: maplibre-gl-js's own terrain ground fog fragment stage, ported
+    // verbatim (search the bundle for `uniform sampler2D u_texture;uniform vec4 u_fog_color;`).
+    // This engine has no globe projection, so the web's `!u_is_globe_mode &&` guard - always
+    // true in mercator mode there too - is simply omitted rather than adding an
+    // always-false uniform for it.
+    if (props.fog_ground_blend_opacity > 0.0 && in.fog_depth > props.fog_ground_blend) {
+        constexpr float gamma = 2.2;
+        const float4 surface_color_linear = pow(surface_color, float4(gamma));
+        const float blend_color = smoothstep(
+            0.0, 1.0, max((in.fog_depth - props.horizon_fog_blend) / (1.0 - props.horizon_fog_blend), 0.0));
+        const float4 fog_horizon_color_linear = mix(
+            pow(props.fog_color, float4(gamma)), pow(props.horizon_color, float4(gamma)), blend_color);
+        const float factor_fog = max(in.fog_depth - props.fog_ground_blend, 0.0) / (1.0 - props.fog_ground_blend);
+        const float4 blended_linear = mix(
+            surface_color_linear, fog_horizon_color_linear, pow(factor_fog, 2.0) * props.fog_ground_blend_opacity);
+        return half4(pow(blended_linear, float4(1.0 / gamma)));
+    }
+
+    return half4(surface_color);
 }
 )";
 };

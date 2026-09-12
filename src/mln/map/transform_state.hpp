@@ -422,6 +422,29 @@ public:
     /// is a collision for `constrainCameraAboveTerrain` to answer, not something to re-solve.
     bool recalculateZoomAndCenterForCenterElevation(double alt_m);
 
+    /// Task E1. A camera change that asked for a ZOOM is a statement about the ground: "zoom 14.2
+    /// at this place" means 14.2 above the terrain there, not above the sea. So the next elevation
+    /// report after such a change pins the centre onto the ground and keeps the zoom the caller
+    /// asked for, which moves the camera - and that is correct, because the user (or the deep
+    /// link, or the initial placement) asked for it. Every other elevation report - a pan, an
+    /// inertia ease, a rotate, a tilt, or the DEM simply arriving under a still camera - holds the
+    /// camera and re-solves the centre and the zoom instead. This is the whole of David's rule:
+    /// the altitude changes when the user zooms, and when the terrain clamp climbs, and at no
+    /// other time. Starts true because the camera is placed before any terrain has been read.
+    void requestCenterAltitudePin() { centerAltitudePinPending = true; }
+    bool consumeCenterAltitudePin() {
+        const bool pending = centerAltitudePinPending;
+        centerAltitudePinPending = false;
+        if (pending) {
+            ++centerAltitudePinCount;
+        }
+        return pending;
+    }
+    /// How many elevation reports have been answered by pinning the centre onto the ground and
+    /// keeping the zoom, rather than by holding the camera. Reported per frame in the elevation
+    /// trace so the rule can be seen firing where it should and nowhere else.
+    uint64_t getCenterAltitudePinCount() const { return centerAltitudePinCount; }
+
     /// How many times `recalculateZoomAndCenterForCenterElevation` has refused because the
     /// camera was at or below the ground under the centre. Never expected to move on a camera
     /// that walked into a mountain (the forward-looking clamp stops that before it happens);
@@ -513,6 +536,10 @@ private:
     // Task E1: counts the refusals of recalculateZoomAndCenterForCenterElevation (camera at or
     // below the ground under the centre). Read through getCenterElevationUnderCameraCount().
     uint64_t centerElevationUnderCameraCount = 0;
+    // Task E1: see requestCenterAltitudePin. True until the first elevation report after a
+    // zoom-requesting camera change has been applied.
+    bool centerAltitudePinPending = true;
+    uint64_t centerAltitudePinCount = 0;
 
     // map position
     double x = 0, y = 0, z = 0;

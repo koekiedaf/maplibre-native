@@ -1170,6 +1170,10 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                // camera where it is for the terrain clamp to answer; this field is what makes it
                // visible rather than silent.
                << ",\"centerElevationUnderCamera\":" << transformState.getCenterElevationUnderCameraCount()
+               // Task E1: how many elevation reports have been answered by pinning the centre to
+               // the ground and keeping the zoom (a camera change that named a zoom) rather than
+               // by holding the camera where it is (everything else).
+               << ",\"centerAltitudePins\":" << transformState.getCenterAltitudePinCount()
                << ",\"terrain\":" << (traceTerrain ? "true" : "false") << ",\"center\":{\"m\":"
                << centerProbe.meters << ",\"demZ\":" << static_cast<int>(centerProbe.demZ)
                << ",\"demX\":" << centerProbe.demX << ",\"demY\":" << centerProbe.demY

@@ -122,7 +122,14 @@ void Transform::recalculateForCenterElevation(double elevationMeters) {
     const double previousZoom = state.getZoom();
     const double previousPitch = state.getPitch();
 
-    state.recalculateZoomAndCenterForCenterElevation(elevationMeters);
+    if (state.consumeCenterAltitudePin()) {
+        // The camera was just placed by something that named a zoom, so that zoom is the
+        // statement to honour: raise the centre onto the ground and keep it. This is what this
+        // function's predecessor did on every report, and it is still right on this one.
+        state.setCenterAltitude(elevationMeters);
+    } else {
+        state.recalculateZoomAndCenterForCenterElevation(elevationMeters);
+    }
     state.constrainCameraAboveTerrain(false, false, false, previousZoom, previousPitch);
 
     observer.onCameraDidChange(MapObserver::CameraChangeMode::Immediate);
@@ -670,6 +677,17 @@ void Transform::startTransition(const CameraOptions& camera,
     const bool zoomRequested = camera.zoom.has_value();
     const bool pitchRequested = camera.pitch.has_value();
     const bool centerRequested = camera.center.has_value();
+
+    // Task E1: a transition that asks for a ZOOM is asking for a height above the GROUND, so the
+    // next elevation report pins the centre onto the terrain and keeps that zoom, exactly as this
+    // engine always did. Without this the initial placement would be read as a height above the
+    // sea: measured on the first build of the E1 change, the `gavarnie` link at zoom 14.2 pitch 60
+    // settled with the camera 324 m above a 1678 m valley floor and the zoom recalculated to
+    // 16.83, because the camera had been positioned while the centre altitude was still zero and
+    // was then held there. See TransformState::requestCenterAltitudePin.
+    if (zoomRequested) {
+        state.requestCenterAltitudePin();
+    }
 
     // Captured once, here, before this transition's first frame runs - not inside
     // transitionFrameFn, which would re-read a value the previous frame of this same transition

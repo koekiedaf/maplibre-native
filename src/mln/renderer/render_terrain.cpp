@@ -179,6 +179,46 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     if (dilated.size() != out.size()) {
         out = util::frustumCull(coverParams, dilated);
     }
+
+    // Cap the mesh tile count: keep those nearest the map centre, drop the farthest (the
+    // horizon tiles a high tilt pulls in). Everything downstream scales with this count -
+    // mesh draws, DRAPE TARGETS and their re-renders, depth instances - which is why the cap
+    // belongs here, in the one function that answers "which tiles is this frame's terrain",
+    // rather than after the fact. It used to be applied in `update()`, by which point
+    // `Renderer::Impl::render` had already called this function itself and allocated one
+    // drape target per tile of the uncapped set; the cap then bounded the mesh and nothing
+    // else. Measured at Gavarnie pitch 80 before the move: 113 drape targets against a
+    // Quality cap of 64, at roughly 9 MB of texture each.
+    //
+    // Per-mode cap (TerrainLoadBudget::maxMeshTiles): Quality keeps a generous cap so terrain
+    // render distance stays long; Balanced and Performance trade distance for frame time.
+    const size_t maxMeshTiles = updateParameters ? terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles
+                                                 : 0;
+    if (maxMeshTiles > 0 && out.size() > maxMeshTiles) {
+        // Map centre in normalised web-mercator [0,1] (standard projection)
+        const LatLng centre = state.getLatLng();
+        const double cx = centre.longitude() / 360.0 + 0.5;
+        const double latRad = util::deg2rad(centre.latitude());
+        const double cy = 0.5 - std::log(std::tan(M_PI / 4.0 + latRad / 2.0)) / (2.0 * M_PI);
+
+        const auto tileDist2 = [&](const UnwrappedTileID& id) {
+            const double scale = static_cast<double>(1u << id.canonical.z);
+            const double tx = (static_cast<double>(id.canonical.x) + 0.5) / scale + id.wrap;
+            const double ty = (static_cast<double>(id.canonical.y) + 0.5) / scale;
+            const double dx = tx - cx;
+            const double dy = ty - cy;
+            return dx * dx + dy * dy;
+        };
+
+        std::vector<UnwrappedTileID> sorted(out.begin(), out.end());
+        std::partial_sort(
+            sorted.begin(),
+            sorted.begin() + static_cast<std::ptrdiff_t>(maxMeshTiles),
+            sorted.end(),
+            [&](const UnwrappedTileID& a, const UnwrappedTileID& b) { return tileDist2(a) < tileDist2(b); });
+        out = std::set<UnwrappedTileID>(sorted.begin(), sorted.begin() + static_cast<std::ptrdiff_t>(maxMeshTiles));
+    }
+
     return out;
 }
 
@@ -299,38 +339,13 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
                                                          : computeMeshCover(state, updateParameters);
     frameMeshCover.reset();
 
-    // Cap the mesh tile count: keep those nearest the map center, drop the farthest
-    // (the horizon tiles a high tilt pulls in). Everything downstream - drape
-    // targets, re-renders, depth draws - scales with this count.
-    // Per-mode cap (TerrainLoadBudget::maxMeshTiles): Quality keeps a generous cap so terrain
-    // render distance stays long; Balanced/Performance trade distance for frame time.
-    const size_t maxMeshTiles = updateParameters ? terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles
-                                                 : 0;
-    if (maxMeshTiles > 0 && meshTiles.size() > maxMeshTiles) {
-        // Map center in normalized web-mercator [0,1] (standard projection)
-        const LatLng center = state.getLatLng();
-        const double cx = center.longitude() / 360.0 + 0.5;
-        const double latRad = util::deg2rad(center.latitude());
-        const double cy = 0.5 - std::log(std::tan(M_PI / 4.0 + latRad / 2.0)) / (2.0 * M_PI);
-
-        const auto tileDist2 = [&](const UnwrappedTileID& id) {
-            const double scale = static_cast<double>(1u << id.canonical.z);
-            const double tx = (static_cast<double>(id.canonical.x) + 0.5) / scale + id.wrap;
-            const double ty = (static_cast<double>(id.canonical.y) + 0.5) / scale;
-            const double dx = tx - cx;
-            const double dy = ty - cy;
-            return dx * dx + dy * dy;
-        };
-
-        std::vector<UnwrappedTileID> sorted(meshTiles.begin(), meshTiles.end());
-        std::partial_sort(
-            sorted.begin(),
-            sorted.begin() + static_cast<std::ptrdiff_t>(maxMeshTiles),
-            sorted.end(),
-            [&](const UnwrappedTileID& a, const UnwrappedTileID& b) { return tileDist2(a) < tileDist2(b); });
-        meshTiles = std::set<UnwrappedTileID>(sorted.begin(),
-                                              sorted.begin() + static_cast<std::ptrdiff_t>(maxMeshTiles));
-    }
+    // The mesh tile cap (TerrainLoadBudget::maxMeshTiles) is applied inside
+    // computeMeshCover now, not here. It used to be applied here, AFTER
+    // Renderer::Impl::render had already called computeMeshCover itself and allocated one
+    // drape target per tile of the UNCAPPED set - so the cap bounded the mesh and nothing
+    // else, while its own doc comment promised it bounded "mesh draws, drape targets and
+    // re-renders, depth instances". Measured at Gavarnie pitch 80: 113 drape targets where
+    // the Quality cap is 64, at about 9 MB of texture each.
 
     // Drop drawables and cached DEM textures for tiles that left the mesh tile
     // set, keeping everything else intact between frames

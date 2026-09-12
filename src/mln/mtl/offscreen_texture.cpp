@@ -29,28 +29,21 @@ public:
         static_cast<Texture2D*>(colorTexture.get())
             ->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite | MTL::TextureUsageRenderTarget);
 
+        // Task N3: the depth (and stencil) attachment comes from ONE texture per size, shared
+        // by every offscreen target. `bind()` below clears it on load and stores DontCare, so
+        // nothing reads an offscreen depth buffer after its own pass, and `swap()` commits and
+        // then waits for completion, so no two offscreen passes are ever in flight together.
+        // A private depth texture per target was therefore 8 MB of identical scratch per
+        // target: measured at Gavarnie, 34 terrain drape targets at pitch 60 and 64 at pitch
+        // 80, all 1024x1024.
         if (depth) {
-            depthTexture = context.createTexture2D();
-            depthTexture->setSize(size);
-            depthTexture->setFormat(gfx::TexturePixelType::Depth, gfx::TextureChannelDataType::Float);
-            depthTexture->setSamplerConfiguration({.filter = gfx::TextureFilterType::Linear,
-                                                   .wrapU = gfx::TextureWrapType::Clamp,
-                                                   .wrapV = gfx::TextureWrapType::Clamp});
-            static_cast<Texture2D*>(depthTexture.get())
-                ->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite | MTL::TextureUsageRenderTarget);
+            depthTexture = context.getSharedOffscreenDepthTexture(size);
         }
 
         // On iOS simulator, the depth target is PixelFormatDepth32Float_Stencil8
 #if !TARGET_OS_SIMULATOR
         if (stencil) {
-            stencilTexture = context.createTexture2D();
-            stencilTexture->setSize(size);
-            stencilTexture->setFormat(gfx::TexturePixelType::Stencil, gfx::TextureChannelDataType::UnsignedByte);
-            stencilTexture->setSamplerConfiguration({.filter = gfx::TextureFilterType::Linear,
-                                                     .wrapU = gfx::TextureWrapType::Clamp,
-                                                     .wrapV = gfx::TextureWrapType::Clamp});
-            static_cast<Texture2D*>(stencilTexture.get())
-                ->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite | MTL::TextureUsageRenderTarget);
+            stencilTexture = context.getSharedOffscreenStencilTexture(size);
         }
 #endif
 

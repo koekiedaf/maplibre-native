@@ -6,6 +6,8 @@
 #include <mln/gfx/color_mode.hpp>
 #include <mln/gfx/texture2d.hpp>
 #include <mln/gfx/context.hpp>
+
+#include <map>
 #include <mln/mtl/buffer_resource.hpp>
 #include <mln/mtl/mtl_fwd.hpp>
 #include <mln/mtl/uniform_buffer.hpp>
@@ -105,6 +107,19 @@ public:
 
     gfx::Texture2DPtr createTexture2D() override;
 
+    /// DuckMaps fork only, task N3. One depth (and, off the simulator, stencil) texture per
+    /// SIZE, shared by every offscreen render target of that size.
+    ///
+    /// Every offscreen pass in this renderer clears its depth attachment on load and sets
+    /// `StoreActionDontCare` on it, so no offscreen depth buffer is ever read after its own
+    /// pass ends, and `mtl::OffscreenTextureResource::swap` commits and then
+    /// `waitUntilCompleted()`s, so no two of those passes are ever in flight together. A
+    /// private depth texture per target is therefore 8 MB of identical scratch space per
+    /// target. Measured at Gavarnie pitch 60 before this: 34 terrain drape targets at
+    /// 1024x1024, 382 MB of texture memory in total; pitch 80: 64 targets, 818 MB.
+    gfx::Texture2DPtr getSharedOffscreenDepthTexture(Size size);
+    gfx::Texture2DPtr getSharedOffscreenStencilTexture(Size size);
+
     gfx::DynamicTexturePtr createDynamicTexture(Size size, gfx::TexturePixelType pixelType) override;
 
     RenderTargetPtr createRenderTarget(const Size size, const gfx::TextureChannelDataType type, bool stencil) override;
@@ -175,6 +190,11 @@ public:
     void unbindGlobalUniformBuffers(gfx::RenderPass&) const noexcept override {}
 
 private:
+    /// Task N3: see getSharedOffscreenDepthTexture. Keyed by (width, height).
+    std::map<std::pair<uint32_t, uint32_t>, gfx::Texture2DPtr> sharedOffscreenDepthTextures;
+    std::map<std::pair<uint32_t, uint32_t>, gfx::Texture2DPtr> sharedOffscreenStencilTextures;
+
+
     RendererBackend& backend;
     bool cleanupOnDestruction = true;
 

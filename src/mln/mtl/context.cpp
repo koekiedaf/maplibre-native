@@ -246,6 +246,46 @@ gfx::Texture2DPtr Context::createTexture2D() {
     return std::make_shared<Texture2D>(*this);
 }
 
+namespace {
+/// Shared by `getSharedOffscreenDepthTexture` and its stencil twin: the sampler and usage
+/// every offscreen depth/stencil attachment in this renderer is created with.
+void configureOffscreenAttachment(const gfx::Texture2DPtr& texture,
+                                  Size size,
+                                  gfx::TexturePixelType pixelType,
+                                  gfx::TextureChannelDataType channelType) {
+    texture->setSize(size);
+    texture->setFormat(pixelType, channelType);
+    texture->setSamplerConfiguration({.filter = gfx::TextureFilterType::Linear,
+                                      .wrapU = gfx::TextureWrapType::Clamp,
+                                      .wrapV = gfx::TextureWrapType::Clamp});
+    static_cast<Texture2D*>(texture.get())
+        ->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite | MTL::TextureUsageRenderTarget);
+}
+} // namespace
+
+gfx::Texture2DPtr Context::getSharedOffscreenDepthTexture(Size size) {
+    const auto key = std::make_pair(size.width, size.height);
+    if (const auto it = sharedOffscreenDepthTextures.find(key); it != sharedOffscreenDepthTextures.end()) {
+        return it->second;
+    }
+    auto texture = createTexture2D();
+    configureOffscreenAttachment(texture, size, gfx::TexturePixelType::Depth, gfx::TextureChannelDataType::Float);
+    sharedOffscreenDepthTextures.emplace(key, texture);
+    return texture;
+}
+
+gfx::Texture2DPtr Context::getSharedOffscreenStencilTexture(Size size) {
+    const auto key = std::make_pair(size.width, size.height);
+    if (const auto it = sharedOffscreenStencilTextures.find(key); it != sharedOffscreenStencilTextures.end()) {
+        return it->second;
+    }
+    auto texture = createTexture2D();
+    configureOffscreenAttachment(
+        texture, size, gfx::TexturePixelType::Stencil, gfx::TextureChannelDataType::UnsignedByte);
+    sharedOffscreenStencilTextures.emplace(key, texture);
+    return texture;
+}
+
 gfx::DynamicTexturePtr Context::createDynamicTexture(Size size, gfx::TexturePixelType pixelType) {
     return std::make_shared<DynamicTexture>(*this, size, pixelType);
 }

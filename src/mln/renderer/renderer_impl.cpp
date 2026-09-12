@@ -1189,6 +1189,19 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                 }
             }
             os << "]";
+            // DuckMaps fork only, task N3: the renderer's own GPU memory counters, so a
+            // memory table can say which part is textures (drape targets, DEM, sprite,
+            // glyph) and which is geometry, instead of inferring it from the process total.
+            {
+                const auto& gpu = context.renderingStats();
+                os << ",\"gpu\":{\"memTexturesBytes\":" << gpu.memTextures
+                   << ",\"memBuffersBytes\":" << gpu.memBuffers
+                   << ",\"memIndexBuffersBytes\":" << gpu.memIndexBuffers
+                   << ",\"memVertexBuffersBytes\":" << gpu.memVertexBuffers
+                   << ",\"memUniformBuffersBytes\":" << gpu.memUniformBuffers
+                   << ",\"numFrameBuffers\":" << gpu.numFrameBuffers
+                   << ",\"numBuffers\":" << gpu.numBuffers << "}";
+            }
             os << ",\"elevationQueries\":" << DEMElevationProvider::debugDrainElevationQueries();
             os << "}\n";
 

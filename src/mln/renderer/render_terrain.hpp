@@ -286,6 +286,16 @@ public:
     }
 
     /**
+     * @brief DuckMaps fork only, task N1: every mesh tile with its DEM QUALITY TIER and the
+     * demCoords it samples with (2 = the tile's own DEM, 1 = an ancestor's, 0 = the flat
+     * placeholder), as a JSON array, for the off-by-default elevation trace. Two runs of one
+     * harness link settled with the same DEM tile set and the same mesh cover and still drew
+     * different frames, so this says whether the tiles were sampling the same DEM at the same
+     * offsets. Debug-only; nothing calls it unless the trace is on.
+     */
+    std::string debugMeshTileTiersJSON() const;
+
+    /**
      * @brief {scale, x offset, y offset, DEM dim} mapping a terrain drawable's
      * tile-local position (0..EXTENT) into its bound DEM texture's normalized
      * space, for the shader's get_elevation() (see the demCoords built in update)
@@ -464,13 +474,23 @@ private:
     // Terrain layer tweaker for UBO updates
     std::unique_ptr<TerrainLayerTweaker> tweaker;
 
-    // Track which tiles have terrain drawables; the value is true when the
-    // drawable samples the tile's own DEM texture, false when it is using an
-    // ancestor tile's DEM as a fallback while its own DEM is still loading
-    // Mesh drawables by tile, with the DEM quality tier they were built with
-    // (0 = placeholder/flat, 1 = ancestor fallback, 2 = own DEM); a drawable
-    // is replaced whenever a higher tier becomes available
-    std::unordered_map<OverscaledTileID, uint8_t> tilesWithDrawables;
+    // Mesh drawables by tile, with the canonical ZOOM of the DEM tile each one
+    // samples: the tile's own z when its own DEM is bound, the ancestor's z when
+    // an ancestor is standing in, and -1 for the flat placeholder. A drawable is
+    // replaced whenever a DEM with a HIGHER zoom becomes available, so it always
+    // ends up on the deepest DEM that exists for it.
+    //
+    // Task N1: this used to be a three-value quality tier (0 placeholder, 1
+    // ancestor, 2 own DEM), which could not tell a z11 ancestor from a z13 one -
+    // both were tier 1, and the rule "keep it unless the tier is higher" therefore
+    // latched onto whichever ancestor happened to be loaded first and never moved
+    // again. Measured at the Gavarnie wall over four runs of one harness link with
+    // an IDENTICAL DEM tile set and an IDENTICAL mesh cover: 13/4094/3022 ended on
+    // a z12 ancestor in one run and a z11 ancestor in another, and 12/2047/1510
+    // ended on the flat placeholder in one run and on an ancestor in another,
+    // permanently, which is tens of thousands of pixels of difference in the far
+    // field. The zoom is the honest comparison the tier was standing in for.
+    std::unordered_map<OverscaledTileID, int8_t> tilesWithDrawables;
 
     // Per-drawable scale/offset into the bound DEM texture ({1,0,0,0} unless
     // an ancestor tile's DEM is bound); read by the terrain layer tweaker

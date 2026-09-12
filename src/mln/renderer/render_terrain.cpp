@@ -419,11 +419,12 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
     for (const auto& unwrapped : meshTiles) {
         const OverscaledTileID tileID(unwrapped.canonical.z, unwrapped.wrap, unwrapped.canonical);
 
-        // Skip if the tile already has a drawable bound to its own DEM, but mark that DEM used:
-        // this early-out is a tier-2 tile's only path, so the LRU could otherwise evict the
-        // texture from under the drawable still sampling it.
+        // Skip if the tile already has a drawable bound to its own DEM (nothing can beat that),
+        // but mark that DEM used: this early-out is such a tile's only path, so the LRU could
+        // otherwise evict the texture from under the drawable still sampling it.
         if (const auto existing = tilesWithDrawables.find(tileID);
-            existing != tilesWithDrawables.end() && existing->second == 2) {
+            existing != tilesWithDrawables.end() &&
+            existing->second == static_cast<int8_t>(unwrapped.canonical.z)) {
             if (auto cached = demTextures.find(unwrapped); cached != demTextures.end()) {
                 cached->second.lastUsed = demUpdateCounter;
             }
@@ -440,7 +441,10 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         // the terrain mesh and the elevated layers sample identically. The DEM
         // dimension rides in .w for the shader's get_elevation() call.
         std::array<float, 4> demCoords{{1.0f / util::EXTENT, 0.0f, 0.0f, static_cast<float>(demDim)}};
-        uint8_t demTier = 0;
+        // The canonical zoom of the DEM tile this drawable will sample, or -1 for the flat
+        // placeholder. Higher is strictly better (a deeper DEM tile covering the same ground),
+        // and the tile's own z is the best there is.
+        int8_t demZoom = -1;
         // DEM tile whose texture / array-layer this tile uses. Only *read* by the GL
         // instanced-depth block below, so mark it maybe_unused: other backends keep the
         // per-tile depth drawables and would otherwise fail -Wunused-but-set-variable.
@@ -449,7 +453,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         if (auto cached = demTextures.find(unwrapped); cached != demTextures.end()) {
             cached->second.lastUsed = demUpdateCounter;
             demTexture = cached->second.texture;
-            demTier = 2;
+            demZoom = static_cast<int8_t>(unwrapped.canonical.z);
             demTileUsed = &unwrapped;
         } else {
             // Fall back to the closest cached ancestor DEM
@@ -475,7 +479,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
                 }
             } else {
                 ancestorEntry->lastUsed = demUpdateCounter;
-                demTier = 1;
+                demZoom = static_cast<int8_t>(ancestorID->canonical.z);
                 demTileUsed = ancestorID;
                 const auto off = demSubTileOffset(unwrapped.canonical, ancestorID->canonical);
                 demCoords = {{1.0f / (util::EXTENT * off.scale),
@@ -485,10 +489,12 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
             }
         }
 
-        // If a drawable already exists for this tile, keep it until a higher
-        // DEM quality tier becomes available, then replace it
+        // If a drawable already exists for this tile, keep it until a DEM at a HIGHER zoom
+        // becomes available, then replace it. Comparing zooms rather than a three-value
+        // quality tier is what stops the drawable latching onto whichever ancestor loaded
+        // first (see `tilesWithDrawables`).
         if (const auto existing = tilesWithDrawables.find(tileID); existing != tilesWithDrawables.end()) {
-            if (existing->second >= demTier) {
+            if (existing->second >= demZoom) {
                 continue;
             }
             lg->removeDrawablesIf(
@@ -521,7 +527,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         auto drawable = createDrawableForTile(context, shaders, tileID, demTexture, renderTarget->getTexture());
         if (drawable) {
             lg->addDrawable(std::move(drawable));
-            tilesWithDrawables[tileID] = demTier;
+            tilesWithDrawables[tileID] = demZoom;
 #if !MLN_RENDER_BACKEND_OPENGL
             // Non-GL backends: one depth drawable per tile (no instancing path there).
             if (depthLg) {
@@ -872,6 +878,37 @@ std::vector<CanonicalTileID> RenderTerrain::getResidentDemTileIds() const {
         ids.push_back(renderTile.id.canonical);
     }
     return ids;
+}
+
+std::string RenderTerrain::debugMeshTileTiersJSON() const {
+    // Debug-only, task N1. Sorted so two runs can be compared line for line.
+    std::vector<std::pair<std::string, std::string>> entries;
+    entries.reserve(tilesWithDrawables.size());
+    for (const auto& [tileID, demZoom] : tilesWithDrawables) {
+        std::ostringstream key;
+        key << static_cast<int>(tileID.canonical.z) << "/" << tileID.canonical.x << "/" << tileID.canonical.y;
+        const auto it = drawableDemCoords.find(tileID);
+        const std::array<float, 4> coords = it != drawableDemCoords.end() ? it->second
+                                                                         : std::array<float, 4>{{0, 0, 0, 0}};
+        std::ostringstream value;
+        value << std::setprecision(9) << "{\"t\":\"" << key.str() << "\",\"demZ\":" << static_cast<int>(demZoom)
+              << ",\"dem\":[" << coords[0] << "," << coords[1] << "," << coords[2] << "," << coords[3] << "]}";
+        entries.emplace_back(key.str(), value.str());
+    }
+    std::sort(entries.begin(), entries.end());
+    std::ostringstream os;
+    os << "[";
+    bool first = true;
+    for (const auto& [ignored, value] : entries) {
+        (void)ignored;
+        if (!first) {
+            os << ",";
+        }
+        first = false;
+        os << value;
+    }
+    os << "]";
+    return os.str();
 }
 
 std::vector<CanonicalTileID> RenderTerrain::getLastFrameMeshCoverTileIds() const {

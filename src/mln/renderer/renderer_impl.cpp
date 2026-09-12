@@ -1202,6 +1202,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                    << ",\"numFrameBuffers\":" << gpu.numFrameBuffers
                    << ",\"numBuffers\":" << gpu.numBuffers << "}";
             }
+            os << ",\"meshTileDemZooms\":" << (traceTerrain ? traceTerrain->debugMeshTileTiersJSON() : "[]");
             os << ",\"elevationQueries\":" << DEMElevationProvider::debugDrainElevationQueries();
             os << "}\n";
 

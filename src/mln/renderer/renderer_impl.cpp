@@ -814,10 +814,18 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
     // follow-up frame or it would idle blank until the view is panned - most visible when
     // terrain is toggled back on over an otherwise static map. Bounded so it cannot spin.
     bool terrainCoverPending = false;
+    // Band-aid audit item 6: true the frame this bound is exhausted while the condition it
+    // was bounding (terrain enabled, drape cover still empty) is STILL true - i.e. this
+    // frame is reported fully rendered only because the budget ran out, not because the
+    // cover actually appeared. See the combined report built below, after all four
+    // counters, and RendererObserver::onSettleBoundGivenUp's own comment.
+    bool terrainCoverBoundGaveUp = false;
     if (orchestrator.getRenderTerrain() && frameDrapeTargetCount == 0) {
         if (terrainCoverRetryFrames > 0) {
             --terrainCoverRetryFrames;
             terrainCoverPending = true;
+        } else {
+            terrainCoverBoundGaveUp = true;
         }
     } else {
         terrainCoverRetryFrames = 4;
@@ -829,6 +837,10 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
     // centre, always for the camera-above-terrain clamp). Gated so a still map does not post a
     // message a frame.
     bool centerElevationSettling = false;
+    // Band-aid audit item 6: set inside the block below, declared here so they survive past
+    // its closing brace for the combined report built after `terrainSettling`.
+    bool centerElevationUnknownBoundGaveUp = false;
+    bool centerElevationSettleBoundGaveUp = false;
     // C6: kept for the debug trace below, which is otherwise blind to the forward rise.
     std::optional<double> traceCameraGroundRise;
     {
@@ -1008,6 +1020,10 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         } else {
             centerElevationUnknownFrames = 0;
         }
+        // Band-aid audit item 6: the DEM under the centre is STILL missing this frame
+        // (`centerElevationUnknown`) but the bound no longer holds the frame back
+        // (`!unknownHoldsFrame`) - reported fully rendered anyway.
+        centerElevationUnknownBoundGaveUp = centerElevationUnknown && !unknownHoldsFrame;
 
         if (centerChanged || cameraGroundChanged) {
             // The camera only moves onto the terrain on a following frame, so this one was
@@ -1016,6 +1032,9 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             // the camera is empty. One shared, bounded counter for both channels, so a DEM that
             // never settles on either cannot spin the loop forever.
             centerElevationSettling = ++centerElevationSettleFrames <= kMaxCenterElevationSettleFrames;
+            // Band-aid audit item 6: the centre or camera-ground sample is STILL moving this
+            // frame (we are in this branch at all) but the bound gave up holding it back.
+            centerElevationSettleBoundGaveUp = !centerElevationSettling;
         } else {
             centerElevationSettleFrames = 0;
         }
@@ -1028,17 +1047,60 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
     // kMaxTerrainSettleFrames in the header for why a frame drawn while the mesh cover or the
     // per-tile DEM binding is still moving is not a settled frame.
     bool terrainSettling = false;
+    // Band-aid audit item 6: the mesh cover / DEM binding signature is STILL moving this
+    // frame (we are in the `if` branch below at all) but the bound gave up holding it back.
+    bool terrainSettleBoundGaveUp = false;
     if (auto* settleTerrain = orchestrator.getRenderTerrain()) {
         const std::size_t signature = settleTerrain->terrainSettleSignature();
         if (!lastTerrainSettleSignature || *lastTerrainSettleSignature != signature) {
             lastTerrainSettleSignature = signature;
             terrainSettling = ++terrainSettleFrames <= kMaxTerrainSettleFrames;
+            terrainSettleBoundGaveUp = !terrainSettling;
         } else {
             terrainSettleFrames = 0;
         }
     } else {
         lastTerrainSettleSignature.reset();
         terrainSettleFrames = 0;
+    }
+
+    // Band-aid audit item 6 (docs/plans/2026-09-11-band-aids.md): the visible half of the
+    // four bounded counters above. Each holds a frame back honestly while it is bounding a
+    // real convergence; this says whether the frame just decided above instead reached
+    // RenderMode::Full because one or more of those bounds gave up rather than because the
+    // condition it was watching actually resolved. Comma-joined, in the counters' own
+    // declaration order (renderer_impl.hpp), so more than one giving up on the same frame is
+    // still visible rather than picking one arbitrarily; nullopt - the common, healthy case -
+    // when none did. Only pushed to the observer when it changes, same as
+    // onTerrainCameraGroundRiseChanged above.
+    std::optional<std::string> settleBoundGivenUp;
+    {
+        std::string joined;
+        const auto append = [&joined](const char* name) {
+            if (!joined.empty()) {
+                joined += ",";
+            }
+            joined += name;
+        };
+        if (terrainCoverBoundGaveUp) {
+            append("terrainCoverRetryFrames");
+        }
+        if (centerElevationUnknownBoundGaveUp) {
+            append("centerElevationUnknownFrames");
+        }
+        if (centerElevationSettleBoundGaveUp) {
+            append("centerElevationSettleFrames");
+        }
+        if (terrainSettleBoundGaveUp) {
+            append("terrainSettleFrames");
+        }
+        if (!joined.empty()) {
+            settleBoundGivenUp = std::move(joined);
+        }
+    }
+    if (settleBoundGivenUp != lastReportedSettleBoundGivenUp) {
+        lastReportedSettleBoundGivenUp = settleBoundGivenUp;
+        observer->onSettleBoundGivenUp(settleBoundGivenUp);
     }
 
     // DuckMaps fork only, task C1: debug-only, off-by-default per-frame elevation trace. Purely
@@ -1230,6 +1292,17 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             // overlapping-pair counts - see RenderTerrain::debugDrainMeshCoverDilationTraceJSON's
             // comment. Drained the same way, once per frame, right alongside the other two.
             os << ",\"meshCoverDilation\":" << RenderTerrain::debugDrainMeshCoverDilationTraceJSON();
+            // Band-aid audit item 6: this frame's settle-bound-given-up value (see the
+            // combined report built above, and RendererObserver::onSettleBoundGivenUp's own
+            // comment), unlike the property MLNMapView exposes this is drained every frame
+            // regardless of whether it changed, so a give-up that resolves again before the
+            // harness next reads state.json is still visible somewhere.
+            os << ",\"settleBoundGivenUp\":";
+            if (settleBoundGivenUp) {
+                os << "\"" << *settleBoundGivenUp << "\"";
+            } else {
+                os << "null";
+            }
             os << "}\n";
 
             const std::string line = os.str();

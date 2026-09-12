@@ -79,6 +79,23 @@ public:
     /// to a flat sea level.
     virtual void onTerrainCameraGroundRiseChanged(std::optional<double> /*riseMeters*/) {}
 
+    /// DuckMaps fork only: item 6 of the band-aid audit
+    /// (docs/plans/2026-09-11-band-aids.md). `Renderer::Impl::render` holds four bounded
+    /// counters (`terrainCoverRetryFrames`, `centerElevationUnknownFrames`,
+    /// `centerElevationSettleFrames`, `terrainSettleFrames`, all declared in
+    /// `renderer_impl.hpp`) that keep a frame reported as `RenderMode::Partial` while terrain
+    /// is still converging. Each is a real bound for a real reason, but once one is exhausted
+    /// while the underlying condition is STILL true, the frame is reported
+    /// `RenderMode::Full` exactly as if the condition had genuinely resolved - with nothing
+    /// distinguishing "settled" from "gave up" anywhere outside the renderer. This call is
+    /// that distinction, made visible: `std::nullopt` when the most recently rendered frame
+    /// needed no bound to give up (the common, healthy case, including every frame reported
+    /// `Partial`), or a comma-joined list of the counter member name(s) above that gave up
+    /// keeping this frame back, in their declaration order, when one or more did. Only fired
+    /// when the value changes from the previous frame, the same way
+    /// `onTerrainCameraGroundRiseChanged` above is.
+    virtual void onSettleBoundGivenUp(const std::optional<std::string>& /*boundNames*/) {}
+
     /// Style is missing an image
     using StyleImageMissingCallback = std::function<void()>;
     virtual void onStyleImageMissing(const std::string&, const StyleImageMissingCallback& done) { done(); }

@@ -593,6 +593,19 @@ MLN_EXPORT
 @property (nonatomic, readonly, nullable) NSNumber *terrainCameraGroundRiseMeters;
 
 /**
+ A reading of the render side, not a request: item 6 of the band-aid audit
+ (docs/plans/2026-09-11-band-aids.md). The renderer holds four bounded counters that keep a
+ frame "not fully rendered" while terrain is still converging under the map centre or the
+ camera; once a bound is exhausted, the frame is reported fully rendered even though the
+ condition it was waiting on is still true, with nothing else distinguishing that from a
+ genuine settle. `nil` when the most recently rendered frame needed no bound to give up (the
+ common, healthy case). Otherwise, a comma-joined list of the counter name(s), in their own
+ declaration order, that gave up keeping this frame back - see
+ `Map::getSettleBoundGivenUp`'s own comment for exactly which counters those are.
+ */
+@property (nonatomic, readonly, nullable) NSString *terrainSettleBoundGivenUp;
+
+/**
  A reading of the current camera, not a request: how many metres of altitude the camera currently
  holds above the centre plane, `cos(pitch) * cameraToCenterDistance * metresPerPixel(lat, zoom)` -
  the left-hand side of the terrain camera clamp's inequality. Exists so the clamp's margin can be

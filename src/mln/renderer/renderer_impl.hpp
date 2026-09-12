@@ -114,6 +114,11 @@ private:
     /// frame so neither side can be stale relative to the other. nullopt means "no render
     /// terrain reported yet", distinct from a reported rise of zero.
     std::optional<double> lastReportedCameraGroundRise;
+    /// Band-aid audit item 6: last value reported via `onSettleBoundGivenUp`, so an
+    /// unchanged value (nullopt most of the time - the healthy case) does not post an
+    /// observer message every frame. Mirrors `lastReportedCenterElevation`/
+    /// `lastReportedCameraGroundRise` above.
+    std::optional<std::string> lastReportedSettleBoundGivenUp;
     /// Frames spent waiting for either terrain-clamped channel (centre or camera) to settle, and
     /// the cap that stops a DEM whose sampled height keeps moving from holding a still render
     /// open forever. Shared by both channels so the bounded retry still cannot spin.

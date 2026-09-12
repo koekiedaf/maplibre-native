@@ -65,6 +65,7 @@ public:
     void onDidFinishRenderingMap() final;
     void onTerrainCenterElevationChanged(double elevationMeters) final;
     void onTerrainCameraGroundRiseChanged(std::optional<double> riseMeters) final;
+    void onSettleBoundGivenUp(const std::optional<std::string>& boundNames) final;
     void onStyleImageMissing(const std::string&, const std::function<void()>&) final;
     void onRemoveUnusedStyleImages(const std::vector<std::string>&) final;
     void onRegisterShaders(gfx::ShaderRegistry&) final;
@@ -121,6 +122,11 @@ public:
     TerrainSkirtLength terrainSkirtLength = TerrainSkirtLength::Auto;
     bool centerClampedToGround = true;
     bool debugAboveGroundLog = false;
+    /// Band-aid audit item 6: the render side's last report of which settle bound(s), if
+    /// any, gave up rather than genuinely resolved on the most recently rendered frame - see
+    /// `onSettleBoundGivenUp`'s own comment and `Map::getSettleBoundGivenUp`. nullopt is the
+    /// common, healthy case.
+    std::optional<std::string> lastSettleBoundGivenUp;
 };
 
 // Forward declaration of this method is required for the MapProjection class

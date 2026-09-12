@@ -642,6 +642,10 @@ std::optional<double> Map::getTerrainCameraGroundRiseMeters() const {
     return impl->transform.getTerrainCameraGroundRise();
 }
 
+std::optional<std::string> Map::getSettleBoundGivenUp() const {
+    return impl->lastSettleBoundGivenUp;
+}
+
 double Map::getTerrainCameraAltitudeAboveCentreMeters() const {
     const auto& state = impl->transform.getState();
     return state.getCameraAltitudeMeters() - state.getCenterAltitude();

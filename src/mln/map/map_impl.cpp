@@ -374,6 +374,13 @@ void Map::Impl::onTerrainCameraGroundRiseChanged(std::optional<double> riseMeter
     onUpdate();
 }
 
+void Map::Impl::onSettleBoundGivenUp(const std::optional<std::string>& boundNames) {
+    // Purely a stored reading for `Map::getSettleBoundGivenUp` (band-aid audit item 6) -
+    // unlike the camera-ground rise above, nothing on the map thread acts on this, so there
+    // is no jumpTo/onUpdate here, only the store.
+    lastSettleBoundGivenUp = boundNames;
+}
+
 void Map::Impl::jumpTo(const CameraOptions& camera) {
     cameraMutated = true;
     transform.jumpTo(camera);

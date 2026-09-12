@@ -3283,6 +3283,11 @@ static void *windowScreenContext = &windowScreenContext;
   return rise ? @(*rise) : nil;
 }
 
+- (NSString *)terrainSettleBoundGivenUp {
+  const std::optional<std::string> given = _mbglMap->getSettleBoundGivenUp();
+  return given ? @(given->c_str()) : nil;
+}
+
 - (CGFloat)terrainCameraAltitudeAboveCentreMeters {
   return _mbglMap->getTerrainCameraAltitudeAboveCentreMeters();
 }

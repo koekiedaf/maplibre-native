@@ -249,6 +249,17 @@ public:
     /// clamp can be measured from a test harness instead of guessed.
     std::optional<double> getTerrainCameraGroundRiseMeters() const;
 
+    /// Band-aid audit item 6 (docs/plans/2026-09-11-band-aids.md): a reading of the render
+    /// side, not a request. `Renderer::Impl::render` holds four bounded counters that keep a
+    /// frame `RenderMode::Partial` while terrain is still converging under the map centre or
+    /// the camera; once a bound is exhausted the frame is reported fully rendered even though
+    /// the condition it was waiting on is still true, with nothing otherwise distinguishing
+    /// that from a genuine settle. `std::nullopt` when the most recently rendered frame
+    /// needed no bound to give up (the common, healthy case). Otherwise, a comma-joined list
+    /// of the counter member name(s) declared in `renderer_impl.hpp` that gave up keeping
+    /// this frame back, in their declaration order.
+    std::optional<std::string> getSettleBoundGivenUp() const;
+
     /// Read-only measurement of the current camera, not a request: the left-hand side of the
     /// clamp's inequality, `cos(pitch) * cameraToCenterDistance * metresPerPixel(lat, zoom)` -
     /// how many metres of altitude the camera currently holds above the centre plane. Exists so

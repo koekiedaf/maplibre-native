@@ -1188,10 +1188,38 @@ void TransformState::constrainCameraAboveTerrain(bool zoomRequested, bool pitchR
     // under the terrain, but it may not pull the map further out than the gesture that provoked
     // it started from. It does NOT apply to a transition that requested a CENTRE change: a pan
     // may lower the zoom freely, which is how the camera lifts when the map is dragged onto
-    // higher ground, regardless of whether that same pan also asked for a new zoom or pitch.
-    const bool floorApplies = !centerRequested;
+    // higher ground, regardless of whether that same pan also asked for a new zoom or bearing.
+    //
+    // THE RESCUE, and the case that made it necessary. A camera can ARRIVE already under the
+    // terrain, rather than walk into it: a jumpTo/flyTo/deep link that sets centre, zoom and
+    // pitch at once lands wherever it lands, and the rise that would have stopped it is not
+    // known until the render thread has drawn a frame at that camera and reported it. When the
+    // rise then arrives, this clamp runs on a bare CameraOptions() with the floor standing at
+    // the camera's own current zoom and pitch - which are the underground ones - so both clamps
+    // resolve to "no change" and the breach is simply kept. Measured at the `gavarnie`
+    // viewpoint, lon -0.01 lat 42.696 zoom 14.2 bearing 0, pitch 80: the ground under the
+    // camera is 2540 m, the camera is at 2392 m, the rise is 844 m against an
+    // altitude-above-centre of 696 m, and the frame draws its bottom 484 rows as the style's
+    // own paper because the eye is inside the rock. Pitch 75 at the same camera clears the
+    // ground by 174 m and is correct, which is why a pitch cap looked like the answer and is
+    // not: the same pitch 80 at bearing 180 clears by 1015 m.
+    //
+    // So a transition that requested NOTHING, while no gesture is in progress, is not a change
+    // to be protected from its own clamp: it is the correction channel finding an existing
+    // breach, and it runs WITHOUT the floor. It answers on PITCH, not on zoom, and that choice
+    // is a convergence argument rather than a preference. Lowering the pitch moves the camera's
+    // own ground point towards the centre, so the rise it is clamped against can only shrink,
+    // and at pitch 0 the rise is identically zero for any terrain; the clamp only ever LOWERS
+    // pitch (the `requestedPitch > pitchMax` gate below), so the sequence is monotone and
+    // bounded and cannot oscillate. Lowering the ZOOM instead pushes the camera FURTHER back
+    // over ground that may keep rising, which can walk the map out several levels - the same
+    // walk section 7 of the camera-collision note describes, in the one place the floor is not
+    // there to stop it.
+    const bool nothingRequested = !zoomRequested && !pitchRequested && !centerRequested;
+    const bool rescueExistingBreach = nothingRequested && !gestureInProgress;
+    const bool floorApplies = !centerRequested && !rescueExistingBreach;
 
-    if (!pitchOnly) {
+    if (!pitchOnly && !rescueExistingBreach) {
         // Zoom clamp: solves cos(pitch) * C * metersPerPixel(lat, zoom) == R for zoom, since
         // metersPerPixel(lat, zoom) is k * 2^-zoom: cos(pitch) * C * k * 2^-zoom == R
         // => zoom == log2(cos(pitch) * C * k / R).

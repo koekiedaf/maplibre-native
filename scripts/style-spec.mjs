@@ -264,27 +264,35 @@ modifiedReferenceSpec["paint_terrain-line"] = {
   },
   "terrain-line-blur": {
       "type": "number",
-      // Task 2.2b: default lowered from 1 to 0.5 CSS pixel. This value, like terrain-line-width,
-      // is in CSS pixels (points), the same space u_units_to_pixels operates in - see that
-      // property's doc. The web engine's own u_edge_px is a FIXED 1 DEVICE pixel, which is
-      // 1/pixelRatio CSS px: 0.5 at the common dpr-2 target, ~0.33 at dpr-3. Our engine has no
-      // per-instance dpr-aware default (a style constant cannot read the device it will render
-      // on), so 0.5 CSS px is chosen as the closest single value to the web's look on the most
-      // common target (dpr 2, where it matches exactly) while still being visibly thinner than
-      // the old default of 1 - which, at the CSS-pixel widths this fork typically styles trails
-      // at (around 1.5-2 CSS px, per the flat style's own line-width), fed into the shader's
-      // `a = clamp((half_px - d) / edge_px + 0.5, 0, 1)` coverage ramp and washed a body-width
-      // ribbon out to little more than its own feather - a "1 CSS px line under a 1 CSS px
-      // feather" problem the task brief called out by name. This default only affects paint
-      // properties that do NOT set their own terrain-line-blur - the halo passes the flat
-      // style's own line-blur (2 CSS px) explicitly (container/server/app/map/native_lines.py),
-      // so they are unaffected by this change and keep looking like the flat style's own blurred
-      // halo.
-      "default": 0.5,
+      // Task: feather-vs-geometry settlement (12 Sept 2026), superseding task 2.2b's own fixed
+      // 0.5 CSS px default below (kept in history for the record of why that number was chosen,
+      // and why it turned out not to be enough): a style-spec default cannot read the device's
+      // own pixelRatio, so ANY fixed CSS-point number here renders as a DIFFERENT device-pixel
+      // feather on every dpr - 0.5 CSS px was tuned to look right at dpr 2 and came out three
+      // times too wide (1.5 device px) at dpr 3 (an iPhone), thinning every ribbon's pure-colour
+      // core well below the ordinary flat `line` layer's own antialiasing edge, which is pinned
+      // to exactly half a device pixel at ANY pixelRatio (line.vertex.glsl's own
+      // `ANTIALIASING = 1.0 / DEVICE_PIXEL_RATIO / 2.0`) because it is computed in the SHADER,
+      // which does know the live pixelRatio, rather than baked into a style constant that does
+      // not. The fix moves that always-on, pixelRatio-correct minimum into
+      // TerrainLineLayerTweaker::execute (terrain_line_layer_tweaker.cpp) instead, which adds it
+      // to whatever this property evaluates to every frame. This property's own default is
+      // therefore 0 now, matching line-blur's own default exactly: it is purely an OPTIONAL
+      // extra amount of blur a style author asks for on top of the always-on minimum, not a way
+      // to set the minimum itself - the halo continues to pass the flat style's own line-blur
+      // value through unchanged (container/server/app/map/native_lines.py), now landing as
+      // additional blur on top of the same runtime-correct minimum the body gets.
+      //
+      // Task 2.2b's own comment, for the record: "default lowered from 1 to 0.5 CSS pixel...
+      // 0.5 CSS px is chosen as the closest single value to the web's look on the most common
+      // target (dpr 2, where it matches exactly)... the old default of 1... fed into the
+      // shader's `a = clamp((half_px - d) / edge_px + 0.5, 0, 1)` coverage ramp and washed a
+      // body-width ribbon out to little more than its own feather."
+      "default": 0,
       "minimum": 0,
       "units": "pixels",
       "transition": true,
-      "doc": "Anti-aliasing edge feather in CSS pixels (points), matching terrain-line-width's own units (shader u_edge_px); a small value for a crisp line, larger for a halo layer.",
+      "doc": "Additional anti-aliasing edge feather in CSS pixels (points), matching terrain-line-width's own units (shader u_edge_px), ON TOP OF an always-on, pixelRatio-correct minimum of half a device pixel added at runtime (see this property's own comment). 0 (the default) is a crisp line at that runtime minimum; a larger value asks for visibly more blur, e.g. for a halo layer.",
       "expression": {
           "interpolated": true,
           "parameters": ["zoom"]
@@ -405,11 +413,11 @@ modifiedReferenceSpec["paint_terrain-line"] = {
   },
   "terrain-line-halo-blur": {
       "type": "number",
-      "default": 0.5,
+      "default": 0,
       "minimum": 0,
       "units": "pixels",
       "transition": true,
-      "doc": "Anti-aliasing edge feather for the halo, in CSS pixels (points) - same meaning and default as terrain-line-blur.",
+      "doc": "Additional anti-aliasing edge feather for the halo, in CSS pixels (points) - same meaning and default as terrain-line-blur.",
       "expression": {
           "interpolated": true,
           "parameters": ["zoom"]

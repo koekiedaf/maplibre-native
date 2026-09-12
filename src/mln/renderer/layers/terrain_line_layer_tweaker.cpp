@@ -424,6 +424,40 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
     // halo-width is CSS pixels, halved the same way, no pixelRatio multiply. 0 (the default,
     // when the style never sets this) means no halo - see terrain_line.hpp's fragmentMain.
     const float haloHalfPx = evaluated.get<TerrainLineHaloWidth>() / 2.0f;
+    // FEATHER FIX (task: feather-vs-geometry settlement, 12 Sept 2026). u_edge_px feeds the
+    // shader's coverage ramp AND extends the extruded quad by the same amount on each side
+    // (terrain_line.vertex.glsl / mtl/terrain_line.hpp: `ext = halfPx + edge_px`,
+    // `a = clamp((half_px - d) / edge_px + 0.5, 0, 1)`) - it IS this layer's antialiasing edge,
+    // the direct analogue of the ordinary flat `line` layer's own `ANTIALIASING = 1.0 /
+    // DEVICE_PIXEL_RATIO / 2.0` (line.vertex.glsl). That flat-line constant is computed in the
+    // SHADER, which is compiled per pixelRatio (DEVICE_PIXEL_RATIO is a compile-time #define set
+    // from parameters.pixelRatio - program_parameters.cpp) and so is pinned to exactly half a
+    // DEVICE pixel of feather at any pixelRatio. terrain-line-blur/-halo-blur, by contrast, used
+    // to be passed straight through from a style-spec CONSTANT (0.5 CSS px) that cannot know
+    // which device it will render on: at pixelRatio 3 (an iPhone) that fixed CSS-point number
+    // became 1.5 DEVICE pixels of feather - three times the flat line's own - which is exactly
+    // the "3x wider feather at dpr 3" defect item 1 of this task's brief asked to be settled
+    // against the geometry (settled: the extrusion geometry itself is exact, this feather is
+    // the whole defect - see the geometry trace fields just above).
+    //
+    // Fix: this layer's paint properties keep their CSS-pixel meaning and now default to 0 (see
+    // TerrainLineBlur/TerrainLineHaloBlur::defaultValue()), i.e. "no EXTRA blur"; a
+    // pixelRatio-correct antialiasing minimum, computed here where parameters.pixelRatio is a
+    // live per-frame fact rather than a style-spec constant, is added on top - the direct port
+    // of the flat line's own ANTIALIASING formula into CSS-pixel space (u_edge_px's own
+    // coordinate space, the same one u_units_to_pixels/u_half_px already operate in): dividing
+    // by pixelRatio converts the flat line's DEVICE-pixel constant into that space, exactly as
+    // FAULT 1's fix above converts halfPx the other direction. A style that sets
+    // terrain-line-blur/-halo-blur (native_lines.py passes the flat style's own line-blur
+    // through for the halo, e.g. 2 CSS px) gets that amount ADDED to the minimum, matching the
+    // flat line's own `blur2 = blur + 1.0 / DEVICE_PIXEL_RATIO` (its blur property is additive to
+    // its own built-in antialiasing edge, never a replacement for it) - terrain-line-blur now
+    // means the same thing terrain-line-width already does: a deliberate style choice on top of
+    // an engine-owned minimum, not a way to set that minimum.
+    const float pixelRatio = std::max(parameters.pixelRatio, 1e-4f);
+    const float antialiasingEdgePx = 1.0f / pixelRatio / 2.0f;
+    const float edgePx = evaluated.get<TerrainLineBlur>() + antialiasingEdgePx;
+    const float haloEdgePx = evaluated.get<TerrainLineHaloBlur>() + antialiasingEdgePx;
     const auto dasharray = evaluated.get<TerrainLineDasharray>();
     // The dash calculation anchors its width lookup at a fixed zoom (DASH_ANCHOR_ZOOM), never
     // at the current frame zoom above - see computeDashPeriodExtent()'s comment.
@@ -461,6 +495,36 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
            << ",\"widthPxAtAnchorZoom\":" << widthPxAtAnchorZoom
            << ",\"pixelRatio\":" << parameters.pixelRatio
            << ",\"logicalSize\":[" << parameters.state.getSize().width << "," << parameters.state.getSize().height << "]"
+           // DuckMaps fork only, task: settle geometry against measurement (12 Sept 2026). The
+           // vertex shader (terrain_line.vertex.glsl / mtl/terrain_line.hpp vertexMain) extrudes
+           // BOTH opposite side vertices of a segment by offsetPx = n * (side * ext), a CSS-point
+           // magnitude (ext = halfPx + edgePx, widthScale pinned to 1.0), then clip-space-encodes
+           // that as (offsetPx / u_units_to_pixels) * w0 added to p0.xy while leaving p0.w == w0
+           // untouched. Differencing the two opposite-side vertices' CLIP-SPACE positions BEFORE
+           // the perspective divide and then dividing by their shared w (the perspective divide
+           // itself) therefore always yields exactly 2 * offsetPx / u_units_to_pixels in NDC,
+           // for ANY vertex, at ANY depth: w0 cancels algebraically, so this ratio owes nothing
+           // to which vertex, which tile, or which frame's camera - it is fixed by ext and
+           // u_units_to_pixels alone. u_units_to_pixels itself converts NDC to LOGICAL (CSS-
+           // point) pixels (it is 1 / pixelsToGLUnits = state.getSize() / 2, and state.getSize()
+           // is the map's logical size in points, not the device framebuffer - see FAULT 1's
+           // comment above), so one further multiply by pixelRatio converts that CSS-point
+           // figure to device pixels, the same conversion u_units_to_pixels->device-pixel
+           // reasoning FAULT 1 already established. The two fields below are exactly that
+           // computation, done here on the CPU from the same ext/pixelRatio values the vertex
+           // shader itself consumes - algebraically identical to reading back two real GPU
+           // vertices' clip-space xyzw and dividing by w, without needing a GPU-side readback
+           // path this engine does not otherwise have. "core" is the pure-colour half of the
+           // quad (no feather, a==1 region: 2*halfPx), "total" is the full extruded quad
+           // including both edges' AA feather (2*(halfPx+edgePx)) - the two different quantities
+           // item 3 of this task's brief asks every subsequent measurement to keep separate.
+           << ",\"edgePx\":" << edgePx
+           << ",\"haloHalfPx\":" << haloHalfPx
+           << ",\"haloEdgePx\":" << haloEdgePx
+           << ",\"coreWidthDevicePx\":" << (2.0f * halfPx * parameters.pixelRatio)
+           << ",\"totalWidthDevicePx\":" << (2.0f * (halfPx + edgePx) * parameters.pixelRatio)
+           << ",\"haloCoreWidthDevicePx\":" << (2.0f * haloHalfPx * parameters.pixelRatio)
+           << ",\"haloTotalWidthDevicePx\":" << (2.0f * (haloHalfPx + haloEdgePx) * parameters.pixelRatio)
            << ",\"drawableTileZs\":[";
         bool firstZ = true;
         for (const auto& id : traceTileIds) {
@@ -488,7 +552,7 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
             .color = evaluated.get<TerrainLineColor>(),
             .opacity = evaluated.get<TerrainLineOpacity>(),
             .half_px = halfPx,
-            .edge_px = evaluated.get<TerrainLineBlur>(),
+            .edge_px = edgePx,
             .rail_offset = evaluated.get<TerrainLineOffset>(),
             .depth_bias = 0.00002f, // DEPTH_BIAS, routes3d.js:100 - a constant, not a property
             .ghost_opacity = evaluated.get<TerrainLineGhostOpacity>(),
@@ -497,7 +561,7 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
             .pad1 = 0,
             .pad2 = 0,
             .halo_half_px = haloHalfPx,
-            .halo_edge_px = evaluated.get<TerrainLineHaloBlur>(),
+            .halo_edge_px = haloEdgePx,
             .halo_color = evaluated.get<TerrainLineHaloColor>()};
         context.emplaceOrUpdateUniformBuffer(evaluatedPropsUniformBuffer, &evaluatedPropsUBO);
         propertiesUpdated = false;
@@ -516,7 +580,7 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
             .color = evaluated.get<TerrainLineColor>(),
             .opacity = evaluated.get<TerrainLineOpacity>(),
             .half_px = halfPx,
-            .edge_px = evaluated.get<TerrainLineBlur>(),
+            .edge_px = edgePx,
             .rail_offset = evaluated.get<TerrainLineOffset>(),
             .depth_bias = 0.00002f,
             .ghost_opacity = evaluated.get<TerrainLineGhostOpacity>(),
@@ -525,7 +589,7 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
             .pad1 = 0,
             .pad2 = 0,
             .halo_half_px = haloHalfPx,
-            .halo_edge_px = evaluated.get<TerrainLineHaloBlur>(),
+            .halo_edge_px = haloEdgePx,
             .halo_color = evaluated.get<TerrainLineHaloColor>()};
     }
 

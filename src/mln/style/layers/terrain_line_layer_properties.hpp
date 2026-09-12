@@ -40,6 +40,18 @@ struct TerrainLineGhostOpacity : PaintProperty<float> {
     static float defaultValue() { return 0.f; }
 };
 
+struct TerrainLineHaloBlur : PaintProperty<float> {
+    static float defaultValue() { return 0.5f; }
+};
+
+struct TerrainLineHaloColor : PaintProperty<Color> {
+    static Color defaultValue() { return Color::black(); }
+};
+
+struct TerrainLineHaloWidth : PaintProperty<float> {
+    static float defaultValue() { return 0.f; }
+};
+
 struct TerrainLineOffset : PaintProperty<float> {
     static float defaultValue() { return 0.f; }
 };
@@ -59,6 +71,9 @@ class TerrainLinePaintProperties : public Properties<
     TerrainLineFade,
     TerrainLineFadeDistance,
     TerrainLineGhostOpacity,
+    TerrainLineHaloBlur,
+    TerrainLineHaloColor,
+    TerrainLineHaloWidth,
     TerrainLineOffset,
     TerrainLineOpacity,
     TerrainLineWidth

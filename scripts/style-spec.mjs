@@ -205,7 +205,7 @@ modifiedReferenceSpec["layout_symbol"]["symbol-screen-space"] = {
 // upstream syncs never conflict with a fork-only layer type. One ribbon, one colour, one width,
 // one dash per layer (the family passes the web engine draws in one custom layer become several
 // styled instances of this layer type instead - see docs/plans/2026-09-11-engine-layer-plumbing.md).
-// All nine paint properties are non-data-driven ("data-constant": constant-or-zoom-interpolatable
+// All twelve paint properties are non-data-driven ("data-constant": constant-or-zoom-interpolatable
 // only, PropertyValue<T>, never DataDrivenPropertyValue<T> - no paint vertex attributes/binders).
 modifiedReferenceSpec.layer.type.values["terrain-line"] = {
   "doc": "An elevated ribbon line (trail/route/track) drawn in real 3D world space on the terrain, DuckMaps fork only."
@@ -367,6 +367,49 @@ modifiedReferenceSpec["paint_terrain-line"] = {
       "units": "meters",
       "transition": true,
       "doc": "Metres at which terrain-line-fade reaches full effect, once distance fade is added. Parsed and evaluated in 2.2a but has no effect in the shader yet - distance fade is deferred to 2.2b.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  // The halo, ported from the web engine's second drawFamilyPasses pass (assets/routes3d.js
+  // ~1084-1101 in the server repo): same ribbon geometry, a wider u_half_px, its own colour and
+  // its own u_edge_px, composited under the body in one fragment-shader pass rather than drawn as
+  // a second layer. Defaulted so that a style which sets none of the three renders identically to
+  // today: halo-width 0 makes the halo pass contribute nothing (see terrain_line.hpp's
+  // fragmentMain), so halo-color's own default is irrelevant until halo-width is set.
+  "terrain-line-halo-color": {
+      "type": "color",
+      "default": "#000000",
+      "transition": true,
+      "doc": "The halo colour, drawn under the ribbon body. Irrelevant while terrain-line-halo-width is 0.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "terrain-line-halo-width": {
+      "type": "number",
+      "default": 0,
+      "minimum": 0,
+      "units": "pixels",
+      "transition": true,
+      "doc": "Full halo width in CSS pixels (points), same units and same half-width convention as terrain-line-width. 0 (the default) draws no halo.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "terrain-line-halo-blur": {
+      "type": "number",
+      "default": 0.5,
+      "minimum": 0,
+      "units": "pixels",
+      "transition": true,
+      "doc": "Anti-aliasing edge feather for the halo, in CSS pixels (points) - same meaning and default as terrain-line-blur.",
       "expression": {
           "interpolated": true,
           "parameters": ["zoom"]

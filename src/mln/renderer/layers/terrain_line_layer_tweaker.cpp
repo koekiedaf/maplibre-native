@@ -293,6 +293,10 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
     // operates in, so no pixelRatio multiply belongs here at all.
     const float widthPx = evaluated.get<TerrainLineWidth>();
     const float halfPx = widthPx / 2.0f;
+    // The halo's own half-width, same FAULT 1 FIX convention as half_px above: terrain-line-
+    // halo-width is CSS pixels, halved the same way, no pixelRatio multiply. 0 (the default,
+    // when the style never sets this) means no halo - see terrain_line.hpp's fragmentMain.
+    const float haloHalfPx = evaluated.get<TerrainLineHaloWidth>() / 2.0f;
     const auto dasharray = evaluated.get<TerrainLineDasharray>();
     // The dash calculation anchors its width lookup at a fixed zoom (DASH_ANCHOR_ZOOM), never
     // at the current frame zoom above - see computeDashPeriodExtent()'s comment.
@@ -311,8 +315,9 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
             .fade_distance = evaluated.get<TerrainLineFadeDistance>(),
             .pad1 = 0,
             .pad2 = 0,
-            .pad3 = 0,
-            .pad4 = 0};
+            .halo_half_px = haloHalfPx,
+            .halo_edge_px = evaluated.get<TerrainLineHaloBlur>(),
+            .halo_color = evaluated.get<TerrainLineHaloColor>()};
         context.emplaceOrUpdateUniformBuffer(evaluatedPropsUniformBuffer, &evaluatedPropsUBO);
         propertiesUpdated = false;
     }

@@ -102,7 +102,7 @@ struct alignas(16) TerrainLineTilePropsUBO {
 };
 static_assert(sizeof(TerrainLineTilePropsUBO) == 2 * 16);
 
-/// Evaluated (per-layer, zoom-evaluated) properties that do not depend on the tile. All nine
+/// Evaluated (per-layer, zoom-evaluated) properties that do not depend on the tile. All twelve
 /// paint properties are non-data-driven (PropertyValue<T>, never DataDrivenPropertyValue<T>), so
 /// every one of them is a plain evaluated constant here - there are no vertex attributes/binders
 /// for any terrain-line paint property (see docs/plans/2026-09-11-engine-layer-plumbing.md).
@@ -132,11 +132,21 @@ struct alignas(16) TerrainLineEvaluatedPropsUBO {
     /* 44 */ float fade_distance; // folded into TerrainLineDrawableUBO::fade_k, not read directly
     /* 48 */ float pad1;
     /* 52 */ float pad2;
-    /* 56 */ float pad3;
-    /* 60 */ float pad4;
-    /* 64 */
+    // The halo: one pass over the same ribbon geometry, composited under the body in the
+    // fragment shader (terrain_line.hpp's fragmentMain) rather than drawn as a second layer -
+    // see that file's top-of-file comment and terrain_line_layer_tweaker.cpp for how these are
+    // filled. Two of the four trailing pad floats become these; halo_half_px is
+    // terrain-line-halo-width / 2, in CSS pixels, same convention as half_px above (NOT
+    // multiplied by pixelRatio); halo_edge_px is terrain-line-halo-blur, the halo's own AA
+    // feather, same convention as edge_px above. halo_half_px == 0 (the default) means "no
+    // halo" - the fragment shader's halo term contributes nothing and the dash gap still
+    // discards, so a style that never sets these three properties renders exactly as before.
+    /* 56 */ float halo_half_px;
+    /* 60 */ float halo_edge_px;
+    /* 64 */ Color halo_color;
+    /* 80 */
 };
-static_assert(sizeof(TerrainLineEvaluatedPropsUBO) == 4 * 16);
+static_assert(sizeof(TerrainLineEvaluatedPropsUBO) == 5 * 16);
 
 } // namespace shaders
 } // namespace mln

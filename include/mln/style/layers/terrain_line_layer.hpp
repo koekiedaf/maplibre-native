@@ -57,6 +57,24 @@ public:
     void setTerrainLineGhostOpacityTransition(const TransitionOptions&);
     TransitionOptions getTerrainLineGhostOpacityTransition() const;
 
+    static PropertyValue<float> getDefaultTerrainLineHaloBlur();
+    const PropertyValue<float>& getTerrainLineHaloBlur() const;
+    void setTerrainLineHaloBlur(const PropertyValue<float>&);
+    void setTerrainLineHaloBlurTransition(const TransitionOptions&);
+    TransitionOptions getTerrainLineHaloBlurTransition() const;
+
+    static PropertyValue<Color> getDefaultTerrainLineHaloColor();
+    const PropertyValue<Color>& getTerrainLineHaloColor() const;
+    void setTerrainLineHaloColor(const PropertyValue<Color>&);
+    void setTerrainLineHaloColorTransition(const TransitionOptions&);
+    TransitionOptions getTerrainLineHaloColorTransition() const;
+
+    static PropertyValue<float> getDefaultTerrainLineHaloWidth();
+    const PropertyValue<float>& getTerrainLineHaloWidth() const;
+    void setTerrainLineHaloWidth(const PropertyValue<float>&);
+    void setTerrainLineHaloWidthTransition(const TransitionOptions&);
+    TransitionOptions getTerrainLineHaloWidthTransition() const;
+
     static PropertyValue<float> getDefaultTerrainLineOffset();
     const PropertyValue<float>& getTerrainLineOffset() const;
     void setTerrainLineOffset(const PropertyValue<float>&);

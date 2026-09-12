@@ -228,6 +228,87 @@ TransitionOptions TerrainLineLayer::getTerrainLineGhostOpacityTransition() const
     return impl().paint.template get<TerrainLineGhostOpacity>().options;
 }
 
+PropertyValue<float> TerrainLineLayer::getDefaultTerrainLineHaloBlur() {
+    return {0.5f};
+}
+
+const PropertyValue<float>& TerrainLineLayer::getTerrainLineHaloBlur() const {
+    return impl().paint.template get<TerrainLineHaloBlur>().value;
+}
+
+void TerrainLineLayer::setTerrainLineHaloBlur(const PropertyValue<float>& value) {
+    if (value == getTerrainLineHaloBlur())
+        return;
+    auto impl_ = mutableImpl();
+    impl_->paint.template get<TerrainLineHaloBlur>().value = value;
+    baseImpl = std::move(impl_);
+    observer->onLayerChanged(*this);
+}
+
+void TerrainLineLayer::setTerrainLineHaloBlurTransition(const TransitionOptions& options) {
+    auto impl_ = mutableImpl();
+    impl_->paint.template get<TerrainLineHaloBlur>().options = options;
+    baseImpl = std::move(impl_);
+}
+
+TransitionOptions TerrainLineLayer::getTerrainLineHaloBlurTransition() const {
+    return impl().paint.template get<TerrainLineHaloBlur>().options;
+}
+
+PropertyValue<Color> TerrainLineLayer::getDefaultTerrainLineHaloColor() {
+    return {Color::black()};
+}
+
+const PropertyValue<Color>& TerrainLineLayer::getTerrainLineHaloColor() const {
+    return impl().paint.template get<TerrainLineHaloColor>().value;
+}
+
+void TerrainLineLayer::setTerrainLineHaloColor(const PropertyValue<Color>& value) {
+    if (value == getTerrainLineHaloColor())
+        return;
+    auto impl_ = mutableImpl();
+    impl_->paint.template get<TerrainLineHaloColor>().value = value;
+    baseImpl = std::move(impl_);
+    observer->onLayerChanged(*this);
+}
+
+void TerrainLineLayer::setTerrainLineHaloColorTransition(const TransitionOptions& options) {
+    auto impl_ = mutableImpl();
+    impl_->paint.template get<TerrainLineHaloColor>().options = options;
+    baseImpl = std::move(impl_);
+}
+
+TransitionOptions TerrainLineLayer::getTerrainLineHaloColorTransition() const {
+    return impl().paint.template get<TerrainLineHaloColor>().options;
+}
+
+PropertyValue<float> TerrainLineLayer::getDefaultTerrainLineHaloWidth() {
+    return {0.f};
+}
+
+const PropertyValue<float>& TerrainLineLayer::getTerrainLineHaloWidth() const {
+    return impl().paint.template get<TerrainLineHaloWidth>().value;
+}
+
+void TerrainLineLayer::setTerrainLineHaloWidth(const PropertyValue<float>& value) {
+    if (value == getTerrainLineHaloWidth())
+        return;
+    auto impl_ = mutableImpl();
+    impl_->paint.template get<TerrainLineHaloWidth>().value = value;
+    baseImpl = std::move(impl_);
+    observer->onLayerChanged(*this);
+}
+
+void TerrainLineLayer::setTerrainLineHaloWidthTransition(const TransitionOptions& options) {
+    auto impl_ = mutableImpl();
+    impl_->paint.template get<TerrainLineHaloWidth>().options = options;
+    baseImpl = std::move(impl_);
+}
+
+TransitionOptions TerrainLineLayer::getTerrainLineHaloWidthTransition() const {
+    return impl().paint.template get<TerrainLineHaloWidth>().options;
+}
+
 PropertyValue<float> TerrainLineLayer::getDefaultTerrainLineOffset() {
     return {0.f};
 }
@@ -313,7 +394,7 @@ using namespace conversion;
 
 namespace {
 
-constexpr uint8_t kPaintPropertyCount = 18u;
+constexpr uint8_t kPaintPropertyCount = 24u;
 
 enum class Property : uint8_t {
     TerrainLineBlur,
@@ -322,6 +403,9 @@ enum class Property : uint8_t {
     TerrainLineFade,
     TerrainLineFadeDistance,
     TerrainLineGhostOpacity,
+    TerrainLineHaloBlur,
+    TerrainLineHaloColor,
+    TerrainLineHaloWidth,
     TerrainLineOffset,
     TerrainLineOpacity,
     TerrainLineWidth,
@@ -331,6 +415,9 @@ enum class Property : uint8_t {
     TerrainLineFadeTransition,
     TerrainLineFadeDistanceTransition,
     TerrainLineGhostOpacityTransition,
+    TerrainLineHaloBlurTransition,
+    TerrainLineHaloColorTransition,
+    TerrainLineHaloWidthTransition,
     TerrainLineOffsetTransition,
     TerrainLineOpacityTransition,
     TerrainLineWidthTransition,
@@ -348,6 +435,9 @@ constexpr const auto layerProperties = mapbox::eternal::hash_map<mapbox::eternal
      {"terrain-line-fade", toUint8(Property::TerrainLineFade)},
      {"terrain-line-fade-distance", toUint8(Property::TerrainLineFadeDistance)},
      {"terrain-line-ghost-opacity", toUint8(Property::TerrainLineGhostOpacity)},
+     {"terrain-line-halo-blur", toUint8(Property::TerrainLineHaloBlur)},
+     {"terrain-line-halo-color", toUint8(Property::TerrainLineHaloColor)},
+     {"terrain-line-halo-width", toUint8(Property::TerrainLineHaloWidth)},
      {"terrain-line-offset", toUint8(Property::TerrainLineOffset)},
      {"terrain-line-opacity", toUint8(Property::TerrainLineOpacity)},
      {"terrain-line-width", toUint8(Property::TerrainLineWidth)},
@@ -357,6 +447,9 @@ constexpr const auto layerProperties = mapbox::eternal::hash_map<mapbox::eternal
      {"terrain-line-fade-transition", toUint8(Property::TerrainLineFadeTransition)},
      {"terrain-line-fade-distance-transition", toUint8(Property::TerrainLineFadeDistanceTransition)},
      {"terrain-line-ghost-opacity-transition", toUint8(Property::TerrainLineGhostOpacityTransition)},
+     {"terrain-line-halo-blur-transition", toUint8(Property::TerrainLineHaloBlurTransition)},
+     {"terrain-line-halo-color-transition", toUint8(Property::TerrainLineHaloColorTransition)},
+     {"terrain-line-halo-width-transition", toUint8(Property::TerrainLineHaloWidthTransition)},
      {"terrain-line-offset-transition", toUint8(Property::TerrainLineOffsetTransition)},
      {"terrain-line-opacity-transition", toUint8(Property::TerrainLineOpacityTransition)},
      {"terrain-line-width-transition", toUint8(Property::TerrainLineWidthTransition)}});
@@ -375,6 +468,12 @@ StyleProperty getLayerProperty(const TerrainLineLayer& layer, Property property)
             return makeStyleProperty(layer.getTerrainLineFadeDistance());
         case Property::TerrainLineGhostOpacity:
             return makeStyleProperty(layer.getTerrainLineGhostOpacity());
+        case Property::TerrainLineHaloBlur:
+            return makeStyleProperty(layer.getTerrainLineHaloBlur());
+        case Property::TerrainLineHaloColor:
+            return makeStyleProperty(layer.getTerrainLineHaloColor());
+        case Property::TerrainLineHaloWidth:
+            return makeStyleProperty(layer.getTerrainLineHaloWidth());
         case Property::TerrainLineOffset:
             return makeStyleProperty(layer.getTerrainLineOffset());
         case Property::TerrainLineOpacity:
@@ -393,6 +492,12 @@ StyleProperty getLayerProperty(const TerrainLineLayer& layer, Property property)
             return makeStyleProperty(layer.getTerrainLineFadeDistanceTransition());
         case Property::TerrainLineGhostOpacityTransition:
             return makeStyleProperty(layer.getTerrainLineGhostOpacityTransition());
+        case Property::TerrainLineHaloBlurTransition:
+            return makeStyleProperty(layer.getTerrainLineHaloBlurTransition());
+        case Property::TerrainLineHaloColorTransition:
+            return makeStyleProperty(layer.getTerrainLineHaloColorTransition());
+        case Property::TerrainLineHaloWidthTransition:
+            return makeStyleProperty(layer.getTerrainLineHaloWidthTransition());
         case Property::TerrainLineOffsetTransition:
             return makeStyleProperty(layer.getTerrainLineOffsetTransition());
         case Property::TerrainLineOpacityTransition:
@@ -432,6 +537,7 @@ std::optional<Error> TerrainLineLayer::setPropertyInternal(const std::string& na
 
     if (property == Property::TerrainLineBlur || property == Property::TerrainLineFade ||
         property == Property::TerrainLineFadeDistance || property == Property::TerrainLineGhostOpacity ||
+        property == Property::TerrainLineHaloBlur || property == Property::TerrainLineHaloWidth ||
         property == Property::TerrainLineOffset || property == Property::TerrainLineOpacity ||
         property == Property::TerrainLineWidth) {
         Error error;
@@ -460,6 +566,16 @@ std::optional<Error> TerrainLineLayer::setPropertyInternal(const std::string& na
             return std::nullopt;
         }
 
+        if (property == Property::TerrainLineHaloBlur) {
+            setTerrainLineHaloBlur(*typedValue);
+            return std::nullopt;
+        }
+
+        if (property == Property::TerrainLineHaloWidth) {
+            setTerrainLineHaloWidth(*typedValue);
+            return std::nullopt;
+        }
+
         if (property == Property::TerrainLineOffset) {
             setTerrainLineOffset(*typedValue);
             return std::nullopt;
@@ -475,15 +591,22 @@ std::optional<Error> TerrainLineLayer::setPropertyInternal(const std::string& na
             return std::nullopt;
         }
     }
-    if (property == Property::TerrainLineColor) {
+    if (property == Property::TerrainLineColor || property == Property::TerrainLineHaloColor) {
         Error error;
         const auto& typedValue = convert<PropertyValue<Color>>(value, error, false, false);
         if (!typedValue) {
             return error;
         }
 
-        setTerrainLineColor(*typedValue);
-        return std::nullopt;
+        if (property == Property::TerrainLineColor) {
+            setTerrainLineColor(*typedValue);
+            return std::nullopt;
+        }
+
+        if (property == Property::TerrainLineHaloColor) {
+            setTerrainLineHaloColor(*typedValue);
+            return std::nullopt;
+        }
     }
     if (property == Property::TerrainLineDasharray) {
         Error error;
@@ -529,6 +652,21 @@ std::optional<Error> TerrainLineLayer::setPropertyInternal(const std::string& na
 
     if (property == Property::TerrainLineGhostOpacityTransition) {
         setTerrainLineGhostOpacityTransition(*transition);
+        return std::nullopt;
+    }
+
+    if (property == Property::TerrainLineHaloBlurTransition) {
+        setTerrainLineHaloBlurTransition(*transition);
+        return std::nullopt;
+    }
+
+    if (property == Property::TerrainLineHaloColorTransition) {
+        setTerrainLineHaloColorTransition(*transition);
+        return std::nullopt;
+    }
+
+    if (property == Property::TerrainLineHaloWidthTransition) {
+        setTerrainLineHaloWidthTransition(*transition);
         return std::nullopt;
     }
 

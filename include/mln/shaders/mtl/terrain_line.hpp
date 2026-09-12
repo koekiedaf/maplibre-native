@@ -12,7 +12,7 @@ namespace shaders {
 // changes docs/plans/2026-09-11-engine-layer-plumbing.md's task brief calls for: tile-local 2D
 // positions elevated via get_elevation() for both this vertex and the "other" endpoint (instead
 // of the web's already-3D mercator a_pos/a_other), one ribbon/one colour/one width/one dash per
-// drawable instance (no per-feature data-driven attributes - all nine paint properties are
+// drawable instance (no per-feature data-driven attributes - all twelve paint properties are
 // PropertyValue<T>, evaluated once per layer per frame into TerrainLineEvaluatedPropsUBO), and
 // no raw u_viewport uniform (see the vertex shader comment below for why).
 //
@@ -123,11 +123,15 @@ struct alignas(16) TerrainLineEvaluatedPropsUBO {
     /* 44 */ float fade_distance; // folded into TerrainLineDrawableUBO::fade_k, not read directly
     /* 48 */ float pad1;
     /* 52 */ float pad2;
-    /* 56 */ float pad3;
-    /* 60 */ float pad4;
-    /* 64 */
+    // The halo - see terrain_line_layer_ubo.hpp's C++ twin of this struct for the full comment.
+    // Two of the four trailing pad floats become halo_half_px/halo_edge_px; halo_color is a new
+    // trailing float4. halo_half_px == 0 (the default) means no halo.
+    /* 56 */ float halo_half_px;
+    /* 60 */ float halo_edge_px;
+    /* 64 */ float4 halo_color;
+    /* 80 */
 };
-static_assert(sizeof(TerrainLineEvaluatedPropsUBO) == 4 * 16, "wrong size");
+static_assert(sizeof(TerrainLineEvaluatedPropsUBO) == 5 * 16, "wrong size");
 
 )";
 
@@ -158,6 +162,14 @@ struct FragmentStage {
     float side;
     float half_px;
     float fade;
+    // The halo: the vertex stage already scaled both the body and halo half-widths by
+    // widthScale (reference_w / this vertex's own w) and picked whichever extends the quad
+    // further, so the fragment stage needs the quad's own true extent (ext_px) to turn `side`
+    // (a -1..1 fraction of the quad's own half-width) back into a screen-pixel distance from the
+    // centreline, and the halo's own scaled half-width (halo_half_px) to test against it.
+    // halo_half_px == 0 means no halo, exactly as today.
+    float ext_px;
+    float halo_half_px;
 };
 
 FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
@@ -210,12 +222,23 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     // TerrainLineDrawableUBO::reference_w's comment.
     const float widthScale = max(drawable.reference_w / w0, 0.0);
     const float halfPx = props.half_px * widthScale;
-    const float ext = halfPx + props.edge_px;
+    // The halo pass shares this same quad rather than drawing a second one (see this file's
+    // top-of-file comment and terrain_line_layer_ubo.hpp's TerrainLineEvaluatedPropsUBO comment
+    // for the one-pass compositing argument): the quad must extend far enough to cover whichever
+    // of the body or the halo reaches further, so `ext` (the extrusion distance) and `capPx` (the
+    // square-cap extension) both take the max of the body's and the halo's own half-width plus
+    // feather. With halo_half_px == 0 (the default), max(halfPx + edge_px, 0 + halo_edge_px) and
+    // max(props.half_px, 0) both collapse back to exactly today's halfPx + props.edge_px and
+    // props.half_px, so an unset halo changes nothing here.
+    const float haloHalfPx = (props.halo_half_px > 0.0) ? props.halo_half_px * widthScale : 0.0;
+    const float ext = max(halfPx + props.edge_px, haloHalfPx + props.halo_edge_px);
+    const float capPx = max(props.half_px, props.halo_half_px) * widthScale;
     // Square caps extend the quad forward and back by the same half width (u_cap_px equals
     // u_half_px in the web engine, routes3d.js:1120-1121), so it is not a separate property;
-    // props.half_px is reused directly here rather than adding one.
+    // capPx (the wider of the body's and the halo's own half width) is reused directly here
+    // rather than adding one.
     const float2 offsetPx = n * (float(vertx.flag.y) * ext + props.rail_offset * widthScale) -
-                            d * (float(vertx.flag.x) * props.half_px * widthScale);
+                            d * (float(vertx.flag.x) * capPx);
 
     p0.xy += (offsetPx / paintParams.units_to_pixels) * w0;
     // Pull the ribbon toward the camera by a small constant fraction of its own depth, so it
@@ -232,12 +255,14 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     const float fade = 1.0 - props.fade * ft * ft * (3.0 - 2.0 * ft);
 
     return {
-        .position = p0,
-        .center   = center,
-        .dist     = vertx.dist,
-        .side     = float(vertx.flag.y),
-        .half_px  = halfPx,
-        .fade     = fade,
+        .position     = p0,
+        .center       = center,
+        .dist         = vertx.dist,
+        .side         = float(vertx.flag.y),
+        .half_px      = halfPx,
+        .fade         = fade,
+        .ext_px       = ext,
+        .halo_half_px = haloHalfPx,
     };
 }
 
@@ -253,10 +278,17 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
 
     device const TerrainLineTilePropsUBO& tileProps = tilePropsVector[uboIndex];
 
-    // dash_period == 0 (an empty/undefined dasharray) means "draw solid".
-    if (tileProps.dash_period > 0.0 && fract(in.dist / tileProps.dash_period) > tileProps.dash_on) {
+    // dash_period == 0 (an empty/undefined dasharray) means "draw solid". With no halo
+    // (halo_half_px <= 0, the default) a gap still discards outright, byte-identical to before
+    // this task. With a halo, the flat style draws a SOLID halo under a DASHED body, so a gap
+    // must keep drawing the halo pass instead of discarding - dashGap only zeroes the body's own
+    // contribution below (dashFactor), and the fragment is discarded later only if the resulting
+    // composited alpha is actually zero.
+    const bool dashGap = tileProps.dash_period > 0.0 && fract(in.dist / tileProps.dash_period) > tileProps.dash_on;
+    if (dashGap && in.halo_half_px <= 0.0) {
         discard_fragment();
     }
+    const float dashFactor = dashGap ? 0.0 : 1.0;
 
     // Task 2.2b: the distance fade multiplies alpha here, BEFORE the occlusion test below, matching
     // the web fragment shader's own ordering and its comment for why (routes3d.js:449-454): the
@@ -300,11 +332,46 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
         }
     }
 
-    const float d = abs(in.side) * (in.half_px + props.edge_px);
+    // `d` (the fragment's own distance from the centreline, in screen pixels) is measured against
+    // in.ext_px, the quad's own true half-extent computed in the vertex stage above (the wider of
+    // the body's and the halo's own half-width plus feather) - not in.half_px + props.edge_px,
+    // which would clip a halo wider than the body's own coverage ramp. `a`, the body's own
+    // coverage, is unchanged.
+    const float d = abs(in.side) * in.ext_px;
     const float a = clamp((in.half_px - d) / props.edge_px + 0.5, 0.0, 1.0);
 
-    // Premultiplied alpha, matching the web shader's `fragColor = v_color * (a * alpha)`.
-    return half4(props.color * (a * alpha));
+    // The halo's own coverage ramp, same shape as the body's, against its own half-width and its
+    // own feather (props.halo_edge_px). ha stays 0 whenever there is no halo (in.halo_half_px <=
+    // 0, the default), so it contributes nothing below.
+    float ha = 0.0;
+    if (in.halo_half_px > 0.0) {
+        ha = clamp((in.halo_half_px - d) / max(props.halo_edge_px, 1e-4) + 0.5, 0.0, 1.0);
+    }
+
+    // One pass, not two: the body is composited over the halo here, standard over-compositing of
+    // premultiplied values, rather than drawing a halo pass then a body pass - see this file's
+    // top-of-file comment and terrain_line_layer_ubo.hpp's TerrainLineEvaluatedPropsUBO comment
+    // for why that is exactly equivalent when the body colour is opaque, and avoids any
+    // draw-order question. dashFactor zeroes the body's own contribution in a dash gap (so the
+    // halo alone shows through, solid, exactly as the flat style's own dashed-body/solid-halo
+    // look requires) without touching the halo's. With halo_half_px == 0, haloA is always 0 and
+    // this reduces to exactly today's `props.color * (a * alpha)`.
+    const float bodyA = a * alpha * dashFactor;
+    const float haloA = ha * alpha;
+    const float4 body = props.color * bodyA;
+    const float4 halo = props.halo_color * haloA;
+    const float4 result = body + halo * (1.0 - body.a);
+
+    // A fully transparent fragment (no body, no halo, or a dash gap with no halo - already
+    // discarded above, but a halo whose own colour or width still lands here at zero coverage)
+    // writes nothing rather than a premultiplied no-op blend.
+    if (result.a <= 0.0) {
+        discard_fragment();
+    }
+
+    // Premultiplied alpha, matching the web shader's `fragColor = v_color * (a * alpha)` for the
+    // no-halo case.
+    return half4(result);
 }
 )";
 };

@@ -336,11 +336,38 @@ TransitionOptions TerrainContourLayer::getTerrainContourMinorWidthTransition() c
     return impl().paint.template get<TerrainContourMinorWidth>().options;
 }
 
+PropertyValue<float> TerrainContourLayer::getDefaultTerrainContourReferenceRatio() {
+    return {2.f};
+}
+
+const PropertyValue<float>& TerrainContourLayer::getTerrainContourReferenceRatio() const {
+    return impl().paint.template get<TerrainContourReferenceRatio>().value;
+}
+
+void TerrainContourLayer::setTerrainContourReferenceRatio(const PropertyValue<float>& value) {
+    if (value == getTerrainContourReferenceRatio())
+        return;
+    auto impl_ = mutableImpl();
+    impl_->paint.template get<TerrainContourReferenceRatio>().value = value;
+    baseImpl = std::move(impl_);
+    observer->onLayerChanged(*this);
+}
+
+void TerrainContourLayer::setTerrainContourReferenceRatioTransition(const TransitionOptions& options) {
+    auto impl_ = mutableImpl();
+    impl_->paint.template get<TerrainContourReferenceRatio>().options = options;
+    baseImpl = std::move(impl_);
+}
+
+TransitionOptions TerrainContourLayer::getTerrainContourReferenceRatioTransition() const {
+    return impl().paint.template get<TerrainContourReferenceRatio>().options;
+}
+
 using namespace conversion;
 
 namespace {
 
-constexpr uint8_t kPaintPropertyCount = 20u;
+constexpr uint8_t kPaintPropertyCount = 22u;
 
 enum class Property : uint8_t {
     TerrainContourFadeHi,
@@ -353,6 +380,7 @@ enum class Property : uint8_t {
     TerrainContourMinorInterval,
     TerrainContourMinorOpacity,
     TerrainContourMinorWidth,
+    TerrainContourReferenceRatio,
     TerrainContourFadeHiTransition,
     TerrainContourFadeLoTransition,
     TerrainContourIndexColorTransition,
@@ -363,6 +391,7 @@ enum class Property : uint8_t {
     TerrainContourMinorIntervalTransition,
     TerrainContourMinorOpacityTransition,
     TerrainContourMinorWidthTransition,
+    TerrainContourReferenceRatioTransition,
 };
 
 template <typename T>
@@ -381,6 +410,7 @@ constexpr const auto layerProperties = mapbox::eternal::hash_map<mapbox::eternal
      {"terrain-contour-minor-interval", toUint8(Property::TerrainContourMinorInterval)},
      {"terrain-contour-minor-opacity", toUint8(Property::TerrainContourMinorOpacity)},
      {"terrain-contour-minor-width", toUint8(Property::TerrainContourMinorWidth)},
+     {"terrain-contour-reference-ratio", toUint8(Property::TerrainContourReferenceRatio)},
      {"terrain-contour-fade-hi-transition", toUint8(Property::TerrainContourFadeHiTransition)},
      {"terrain-contour-fade-lo-transition", toUint8(Property::TerrainContourFadeLoTransition)},
      {"terrain-contour-index-color-transition", toUint8(Property::TerrainContourIndexColorTransition)},
@@ -390,7 +420,8 @@ constexpr const auto layerProperties = mapbox::eternal::hash_map<mapbox::eternal
      {"terrain-contour-minor-color-transition", toUint8(Property::TerrainContourMinorColorTransition)},
      {"terrain-contour-minor-interval-transition", toUint8(Property::TerrainContourMinorIntervalTransition)},
      {"terrain-contour-minor-opacity-transition", toUint8(Property::TerrainContourMinorOpacityTransition)},
-     {"terrain-contour-minor-width-transition", toUint8(Property::TerrainContourMinorWidthTransition)}});
+     {"terrain-contour-minor-width-transition", toUint8(Property::TerrainContourMinorWidthTransition)},
+     {"terrain-contour-reference-ratio-transition", toUint8(Property::TerrainContourReferenceRatioTransition)}});
 
 StyleProperty getLayerProperty(const TerrainContourLayer& layer, Property property) {
     switch (property) {
@@ -414,6 +445,8 @@ StyleProperty getLayerProperty(const TerrainContourLayer& layer, Property proper
             return makeStyleProperty(layer.getTerrainContourMinorOpacity());
         case Property::TerrainContourMinorWidth:
             return makeStyleProperty(layer.getTerrainContourMinorWidth());
+        case Property::TerrainContourReferenceRatio:
+            return makeStyleProperty(layer.getTerrainContourReferenceRatio());
         case Property::TerrainContourFadeHiTransition:
             return makeStyleProperty(layer.getTerrainContourFadeHiTransition());
         case Property::TerrainContourFadeLoTransition:
@@ -434,6 +467,8 @@ StyleProperty getLayerProperty(const TerrainContourLayer& layer, Property proper
             return makeStyleProperty(layer.getTerrainContourMinorOpacityTransition());
         case Property::TerrainContourMinorWidthTransition:
             return makeStyleProperty(layer.getTerrainContourMinorWidthTransition());
+        case Property::TerrainContourReferenceRatioTransition:
+            return makeStyleProperty(layer.getTerrainContourReferenceRatioTransition());
     }
     return {};
 }
@@ -468,7 +503,8 @@ std::optional<Error> TerrainContourLayer::setPropertyInternal(const std::string&
     if (property == Property::TerrainContourFadeHi || property == Property::TerrainContourFadeLo ||
         property == Property::TerrainContourIndexInterval || property == Property::TerrainContourIndexOpacity ||
         property == Property::TerrainContourIndexWidth || property == Property::TerrainContourMinorInterval ||
-        property == Property::TerrainContourMinorOpacity || property == Property::TerrainContourMinorWidth) {
+        property == Property::TerrainContourMinorOpacity || property == Property::TerrainContourMinorWidth ||
+        property == Property::TerrainContourReferenceRatio) {
         Error error;
         const auto& typedValue = convert<PropertyValue<float>>(value, error, false, false);
         if (!typedValue) {
@@ -512,6 +548,11 @@ std::optional<Error> TerrainContourLayer::setPropertyInternal(const std::string&
 
         if (property == Property::TerrainContourMinorWidth) {
             setTerrainContourMinorWidth(*typedValue);
+            return std::nullopt;
+        }
+
+        if (property == Property::TerrainContourReferenceRatio) {
+            setTerrainContourReferenceRatio(*typedValue);
             return std::nullopt;
         }
     }
@@ -586,6 +627,11 @@ std::optional<Error> TerrainContourLayer::setPropertyInternal(const std::string&
 
     if (property == Property::TerrainContourMinorWidthTransition) {
         setTerrainContourMinorWidthTransition(*transition);
+        return std::nullopt;
+    }
+
+    if (property == Property::TerrainContourReferenceRatioTransition) {
+        setTerrainContourReferenceRatioTransition(*transition);
         return std::nullopt;
     }
 

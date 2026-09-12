@@ -81,6 +81,12 @@ public:
     void setTerrainContourMinorWidthTransition(const TransitionOptions&);
     TransitionOptions getTerrainContourMinorWidthTransition() const;
 
+    static PropertyValue<float> getDefaultTerrainContourReferenceRatio();
+    const PropertyValue<float>& getTerrainContourReferenceRatio() const;
+    void setTerrainContourReferenceRatio(const PropertyValue<float>&);
+    void setTerrainContourReferenceRatioTransition(const TransitionOptions&);
+    TransitionOptions getTerrainContourReferenceRatioTransition() const;
+
     // Private implementation
 
     class Impl;

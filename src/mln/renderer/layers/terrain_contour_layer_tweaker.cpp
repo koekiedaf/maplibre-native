@@ -142,12 +142,6 @@ float computeReferenceClipW(const PaintParameters& parameters, const UnwrappedTi
     return w > 1e-4f ? w : 1e-4f;
 }
 
-// contours3d.js's REF_RATIO (2): u_minor_w/u_index_w/u_fade_lo/u_fade_hi are calibrated as RAW
-// pixels at a render ratio of 2 - see that constant's own comment in contours3d.js for why (the
-// gallery it was tuned against always renders at dpr 2). Scaled by (live pixelRatio / 2) here so
-// the calibrated CSS-pixel appearance holds at any render ratio, exactly as the web does.
-constexpr float kReferenceRatio = 2.0f;
-
 Color premultiply(const Color& c, float opacity) {
     const float a = c.a * opacity;
     return {c.r * a, c.g * a, c.b * a, a};
@@ -295,7 +289,20 @@ void TerrainContourLayerTweaker::execute(LayerGroupBase& layerGroup, const Paint
         contourTraceSlot() = os.str();
     }
 
-    const float pixelScale = parameters.pixelRatio / kReferenceRatio;
+    // contours3d.js's REF_RATIO: u_minor_w/u_index_w/u_fade_lo/u_fade_hi are calibrated as RAW
+    // pixels at one reference render ratio (the gallery David tuned them against always renders
+    // at dpr 2). Scaled by (live pixelRatio / that reference) here so the calibrated CSS-pixel
+    // appearance holds at any render ratio, exactly as the web does at contours3d.js:775-779.
+    //
+    // The reference is a STYLE property rather than a constant here, 12 September 2026, and that
+    // is deliberate: the same four dials are read by the DuckMaps web engine, which does the
+    // identical scaling against its own REF_RATIO, and David's rule is that a tuned value has one
+    // definition. Both engines now read style.py's CONTOUR3D_REF_RATIO through
+    // /style-tokens.json, so a 2 written in this file would be a second copy of it. Guarded
+    // against a zero or negative ratio in a hand-written style, which would otherwise divide by
+    // zero and blank every contour in the frame.
+    const float referenceRatio = evaluated.get<TerrainContourReferenceRatio>();
+    const float pixelScale = referenceRatio > 0.f ? parameters.pixelRatio / referenceRatio : 1.f;
 
     if (!evaluatedPropsUniformBuffer || propertiesUpdated) {
         const TerrainContourEvaluatedPropsUBO evaluatedPropsUBO = {

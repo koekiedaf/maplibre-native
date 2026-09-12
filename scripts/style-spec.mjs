@@ -570,6 +570,18 @@ modifiedReferenceSpec["paint_terrain-contour"] = {
           "parameters": ["zoom"]
       },
       "property-type": "data-constant"
+  },
+  "terrain-contour-reference-ratio": {
+      "type": "number",
+      "default": 2,
+      "minimum": 1,
+      "transition": false,
+      "doc": "The render ratio the four dials above (the two widths and the two fade thresholds) are calibrated at. The tweaker multiplies all four by (live pixel ratio / this) before the shader sees them, so the calibrated CSS-pixel appearance holds at any device pixel ratio. This exists as a style property rather than a constant in the renderer because the same four numbers are read by the DuckMaps web engine (contours3d.js), which does the identical scaling against its own REF_RATIO: both read one definition, style.py's CONTOUR3D_REF_RATIO, served at /style-tokens.json.",
+      "expression": {
+          "interpolated": false,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
   }
 };
 

@@ -56,6 +56,10 @@ struct TerrainContourMinorWidth : PaintProperty<float> {
     static float defaultValue() { return 1.3f; }
 };
 
+struct TerrainContourReferenceRatio : PaintProperty<float> {
+    static float defaultValue() { return 2.f; }
+};
+
 class TerrainContourPaintProperties : public Properties<
     TerrainContourFadeHi,
     TerrainContourFadeLo,
@@ -66,7 +70,8 @@ class TerrainContourPaintProperties : public Properties<
     TerrainContourMinorColor,
     TerrainContourMinorInterval,
     TerrainContourMinorOpacity,
-    TerrainContourMinorWidth
+    TerrainContourMinorWidth,
+    TerrainContourReferenceRatio
 > {};
 
 class TerrainContourLayerProperties final : public LayerProperties {

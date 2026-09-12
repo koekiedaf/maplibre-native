@@ -271,10 +271,26 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     d *= float(vertx.flag.x);
     const float2 n = float2(-d.y, d.x);
 
-    // widthScale keeps the ribbon's on-screen width constant at the map centre (where
-    // reference_w equals w0) while it scales naturally with depth away from it - see
-    // TerrainLineDrawableUBO::reference_w's comment.
-    const float widthScale = max(drawable.reference_w / w0, 0.0);
+    // Task: width-shortfall investigation (12 Sept 2026, gavarnie pitch-0 body/halo
+    // measurement) - full derivation in terrain_line.vertex.glsl's copy of this comment, kept
+    // in sync here because this is the shader the simulator and every Metal build actually run.
+    // Short version: reference_w/w0 is a real physical-ribbon depth effect ported from the
+    // web's own interactively-drawn ROUTE overlay (routes3d.js), which the web never applies to
+    // the base trail/waterway NETWORK - those are always ordinary flat `line` layers there,
+    // constant width on screen. Every terrain-line layer this engine currently draws IS that
+    // base network (no native drawn-route ribbon exists yet), so leaving this enabled scales a
+    // single frame's width by the ratio of each point's own elevation to the map centre's -
+    // confirmed to swing about 0.84x to 4.8x across Gavarnie's visible relief at zoom 16, at the
+    // camera's ordinary (bug-free, confirmed unchanged under a 3000 m collision margin) height
+    // for that zoom - which dwarfs the style curve's own ~50% growth from zoom 14 to 17 and is
+    // the entire "nearly flat with zoom" symptom. computeReferenceClipW/reference_w are not the
+    // bug (FAULT 2 already fixed that formula correctly); applying their real output to a
+    // family that was never meant to scale is. Pinned to 1.0 to match the web's flat rendering
+    // of the same layers and this engine's own engine=0 line layers, both confirmed (this
+    // task's control measurement) to track the style curve correctly. Re-enable only on a
+    // future genuine drawn-route ribbon layer, as that layer's own opt-in - not by reviving
+    // this line.
+    const float widthScale = 1.0;
     // Two-pass halo: this drawable is EITHER the halo or the body (see the file's top-of-file
     // comment) - never both - so the quad is sized from that one pass's own half-width and
     // feather only, instead of the max of the two the single combined quad used to need. With no

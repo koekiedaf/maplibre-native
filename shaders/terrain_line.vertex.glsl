@@ -92,9 +92,40 @@ void main() {
     d *= a_flag.x;
     vec2 n = vec2(-d.y, d.x);
 
-    // widthScale keeps the ribbon's on-screen width constant at the map centre (where
-    // reference_w == w0) while it scales naturally with depth away from it.
-    float widthScale = max(u_reference_w / w0, 0.0);
+    // Task: width-shortfall investigation (12 Sept 2026, gavarnie pitch-0 body/halo
+    // measurement). widthScale keeps the ribbon's on-screen width constant at the map centre
+    // (where reference_w == w0) while it scales the width DOWN for anything farther from the
+    // camera than the centre and UP for anything closer - a real physical-ribbon depth effect,
+    // ported faithfully from the web's routes3d.js for its own interactively-drawn ROUTE
+    // overlay (a real 3D object the user watches from the side, tilted, where that effect reads
+    // as depth). It was never meant for, and the web never applies it to, the BASE trail/
+    // waterway NETWORK - routes3d.js draws those with ordinary flat `line` layers, constant
+    // width on screen regardless of position, same as every other cartographic line on this
+    // map (roads, contours' own labels, etc).
+    //
+    // Every terrain-line layer this engine currently draws IS that base network (there is no
+    // native drawn-route ribbon yet), so at the map centre's own elevation reference_w/w0 == 1
+    // as intended, but a single frame with real relief (Gavarnie's cirque: ~1477-2608 m visible
+    // at zoom 16 in the control run this comment was written against) puts most of the frame's
+    // own trails at a meaningfully different elevation than the centre. At this zoom's ordinary
+    // camera height (~1150 m above the centre's own terrain, unrelated to any camera bug -
+    // confirmed unchanged under a 3000 m collision margin), that swings widthScale from about
+    // 0.84x at the visible minimum elevation to about 4.8x at the visible maximum - a six-fold
+    // range dwarfing the style curve's own ~50% growth from zoom 14 to 17. That is the entire
+    // "nearly flat with zoom" symptom: the aggregate width any measurement reports is dominated
+    // by which elevations happen to be on screen, not by the zoom-interpolated curve at all,
+    // which a direct per-frame trace (widthPxStyle) confirmed is evaluated correctly, at the
+    // live map zoom, every time.
+    //
+    // Fix: pin widthScale to 1.0 for the base network, matching the web's own flat rendering of
+    // the identical layers and this engine's own non-terrain (engine=0) line layers exactly -
+    // both already confirmed (this task's control measurement) to track the style curve
+    // correctly. reference_w/computeReferenceClipW stay exactly as FAULT 2 fixed them: this is
+    // not a math bug in that formula, it is that formula's real, correct output applied to a
+    // family it was never meant to scale. The moment a genuine drawn-route ribbon layer exists,
+    // THAT layer is the one to re-enable this on - not the base network - and it should get its
+    // own opt-in rather than reviving this unconditional line.
+    const float widthScale = 1.0;
     float halfPx = u_half_px * widthScale;
     float ext = halfPx + u_edge_px;
     // Square caps extend the quad forward/back by the same half width (u_cap_px == u_half_px in

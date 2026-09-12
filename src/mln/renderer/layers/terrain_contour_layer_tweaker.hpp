@@ -15,6 +15,13 @@ public:
 
     void execute(LayerGroupBase&, const PaintParameters&) override;
 
+    // DuckMaps fork only, task C6: debug-only, off-by-default trace of this tweaker's own
+    // per-frame reference-w computation (DUCKMAPS_ELEVATION_TRACE), drained by
+    // Renderer::Impl::render exactly like DEMElevationProvider::debugDrainElevationQueries.
+    // Returns "null" (not queried, no allocation) when the trace is off; costs one static
+    // bool check per execute() call otherwise, and nothing when disabled.
+    static std::string debugDrainContourReferenceTraceJSON();
+
 protected:
     gfx::UniformBufferPtr evaluatedPropsUniformBuffer;
 

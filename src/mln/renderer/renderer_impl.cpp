@@ -32,6 +32,7 @@
 #include <mln/renderer/render_terrain.hpp>
 #include <mln/style/sky_impl.hpp> // DuckMaps fork only, task T3
 #include <mln/renderer/dem_elevation_provider.hpp>
+#include <mln/renderer/layers/terrain_contour_layer_tweaker.hpp>
 #include <mln/renderer/layers/terrain_layer_tweaker.hpp>
 #include <mln/util/tile_cover.hpp>
 #include <mln/util/geo.hpp>             // elevation trace: complete LatLng type (task C1)
@@ -1221,6 +1222,10 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             }
             os << ",\"meshTileDemZooms\":" << (traceTerrain ? traceTerrain->debugMeshTileTiersJSON() : "[]");
             os << ",\"elevationQueries\":" << DEMElevationProvider::debugDrainElevationQueries();
+            // DuckMaps fork only, task C6: the terrain-contour layer's own per-frame reference-w
+            // record - see TerrainContourLayerTweaker::debugDrainContourReferenceTraceJSON's
+            // comment for why this is drained the same way debugDrainElevationQueries is.
+            os << ",\"contour\":" << TerrainContourLayerTweaker::debugDrainContourReferenceTraceJSON();
             os << "}\n";
 
             const std::string line = os.str();

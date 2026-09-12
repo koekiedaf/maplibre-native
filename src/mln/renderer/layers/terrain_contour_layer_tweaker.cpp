@@ -18,7 +18,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <iomanip>
 #include <optional>
+#include <set>
+#include <sstream>
 #include <tuple>
 
 namespace mln {
@@ -27,6 +31,62 @@ using namespace style;
 using namespace shaders;
 
 namespace {
+
+// DuckMaps fork only, task C6: debug-only, off-by-default trace feeding
+// TerrainContourLayerTweaker::debugDrainContourReferenceTraceJSON. Same shape as
+// DEMElevationProvider's own elevationTraceEnabled()/log: getenv checked once (static), the
+// slot holds at most one frame's worth of data and is cleared on drain, so a frame where this
+// layer group is empty (execute() returns before this runs) correctly reports "null" rather
+// than repeating a stale frame.
+bool contourTraceEnabled() {
+    static const bool enabled = [] {
+        const char* path = std::getenv("DUCKMAPS_ELEVATION_TRACE");
+        return path && *path;
+    }();
+    return enabled;
+}
+
+std::optional<std::string>& contourTraceSlot() {
+    static std::optional<std::string> slot;
+    return slot;
+}
+
+std::string tileIdDebugKey(const UnwrappedTileID& id) {
+    std::ostringstream os;
+    os << id.wrap << "/" << static_cast<int>(id.canonical.z) << "/" << id.canonical.x << "/" << id.canonical.y;
+    return os.str();
+}
+
+// Predecessor's hypothesis: a parent and a child mesh tile both carrying contour drawables
+// over the same ground. True exactly when, for some pair in the same wrap, one tile's
+// canonical coordinates at the OTHER's zoom equal the other's - i.e. one is an ancestor of
+// the other in the quadtree. O(n^2) over the tiny (single-digit) per-frame drawable tile
+// count, so this being debug-only costs nothing when off and is cheap when on.
+int countAncestorPairs(const std::vector<UnwrappedTileID>& tiles) {
+    int count = 0;
+    for (std::size_t i = 0; i < tiles.size(); ++i) {
+        for (std::size_t j = i + 1; j < tiles.size(); ++j) {
+            const UnwrappedTileID& a = tiles[i];
+            const UnwrappedTileID& b = tiles[j];
+            if (a.wrap != b.wrap) {
+                continue;
+            }
+            const UnwrappedTileID& shallow = a.canonical.z <= b.canonical.z ? a : b;
+            const UnwrappedTileID& deep = a.canonical.z <= b.canonical.z ? b : a;
+            if (shallow.canonical.z == deep.canonical.z) {
+                continue; // same zoom: neither can be the other's ancestor.
+            }
+            const int shift = deep.canonical.z - shallow.canonical.z;
+            const int deepXAtShallow = deep.canonical.x >> shift;
+            const int deepYAtShallow = deep.canonical.y >> shift;
+            if (deepXAtShallow == static_cast<int>(shallow.canonical.x) &&
+                deepYAtShallow == static_cast<int>(shallow.canonical.y)) {
+                ++count;
+            }
+        }
+    }
+    return count;
+}
 
 // The map centre's own position expressed in tileID's EXTENT-unit local coordinate space -
 // the same units a_pos carries, unclamped (the point need not fall inside this tile's own
@@ -134,11 +194,19 @@ void TerrainContourLayerTweaker::execute(LayerGroupBase& layerGroup, const Paint
     const auto tileKey = [](const UnwrappedTileID& id) {
         return std::tuple{id.wrap, id.canonical.z, id.canonical.x, id.canonical.y};
     };
+    // DuckMaps fork only, task C6: the trace's own record of every tile this frame has a
+    // contour drawable for, gathered here rather than re-visiting the layer group, since this
+    // loop already sees every candidate. Only populated when the trace is on.
+    std::vector<UnwrappedTileID> traceTileIds;
+    const bool traceOn = contourTraceEnabled();
     visitLayerGroupDrawables(layerGroup, [&](gfx::Drawable& drawable) {
         if (!drawable.getTileID() || !checkTweakDrawable(drawable)) {
             return;
         }
         const UnwrappedTileID candidate = drawable.getTileID()->toUnwrapped();
+        if (traceOn) {
+            traceTileIds.push_back(candidate);
+        }
         if (!referenceTile) {
             referenceTile = candidate;
             return;
@@ -173,6 +241,60 @@ void TerrainContourLayerTweaker::execute(LayerGroupBase& layerGroup, const Paint
 #endif
         referenceW = computeReferenceClipW(parameters, *referenceTile, referenceMatrix);
     }
+
+    // DuckMaps fork only, task C6: debug-only, off-by-default trace of the values step 1 of
+    // the reference-w investigation needs - see debugDrainContourReferenceTraceJSON's own
+    // comment. Entirely skipped (including the elevation query and the sort) when
+    // DUCKMAPS_ELEVATION_TRACE is unset, so this costs nothing in a normal run.
+    if (traceOn) {
+        const double traceElevationM = (parameters.terrain && parameters.terrain->isEnabled())
+                                            ? parameters.terrain->getElevationForLatLng(referenceCentre)
+                                            : 0.0;
+        // DuckMaps fork only, task C6: the RAW iteration order, before the sort below, kept
+        // separately - this is the order the second visitLayerGroupDrawables pass below builds
+        // per-drawable UBOs in, which (if it also governs GPU draw submission order, not proven
+        // here) is a candidate explanation for a run-to-run pixel difference that survives every
+        // OTHER input this trace shows to be bit-identical: with ancestorPairCount > 0, more than
+        // one tile's contour mesh draws semi-transparent ink over the SAME ground, and alpha
+        // blending is order-dependent, so a different submission order alone could account for a
+        // uniform few-LSB shift on every contour pixel without moving referenceW, any matrix, or
+        // any DEM/mesh input at all.
+        std::vector<UnwrappedTileID> traceDrawOrder = traceTileIds;
+        std::sort(traceTileIds.begin(), traceTileIds.end(),
+                  [&](const UnwrappedTileID& a, const UnwrappedTileID& b) { return tileKey(a) < tileKey(b); });
+        std::ostringstream os;
+        os << std::setprecision(9);
+        os << "{\"referenceTile\":";
+        if (referenceTile) {
+            os << "\"" << tileIdDebugKey(*referenceTile) << "\"";
+        } else {
+            os << "null";
+        }
+        os << ",\"referenceW\":" << referenceW << ",\"referenceWHex\":\"" << std::hexfloat << referenceW
+           << std::defaultfloat << "\"" << ",\"centerElevationM\":" << traceElevationM
+           << ",\"centerElevationMHex\":\"" << std::hexfloat << traceElevationM << std::defaultfloat << "\""
+           << ",\"drawableTileIds\":[";
+        bool firstTile = true;
+        for (const auto& id : traceTileIds) {
+            if (!firstTile) {
+                os << ",";
+            }
+            firstTile = false;
+            os << "\"" << tileIdDebugKey(id) << "\"";
+        }
+        os << "],\"ancestorPairCount\":" << countAncestorPairs(traceTileIds) << ",\"drawOrder\":[";
+        bool firstOrder = true;
+        for (const auto& id : traceDrawOrder) {
+            if (!firstOrder) {
+                os << ",";
+            }
+            firstOrder = false;
+            os << "\"" << tileIdDebugKey(id) << "\"";
+        }
+        os << "]}";
+        contourTraceSlot() = os.str();
+    }
+
     const float pixelScale = parameters.pixelRatio / kReferenceRatio;
 
     if (!evaluatedPropsUniformBuffer || propertiesUpdated) {
@@ -320,6 +442,21 @@ void TerrainContourLayerTweaker::execute(LayerGroupBase& layerGroup, const Paint
     }
     layerUniforms.set(idTerrainContourTilePropsUBO, tilePropsUniformBuffer);
 #endif
+}
+
+// DuckMaps fork only, task C6: drained by Renderer::Impl::render's own DUCKMAPS_ELEVATION_TRACE
+// block exactly once per frame, the same way DEMElevationProvider::debugDrainElevationQueries
+// is - see that function's comment. Clears the slot so a frame in which this layer group was
+// empty (execute() returned at its very first line, before the trace block ever runs) reports
+// "null" rather than repeating the previous frame's record.
+std::string TerrainContourLayerTweaker::debugDrainContourReferenceTraceJSON() {
+    auto& slot = contourTraceSlot();
+    if (!slot) {
+        return "null";
+    }
+    std::string result = std::move(*slot);
+    slot.reset();
+    return result;
 }
 
 } // namespace mln

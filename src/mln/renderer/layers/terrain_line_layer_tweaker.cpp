@@ -382,6 +382,14 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
 
         const auto dashPeriod = computeDashPeriodExtent(dasharray, widthPxAtAnchorZoom, tileID.canonical);
 
+        // Two-pass halo: which pass this drawable is, set by RenderTerrainLineLayer::update() via
+        // gfx::Drawable::setType(TerrainLinePassType) when it built this drawable - see this
+        // header's TerrainLinePassType comment for why the value has to be duplicated into BOTH
+        // TerrainLineDrawableUBO (vertex-only) and TerrainLineTilePropsUBO (fragment-only) below
+        // rather than read from one shared place.
+        const float haloPass = drawable.getType() == static_cast<std::size_t>(TerrainLinePassType::Halo) ? 1.0f
+                                                                                                           : 0.0f;
+
         // Task 2.2b: this tile's own fade reference point and scale - see tileLocalPosition() and
         // metresPerExtentUnit() above. fade_k is 0 whenever terrain-line-fade-distance is not
         // positive, which the vertex shader's own ft/fade formula turns into "no fade" regardless
@@ -407,7 +415,7 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
             .reference_w = referenceW,
             .fade_ref = {{static_cast<float>(fadeRefLocal.x), static_cast<float>(fadeRefLocal.y)}},
             .fade_k = fadeK,
-            .pad2 = 0,
+            .halo_pass = haloPass,
         };
         // Fragment-only tile props (dash_period/dash_on plus the terrain occlusion inputs) - see
         // TerrainLineDrawableUBO's comment in terrain_line_layer_ubo.hpp for why the fragment
@@ -424,7 +432,7 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
             .occlusion_far = occlusionFar,
             .depth_texel = depthTexel,
             .depth_enabled = depthEnabled,
-            .pad1 = 0,
+            .halo_pass = haloPass,
         };
 #if MLN_UBO_CONSOLIDATION
         drawable.setUBOIndex(i++);

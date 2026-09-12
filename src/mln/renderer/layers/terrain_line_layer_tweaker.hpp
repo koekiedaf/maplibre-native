@@ -6,6 +6,18 @@
 
 namespace mln {
 
+// DuckMaps fork only. Which pass a terrain-line drawable belongs to - stored via
+// gfx::Drawable::setType/getType, the same generic per-drawable "which variant" slot
+// fill/line/location-indicator layers already use for their own multi-drawable-per-feature
+// passes (see e.g. render_fill_layer.cpp's FillVariant). RenderTerrainLineLayer::update() sets
+// this when it builds a tile's drawables; TerrainLineLayerTweaker::execute() reads it back to
+// fill each drawable's own halo_pass UBO flag (terrain_line_layer_ubo.hpp) - see that file's
+// comment for why the flag has to be duplicated into two UBOs rather than read from one.
+enum class TerrainLinePassType : uint8_t {
+    Body = 0,
+    Halo = 1,
+};
+
 // DuckMaps fork only.
 class TerrainLineLayerTweaker : public LayerTweaker {
 public:

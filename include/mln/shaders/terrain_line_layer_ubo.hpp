@@ -52,7 +52,16 @@ struct alignas(16) TerrainLineDrawableUBO {
     // `length(pos - fade_ref) * fade_k` needs one multiply and no divide.
     /* 112 */ std::array<float, 2> fade_ref;
     /* 120 */ float fade_k;
-    /* 124 */ float pad2;
+    // Task (two-pass halo): which pass this drawable is - 1.0 for the halo drawable, 0.0 for the
+    // body drawable (TerrainLinePassType, terrain_line_layer_tweaker.hpp). Read by the VERTEX
+    // stage to size the quad's extrusion/cap from the right pass's own half-width and feather
+    // (shaders/mtl/terrain_line.hpp's vertexMain) - it used to be pad2, unused. This is the same
+    // value as TerrainLineTilePropsUBO::halo_pass below, duplicated rather than shared: this
+    // struct is bound at idDrawableReservedVertexOnlyUBO (vertex stage only on Metal - see this
+    // struct's own top-of-file comment for the bug that binding restriction already caused once),
+    // and the fragment stage needs the same flag to choose which colour/coverage to paint, which
+    // is exactly why TerrainLineTilePropsUBO exists as a separate fragment-only buffer.
+    /* 124 */ float halo_pass;
     /* 128 */
 };
 static_assert(sizeof(TerrainLineDrawableUBO) == 8 * 16);
@@ -97,7 +106,13 @@ struct alignas(16) TerrainLineTilePropsUBO {
     // texture yet (still the far-plane placeholder) - gates the whole occlusion test off so it
     // costs nothing and changes nothing with terrain off.
     /* 24 */ float depth_enabled;
-    /* 28 */ float pad1;
+    // Task (two-pass halo): same value as TerrainLineDrawableUBO::halo_pass above, duplicated
+    // here (was pad1, unused) because this struct is bound at idDrawableReservedFragmentOnlyUBO
+    // (fragment stage only on Metal) while TerrainLineDrawableUBO is vertex-only - see that
+    // struct's comment. The fragment shader (shaders/mtl/terrain_line.hpp's fragmentMain) reads
+    // this to choose whether to paint the halo's own colour/coverage or the body's, and whether
+    // the dash test applies (it never does for the halo pass).
+    /* 28 */ float halo_pass;
     /* 32 */
 };
 static_assert(sizeof(TerrainLineTilePropsUBO) == 2 * 16);

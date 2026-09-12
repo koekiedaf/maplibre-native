@@ -122,6 +122,16 @@ void RenderTerrainLineLayer::update(gfx::ShaderRegistry& shaders,
         return;
     }
 
+    // The halo now draws as a SECOND drawable per tile, sharing this tile's own vertex/index
+    // buffers with the body (the same buffer-sharing this function already does for one drawable -
+    // see the vertexAttrs/setRawVertices/setSegments calls below), rather than compositing under
+    // the body inside one fragment - see shaders/mtl/terrain_line.hpp's top-of-file comment for
+    // why. A style that never sets terrain-line-halo-width evaluates it to its default of 0 here
+    // and gets no halo drawable at all: the drawable count and the rendered frame for such a style
+    // are therefore exactly what they were before this task.
+    const bool hasHalo = staticImmutableCast<TerrainLineLayerProperties>(evaluatedProperties)
+                             ->evaluated.get<style::TerrainLineHaloWidth>() > 0.0f;
+
     stats.drawablesRemoved += tileLayerGroup->removeDrawablesIf(
         [&](gfx::Drawable& drawable) { return drawable.getTileID() && !hasRenderTile(*drawable.getTileID()); });
 
@@ -142,6 +152,18 @@ void RenderTerrainLineLayer::update(gfx::ShaderRegistry& shaders,
             removeTile(renderPass, tileID);
         }
         setRenderTileBucketID(tileID, bucket.getID());
+
+        // If terrain-line-halo-width turned on or off since this tile's drawables were last
+        // built (with the bucket itself unchanged - the check above only catches a bucket
+        // rebuild), the existing drawable count no longer matches what this frame needs (one
+        // body-only, or one body plus one halo). updateTile's own "any existing drawable found ->
+        // leave it alone" shortcut below would otherwise silently leave the tile with a missing or
+        // stale halo drawable, so force a full rebuild in that case.
+        const std::size_t expectedDrawableCount = hasHalo ? 2 : 1;
+        const std::size_t existingDrawableCount = tileLayerGroup->getDrawableCount(renderPass, tileID);
+        if (existingDrawableCount != 0 && existingDrawableCount != expectedDrawableCount) {
+            removeTile(renderPass, tileID);
+        }
 
         auto updateExisting = [&](gfx::Drawable& drawable) {
             return drawable.getLayerTweaker() == layerTweaker;
@@ -180,30 +202,65 @@ void RenderTerrainLineLayer::update(gfx::ShaderRegistry& shaders,
                                    gfx::AttributeDataType::Float);
         }
 
-        auto builder = context.createDrawableBuilder("terrainLine");
-        builder->setShader(std::static_pointer_cast<gfx::ShaderProgramBase>(terrainLineShader));
-        // Depth *test* is decided per-frame by the tweaker (drawable.setEnableDepth), exactly
-        // like circle - see TerrainLineLayerTweaker::execute's comment for why. Depth *write*
-        // stays off (ReadOnly): a translucent ribbon must not punch a hole in the depth buffer
-        // that other translucent geometry behind it would otherwise test against.
-        builder->setDepthType(gfx::DepthMaskType::ReadOnly);
-        builder->setColorMode(gfx::ColorMode::alphaBlended());
-        builder->setCullFaceMode(gfx::CullFaceMode::disabled());
-        builder->setRenderPass(renderPass);
-        builder->setVertexAttributes(std::move(vertexAttrs));
-        builder->setRawVertices({}, vertexCount, gfx::AttributeDataType::Short2);
-        builder->setSegments(gfx::Triangles(), bucket.sharedTriangles, bucket.segments.data(), bucket.segments.size());
+        // Body drawn on top of the halo: TileLayerGroup's own drawable set orders by draw
+        // priority ascending (gfx::DrawableLessByPriority, drawable.hpp), and mtl::TileLayerGroup
+        // ::render walks that same order to issue draw calls (mtl/tile_layer_group.cpp), so the
+        // lower-numbered halo drawable is guaranteed to draw, and blend, before the body one -
+        // see shaders/mtl/terrain_line.hpp's top-of-file comment.
+        constexpr gfx::DrawPriority TerrainLineHaloDrawPriority = 0;
+        constexpr gfx::DrawPriority TerrainLineBodyDrawPriority = 1;
 
-        builder->flush(context);
+        auto makeBuilder = [&](const char* name, gfx::DrawPriority priority) {
+            auto b = context.createDrawableBuilder(name);
+            b->setShader(std::static_pointer_cast<gfx::ShaderProgramBase>(terrainLineShader));
+            // Depth *test* is decided per-frame by the tweaker (drawable.setEnableDepth), exactly
+            // like circle - see TerrainLineLayerTweaker::execute's comment for why. Depth *write*
+            // stays off (ReadOnly): a translucent ribbon must not punch a hole in the depth buffer
+            // that other translucent geometry behind it would otherwise test against.
+            b->setDepthType(gfx::DepthMaskType::ReadOnly);
+            b->setColorMode(gfx::ColorMode::alphaBlended());
+            b->setCullFaceMode(gfx::CullFaceMode::disabled());
+            b->setRenderPass(renderPass);
+            b->setDrawPriority(priority);
+            b->setRawVertices({}, vertexCount, gfx::AttributeDataType::Short2);
+            b->setSegments(gfx::Triangles(), bucket.sharedTriangles, bucket.segments.data(), bucket.segments.size());
+            return b;
+        };
 
-        for (auto& drawable : builder->clearDrawables()) {
-            drawable->setTileID(tileID);
-            drawable->setLayerTweaker(layerTweaker);
-            drawable->setRenderTile(renderTilesOwner, &tile);
-
-            tileLayerGroup->addDrawable(renderPass, tileID, std::move(drawable));
-            ++stats.drawablesAdded;
+        // Both drawables share this tile's own vertex buffer (the same buffer-sharing this
+        // function already did for its one drawable before this task) - only the draw priority
+        // and the per-drawable halo_pass flag (TerrainLineLayerTweaker::execute) differ between
+        // them. The halo builder gets a COPY of vertexAttrs (an lvalue set); the body builder,
+        // built and used last, takes ownership via move - the same pattern
+        // render_fill_extrusion_layer.cpp's own depth/color builder pair uses for its shared
+        // vertexAttrs.
+        auto bodyBuilder = makeBuilder("terrainLineBody", TerrainLineBodyDrawPriority);
+        gfx::UniqueDrawableBuilder haloBuilder;
+        if (hasHalo) {
+            haloBuilder = makeBuilder("terrainLineHalo", TerrainLineHaloDrawPriority);
+            haloBuilder->setVertexAttributes(vertexAttrs);
         }
+        bodyBuilder->setVertexAttributes(std::move(vertexAttrs));
+
+        const auto finish = [&](gfx::DrawableBuilder& builder, TerrainLinePassType passType) {
+            builder.flush(context);
+            for (auto& drawable : builder.clearDrawables()) {
+                drawable->setTileID(tileID);
+                drawable->setType(static_cast<std::size_t>(passType));
+                drawable->setLayerTweaker(layerTweaker);
+                drawable->setRenderTile(renderTilesOwner, &tile);
+
+                tileLayerGroup->addDrawable(renderPass, tileID, std::move(drawable));
+                ++stats.drawablesAdded;
+            }
+        };
+        // Halo first: not required for correctness (draw priority alone decides render order),
+        // but it means the halo drawable's own ID is lower too, which keeps the sort stable and
+        // matches the render order for anyone reading gfx::DrawableLessByPriority's tie-break.
+        if (haloBuilder) {
+            finish(*haloBuilder, TerrainLinePassType::Halo);
+        }
+        finish(*bodyBuilder, TerrainLinePassType::Body);
     }
 }
 

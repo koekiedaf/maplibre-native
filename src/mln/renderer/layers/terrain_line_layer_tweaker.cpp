@@ -21,6 +21,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <iomanip>
+#include <map>
 #include <optional>
 #include <sstream>
 #include <tuple>
@@ -47,6 +49,22 @@ bool lineTraceEnabled() {
 // once per frame by Renderer::Impl::render via debugDrainLineDrawableUBOEntries.
 std::vector<DebugDrawableUBOEntry>& lineUboEntriesSlot() {
     static std::vector<DebugDrawableUBOEntry> slot;
+    return slot;
+}
+
+// DuckMaps fork only, task 2.4f (width-shortfall investigation, 12 Sept 2026): this layer's own
+// half of terrain_contour_layer_tweaker.cpp's contourTraceSlot()/debugDrainContourReferenceTraceJSON
+// - same contract, same DUCKMAPS_ELEVATION_TRACE gate, same "one frame's record, drained once by
+// Renderer::Impl::render" shape. UNLIKE contour (one terrain-contour layer per style), a style
+// carries MANY terrain-line layers (one execute() call each: topo-trail-path-sac-hiking,
+// waterway-river, ...), so this slot is keyed by layer id rather than holding a single string -
+// task C6's contract of one string covering the whole frame does not fit a layer type with more
+// than one instance. Task 2.4e's own residual-gap note named exactly the numbers it is missing:
+// referenceW alone (already visible via the drawable UBO hash) does not say whether it was
+// evaluated against a tile at the SAME zoom as the ribbon it scales, nor what CSS-pixel width the
+// style evaluated before any of the frame's own scaling was applied.
+std::map<std::string, std::string>& lineTraceSlot() {
+    static std::map<std::string, std::string> slot;
     return slot;
 }
 
@@ -349,9 +367,17 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
     });
 
     float referenceW = 1e-4f;
+    mat4 debugReferenceMatrix{};
+    double debugReferenceElevationM = 0.0;
+    Point<double> debugReferenceLocal{};
     if (referenceTile) {
         const mat4 referenceMatrix = parameters.matrixForTile(*referenceTile);
+        debugReferenceMatrix = referenceMatrix;
         referenceW = computeReferenceClipW(parameters, *referenceTile, referenceMatrix);
+        debugReferenceElevationM = (parameters.terrain && parameters.terrain->isEnabled())
+                                       ? parameters.terrain->getElevationForLatLng(parameters.state.getLatLng())
+                                       : 0.0;
+        debugReferenceLocal = tileLocalPosition(*referenceTile, parameters.state.getLatLng());
     }
 
     // Task 2.2b: the fade's reference point and scale. The centre is a frame-level fact (read
@@ -402,6 +428,60 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
     // The dash calculation anchors its width lookup at a fixed zoom (DASH_ANCHOR_ZOOM), never
     // at the current frame zoom above - see computeDashPeriodExtent()'s comment.
     const float widthPxAtAnchorZoom = evaluateWidthAtAnchorZoom(properties);
+
+    // DuckMaps fork only, task 2.4f: the reference-w trace lineTraceSlot() feeds - see that
+    // function's own comment for why this is keyed by layer id. Entirely skipped (including the
+    // drawable-tile-id collection) when DUCKMAPS_ELEVATION_TRACE is unset, so this costs nothing
+    // in a normal run, same discipline as terrain_contour_layer_tweaker.cpp's own traceOn block.
+    if (lineTraceEnabled()) {
+        std::vector<UnwrappedTileID> traceTileIds;
+        visitLayerGroupDrawables(layerGroup, [&](gfx::Drawable& drawable) {
+            if (!drawable.getTileID() || !checkTweakDrawable(drawable)) {
+                return;
+            }
+            traceTileIds.push_back(drawable.getTileID()->toUnwrapped());
+        });
+        std::ostringstream os;
+        os << std::setprecision(9);
+        os << "{\"referenceTile\":";
+        if (referenceTile) {
+            os << "\"" << lineTileIdDebugKey(*referenceTile) << "\"";
+        } else {
+            os << "null";
+        }
+        os << ",\"referenceTileZ\":" << (referenceTile ? static_cast<int>(referenceTile->canonical.z) : -1)
+           << ",\"referenceW\":" << referenceW
+           << ",\"referenceMatrixRow3\":[" << debugReferenceMatrix[3] << "," << debugReferenceMatrix[7]
+           << "," << debugReferenceMatrix[11] << "," << debugReferenceMatrix[15] << "]"
+           << ",\"referenceElevationM\":" << debugReferenceElevationM
+           << ",\"referenceLocal\":[" << debugReferenceLocal.x << "," << debugReferenceLocal.y << "]"
+           << ",\"mapZoom\":" << parameters.state.getZoom()
+           << ",\"widthPxStyle\":" << widthPx
+           << ",\"halfPx\":" << halfPx
+           << ",\"widthPxAtAnchorZoom\":" << widthPxAtAnchorZoom
+           << ",\"pixelRatio\":" << parameters.pixelRatio
+           << ",\"logicalSize\":[" << parameters.state.getSize().width << "," << parameters.state.getSize().height << "]"
+           << ",\"drawableTileZs\":[";
+        bool firstZ = true;
+        for (const auto& id : traceTileIds) {
+            if (!firstZ) {
+                os << ",";
+            }
+            firstZ = false;
+            os << static_cast<int>(id.canonical.z);
+        }
+        os << "],\"drawableTileIds\":[";
+        bool firstId = true;
+        for (const auto& id : traceTileIds) {
+            if (!firstId) {
+                os << ",";
+            }
+            firstId = false;
+            os << "\"" << lineTileIdDebugKey(id) << "\"";
+        }
+        os << "]}";
+        lineTraceSlot()[layerGroup.getName()] = os.str();
+    }
 
     if (!evaluatedPropsUniformBuffer || propertiesUpdated) {
         const TerrainLineEvaluatedPropsUBO evaluatedPropsUBO = {
@@ -681,6 +761,30 @@ std::vector<DebugDrawableUBOEntry> TerrainLineLayerTweaker::debugDrainLineDrawab
     std::vector<DebugDrawableUBOEntry> result = std::move(slot);
     slot.clear();
     return result;
+}
+
+// DuckMaps fork only, task 2.4f: drained (and cleared) once per frame by Renderer::Impl::render,
+// alongside debugDrainContourReferenceTraceJSON - see lineTraceSlot()'s own comment for why this
+// returns one JSON OBJECT keyed by layer id rather than terrain_contour_layer_tweaker.cpp's
+// single string. "{}" when the trace is off or no terrain-line layer executed this frame.
+std::string TerrainLineLayerTweaker::debugDrainLineReferenceTraceJSON() {
+    auto& slot = lineTraceSlot();
+    if (slot.empty()) {
+        return "{}";
+    }
+    std::ostringstream os;
+    os << "{";
+    bool first = true;
+    for (const auto& [layerId, json] : slot) {
+        if (!first) {
+            os << ",";
+        }
+        first = false;
+        os << "\"" << layerId << "\":" << json;
+    }
+    os << "}";
+    slot.clear();
+    return os.str();
 }
 
 } // namespace mln

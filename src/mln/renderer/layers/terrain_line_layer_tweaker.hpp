@@ -56,6 +56,12 @@ public:
     // duplicate, it is the two passes.
     static std::vector<DebugDrawableUBOEntry> debugDrainLineDrawableUBOEntries();
 
+    // DuckMaps fork only, task 2.4f: the width-shortfall investigation's own reference-w/width
+    // trace - see terrain_contour_layer_tweaker.cpp's debugDrainContourReferenceTraceJSON for the
+    // sibling this mirrors, and lineTraceSlot()'s own comment (terrain_line_layer_tweaker.cpp)
+    // for why this returns one JSON object per layer id rather than a single string.
+    static std::string debugDrainLineReferenceTraceJSON();
+
 protected:
     gfx::UniformBufferPtr evaluatedPropsUniformBuffer;
 

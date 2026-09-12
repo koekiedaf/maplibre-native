@@ -1306,6 +1306,11 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             // record - see TerrainContourLayerTweaker::debugDrainContourReferenceTraceJSON's
             // comment for why this is drained the same way debugDrainElevationQueries is.
             os << ",\"contour\":" << TerrainContourLayerTweaker::debugDrainContourReferenceTraceJSON();
+            // DuckMaps fork only, task 2.4f: this layer type's own sibling record, one entry per
+            // terrain-line layer id that drew this frame - see TerrainLineLayerTweaker::
+            // debugDrainLineReferenceTraceJSON's own comment for why this is one JSON object
+            // rather than contour's single string.
+            os << ",\"line\":" << TerrainLineLayerTweaker::debugDrainLineReferenceTraceJSON();
             // DuckMaps fork only, task C7: the two unrecorded inputs task R1A's own instruments
             // could not reach - see this block's own comment at the top of the file for the
             // full brief. (a) every terrain-contour/terrain-line drawable's own UBO bytes and

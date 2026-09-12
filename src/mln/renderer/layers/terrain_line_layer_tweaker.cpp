@@ -54,6 +54,69 @@ float computeReferenceClipW(const PaintParameters& parameters) {
     return static_cast<float>(clip[3]);
 }
 
+// Task 2.2: routes3d.js's OCCLUSION_EPS_DEFAULT (:133) and OCCLUSION_EPS_M_DEFAULT (:173) - see
+// occlusionFarNDC()'s comment below for the argument (routes3d.js:111-175) for why both exist:
+// a fixed NDC-z tolerance alone buys unbounded metres of terrain at distance, so the shader takes
+// the smaller of this constant and a metres-based margin converted to NDC z at each fragment.
+constexpr float OCCLUSION_EPS_DEFAULT = 0.002f;
+constexpr float OCCLUSION_EPS_M_DEFAULT = 60.0f;
+
+// Ported from the web engine's occlusionFar(m) (routes3d.js:1381-1395): the frame's own
+// conversion from "metres of terrain depth" to the single NDC-z-per-(1/w^2) constant the
+// fragment shader divides by v_center.w^2 (terrain_line.hpp's fragmentMain). Computed ONCE PER
+// FRAME (it depends only on the projection matrix and the map centre, not on any tile), unlike
+// dash_period/dash_on below which are per-tile.
+//
+// For a perspective projection, clip z and clip w are both affine in position and z_ndc depends
+// on w alone: z_ndc = A + B/w, so dz_ndc/dm along the view axis is (a*w - zc*b) / w^2, where a and
+// b are clip z's and clip w's own rate per metre along that axis - the same numerator (k below)
+// everywhere in the frame, which is exactly the constant wanted. It is read straight off the
+// frame's own projection matrix (mln::matrix::transformMat4's column-major convention - verified
+// against mat4.cpp's own out[3] = m[3]*x + m[7]*y + m[11]*z + m[15]*w formula, which is exactly
+// routes3d.js's `w = m[3]*p[0] + m[7]*p[1] + m[11]*z + m[15]`), evaluated at the map centre at sea
+// level, with no assumption about near/far planes: the view axis is the direction clip w grows
+// fastest in, which is the matrix's own w row (m[3], m[7], m[11]).
+//
+// The four inputs, and where this engine gets each one (routes3d.js reads all four off its own
+// mainMatrix/state in normalised [0,1] mercator world units; this port uses the SAME world-PIXEL
+// mercator convention computeReferenceClipW() above already uses with the SAME projection matrix,
+// which differs from the web's only by a constant scale baked consistently into both the matrix
+// and the positions, so the derivation carries over unchanged):
+//   1. the projection matrix m       - parameters.transformParams.projMatrix (paint_parameters.hpp)
+//   2. the map centre in mercator    - Projection::project(state.getLatLng(), state.getScale())
+//                                      (util/projection.hpp), at z = 0 (sea level, matching the
+//                                      web's own zc0/w0 - see routes3d.js:1389-1392)
+//   3. metres-to-mercator factor mz  - 1 / Projection::getMetersPerPixelAtLatitude(lat, zoom)
+//                                      (util/projection.hpp), i.e. world-pixel units per metre -
+//                                      the exact reciprocal of computeReferenceClipW's own
+//                                      metresPerPixel, at the SAME latitude/zoom
+//   4. the centre's clip z and w     - zc0 = m[2]*pc.x + m[6]*pc.y + m[14] (no z term - sea level)
+//                                      w0  = m[3]*pc.x + m[7]*pc.y + m[15]
+float occlusionFarNDC(const PaintParameters& parameters, float occlusionEpsM) {
+    const mat4& m = parameters.transformParams.projMatrix;
+    const double gx = m[3];
+    const double gy = m[7];
+    const double gz = m[11];
+    const double g = std::sqrt(gx * gx + gy * gy + gz * gz);
+    if (!(g > 0.0)) {
+        return 0.0f;
+    }
+    const auto& state = parameters.state;
+    const LatLng center = state.getLatLng();
+    const double metresPerPixel = Projection::getMetersPerPixelAtLatitude(center.latitude(), state.getZoom());
+    const double mz = metresPerPixel > 0.0 ? 1.0 / metresPerPixel : 0.0; // world-pixel units per metre
+    const double ux = gx / g;
+    const double uy = gy / g;
+    const double uz = gz / g;
+    const double a = (m[2] * ux + m[6] * uy + m[10] * uz) * mz;
+    const double b = g * mz; // clip w per metre along the view axis
+    const Point<double> pc = Projection::project(center, state.getScale());
+    const double zc0 = m[2] * pc.x + m[6] * pc.y + m[14];
+    const double w0 = m[3] * pc.x + m[7] * pc.y + m[15];
+    const double k = std::abs(a * w0 - zc0 * b);
+    return static_cast<float>(k * occlusionEpsM);
+}
+
 // The web's DASH_ANCHOR_ZOOM (routes3d.js:1171, groundDashPeriod at :1174-1187): the dash
 // pattern's period is computed from the line width evaluated at this FIXED zoom, never at the
 // zoom the camera happens to be at, so the dash never re-subdivides or rescales while zooming.
@@ -153,6 +216,28 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
 #endif
 
     const float referenceW = computeReferenceClipW(parameters);
+
+    // Task 2.2: the depth texture, the occlusion-far constant and depth_enabled are all
+    // FRAME-level facts (the depth texture is one shared render target, the projection matrix and
+    // terrain-on/off do not vary per tile) - computed once here, not inside the per-drawable
+    // lambda below, and copied into every tile's TilePropsUBO entry the same way reference_w
+    // above is. terrainEnabled itself is also frame-level (it does not depend on tileID) even
+    // though the DEM-lookup below (which DOES vary per tile) still uses it per drawable.
+    const bool terrainEnabled = parameters.terrain && parameters.terrain->isEnabled();
+    const std::shared_ptr<gfx::Texture2D> depthTexture = parameters.terrain
+                                                             ? parameters.terrain->getDepthTexture(context)
+                                                             : nullptr;
+    // RenderTerrain::getDepthTexture() falls back to a 1x1 far-plane placeholder
+    // (render_terrain.cpp) whenever the depth pass has not produced a real texture yet (terrain
+    // just turned on this frame, or terrain is off) - texture size is the only public signal that
+    // tells the two apart, so depth_enabled follows it rather than terrainEnabled alone.
+    const bool hasRealDepthTexture = depthTexture && depthTexture->getSize() != Size{1, 1};
+    const float depthEnabled = (terrainEnabled && hasRealDepthTexture) ? 1.0f : 0.0f;
+    const Size depthSize = hasRealDepthTexture ? depthTexture->getSize() : Size{1, 1};
+    const std::array<float, 2> depthTexel = {1.0f / static_cast<float>(depthSize.width),
+                                             1.0f / static_cast<float>(depthSize.height)};
+    const float occlusionFar = occlusionFarNDC(parameters, OCCLUSION_EPS_M_DEFAULT);
+
     // FAULT 1 FIX (task 2.2b): terrain-line-width/-blur/-offset are all in CSS pixels (points),
     // NOT device pixels, and so is the shader's own "pixel" space. The vertex shader converts
     // to/from that space via u_units_to_pixels, which is 1 / PaintParameters::pixelsToGLUnits,
@@ -216,8 +301,8 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
 
         // Bind the covering DEM tile so the vertex shader can elevate both ends of every
         // sub-segment onto the terrain (RenderTerrain::getTerrainData, see
-        // symbol_layer_tweaker.cpp:170-234's identical pattern).
-        const bool terrainEnabled = parameters.terrain && parameters.terrain->isEnabled();
+        // symbol_layer_tweaker.cpp:170-234's identical pattern). terrainEnabled itself is
+        // computed once per frame above; only the per-tile DEM lookup happens here.
         std::optional<RenderTerrain::TerrainData> terrainData;
         if (terrainEnabled) {
             terrainData = parameters.terrain->getTerrainData(tileID);
@@ -226,18 +311,25 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
             drawable.setTexture(
                 terrainData ? terrainData->demTexture : parameters.terrain->getPlaceholderDEMTexture(context),
                 idTerrainLineDEMTexture);
+            // Packed terrain depth for the occlusion test below (same pattern as
+            // symbol_layer_tweaker.cpp:182; the texture itself is fetched once per frame above).
+            drawable.setTexture(depthTexture, idTerrainLineDepthTexture);
         } else {
-            // Keep the declared DEM sampler bound for Metal API validation (never sampled).
+            // Keep the declared DEM/depth samplers bound for Metal API validation (never
+            // sampled): a missing sampler binding trips it even when depth_enabled is 0.
             drawable.setTexture(context.getPlaceholderTexture2D(), idTerrainLineDEMTexture);
+            drawable.setTexture(context.getPlaceholderTexture2D(), idTerrainLineDepthTexture);
         }
 
         // The terrain surface writes depth, at the resolution of its own coarse (128x128)
-        // triangulated mesh; this ribbon is elevated onto the terrain from the DEM directly,
-        // per vertex, and would self-occlude against the mesh's own approximation of the same
-        // surface if depth-tested against it. Depth stays on without terrain (there being no
-        // terrain surface underneath to conflict with). No depth-texture occlusion test in this
-        // first cut (2.2b) - the ribbon simply draws on top of the terrain while one is active,
-        // exactly like circle (docs/plans/2026-09-11-engine-layer-plumbing.md A2 point 4).
+        // triangulated mesh; this ribbon is elevated onto the terrain from the DEM directly, per
+        // vertex, and would self-occlude against the mesh's own approximation of the same surface
+        // if depth-tested against it. Depth stays on without terrain (there being no terrain
+        // surface underneath to conflict with). Occlusion against the REAL terrain surface (not
+        // this coarse mesh) is the depth-TEXTURE test in the fragment shader below/in
+        // terrain_line.hpp, not this depth-buffer test - matching the web engine, which also uses
+        // the depth texture and no depth test (docs/plans/2026-09-11-engine-layer-plumbing.md A2
+        // point 4, same reasoning as circle/symbol).
         drawable.setEnableDepth(!terrainEnabled);
 
         const auto dashPeriod = computeDashPeriodExtent(dasharray, widthPxAtAnchorZoom, tileID.canonical);
@@ -256,8 +348,10 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
             .dem_enabled = terrainData ? 1.0f : 0.0f,
             .reference_w = referenceW,
         };
-        // Fragment-only tile props (dash_period/dash_on) - see TerrainLineDrawableUBO's comment
-        // in terrain_line_layer_ubo.hpp for why the fragment stage cannot read the struct above.
+        // Fragment-only tile props (dash_period/dash_on plus the terrain occlusion inputs) - see
+        // TerrainLineDrawableUBO's comment in terrain_line_layer_ubo.hpp for why the fragment
+        // stage cannot read the struct above. occlusion_eps/occlusion_far/depth_texel/
+        // depth_enabled are all frame-level (computed once above) and simply copied per tile.
 #if MLN_UBO_CONSOLIDATION
         tilePropsUBOVector[i] = {
 #else
@@ -265,8 +359,11 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
 #endif
             .dash_period = dashPeriod.periodExtent,
             .dash_on = dashPeriod.on,
+            .occlusion_eps = OCCLUSION_EPS_DEFAULT,
+            .occlusion_far = occlusionFar,
+            .depth_texel = depthTexel,
+            .depth_enabled = depthEnabled,
             .pad1 = 0,
-            .pad2 = 0,
         };
 #if MLN_UBO_CONSOLIDATION
         drawable.setUBOIndex(i++);

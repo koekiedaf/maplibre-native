@@ -49,6 +49,21 @@ static_assert(sizeof(TerrainLineDrawableUBO) == 7 * 16);
 // separate struct/buffer rather than the fragment stage reading that one. Bound at
 // idDrawableReservedFragmentOnlyUBO, filled in lockstep with TerrainLineDrawableUBO (same index
 // i, same tile, every frame) by TerrainLineLayerTweaker::execute.
+//
+// Task 2.2: the fields below occlusion_eps onward are the terrain depth-texture occlusion test
+// (the web engine's u_depth/u_depth_texel/u_occlusion_eps/u_occlusion_far, routes3d.js:425-480 for
+// the shader, :111-175 for why a metres-based margin exists at all, :1365-1395 for occlusionFar()).
+// They MUST live here, not in TerrainLineDrawableUBO: that struct is bound at
+// idDrawableReservedVertexOnlyUBO, which mtl::UniformBufferArray::bindMtl binds to the VERTEX
+// stage only - the exact mistake that made every dash render solid until engine 20aa9f479705 (see
+// TerrainLineDrawableUBO's own comment above). ghost_opacity is NOT duplicated here: it is a
+// per-layer (not per-tile) evaluated paint property and already lives in
+// TerrainLineEvaluatedPropsUBO below, filled once per layer per frame.
+//
+// depth_texel/occlusion_far/depth_enabled are computed ONCE PER FRAME by
+// TerrainLineLayerTweaker::execute (not per tile/drawable - the depth texture, the frame's
+// projection matrix and whether terrain is on are all frame-level facts) and copied into every
+// tile's TilePropsUBO entry, the same way dash_period/dash_on are computed per-tile today.
 struct alignas(16) TerrainLineTilePropsUBO {
     // Dash period/on-fraction for THIS drawable's tile, already converted from the paint
     // property's width-units dasharray into this tile's EXTENT-unit distance space - see
@@ -56,11 +71,24 @@ struct alignas(16) TerrainLineTilePropsUBO {
     // dash_period == 0 means "no dashing, draw solid" (also the default: an empty dasharray).
     /*  0 */ float dash_period;
     /*  4 */ float dash_on;
-    /*  8 */ float pad1;
-    /* 12 */ float pad2;
-    /* 16 */
+    // NDC-z occlusion margin constant, routes3d.js's OCCLUSION_EPS_DEFAULT = 0.002 (:133).
+    /*  8 */ float occlusion_eps;
+    // occlusionFar(m) (routes3d.js:1381-1395): OCCLUSION_EPS_M_DEFAULT (60 m of terrain) converted
+    // once per frame into the NDC-z-per-(1/w^2) constant the fragment shader divides by
+    // v_center.w^2 - see TerrainLineLayerTweaker's occlusionFarNDC() for the derivation and where
+    // each of the web function's inputs comes from in this engine.
+    /* 12 */ float occlusion_far;
+    // 1 / depth texture width, height (CSS-pixel sized, nearest-sampled) - the 3x3 max read's
+    // texel step, matching the web's u_depth_texel.
+    /* 16 */ std::array<float, 2> depth_texel;
+    // 0 when there is no terrain, or terrain is on but the depth pass has not produced a real
+    // texture yet (still the far-plane placeholder) - gates the whole occlusion test off so it
+    // costs nothing and changes nothing with terrain off.
+    /* 24 */ float depth_enabled;
+    /* 28 */ float pad1;
+    /* 32 */
 };
-static_assert(sizeof(TerrainLineTilePropsUBO) == 1 * 16);
+static_assert(sizeof(TerrainLineTilePropsUBO) == 2 * 16);
 
 /// Evaluated (per-layer, zoom-evaluated) properties that do not depend on the tile. All nine
 /// paint properties are non-data-driven (PropertyValue<T>, never DataDrivenPropertyValue<T>), so
@@ -78,11 +106,12 @@ struct alignas(16) TerrainLineEvaluatedPropsUBO {
     /* 24 */ float edge_px;     // terrain-line-blur, the AA feather, CSS pixels (u_edge_px)
     /* 28 */ float rail_offset; // terrain-line-offset, CSS pixels (u_rail_offset)
     /* 32 */ float depth_bias;  // constant DEPTH_BIAS = 0.00002, matching routes3d.js:100
-                                // 2.2b fields: parsed and evaluated now so 2.2b is shader-only, but not yet read by the
-                                // shader (no terrain occlusion test or distance fade in this first cut - deferred past
-                                // 2.2b; see task brief. Left inert here on purpose).
+                                // Task 2.2: ghost_opacity is now read by the fragment shader's terrain occlusion test
+                                // (TerrainLineTilePropsUBO's comment above) - `if (ghost <= 0) discard; else alpha *=
+                                // ghost` (routes3d.js:474). fade/fade_distance remain unread; the distance fade is
+                                // still deferred past this task.
     /* 36 */ float ghost_opacity;
-    /* 40 */ float fade;
+    /* 40 */ float fade;          // 2.2b, unused so far
     /* 44 */ float fade_distance;
     /* 48 */ float pad1;
     /* 52 */ float pad2;

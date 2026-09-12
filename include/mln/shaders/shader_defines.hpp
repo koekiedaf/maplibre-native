@@ -469,6 +469,7 @@ enum {
 
 enum {
     idTerrainLineDEMTexture,
+    idTerrainLineDepthTexture,
     terrainLineTextureCount
 };
 

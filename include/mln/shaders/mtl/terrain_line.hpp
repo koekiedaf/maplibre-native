@@ -16,10 +16,10 @@ namespace shaders {
 // PropertyValue<T>, evaluated once per layer per frame into TerrainLineEvaluatedPropsUBO), and
 // no raw u_viewport uniform (see the vertex shader comment below for why).
 //
-// Left out of this first cut, deferred to 2.2b: the terrain depth-texture occlusion test
-// (u_depth/u_depth_texel/u_depth_test/u_ghost/u_occlusion_* in the web shader), the distance
-// fade (u_fade_ref/u_fade_k/u_fade_amount), and every debug early-out. No depth texture is
-// bound here.
+// Task 2.2: the terrain depth-texture occlusion test is now ported (u_depth/u_depth_texel/
+// u_occlusion_eps/u_occlusion_far/u_ghost in the web shader - routes3d.js:425-480 for the shader,
+// :111-175 for the argument for a metres-based margin, :1365-1395 for occlusionFar()). Still left
+// out: the distance fade (u_fade_ref/u_fade_k/u_fade_amount) and every debug early-out.
 //
 // NOTE: this file is intentionally never run through clang-format. Its raw string literals are
 // Metal shader source, not C++; formatting it here has previously corrupted comment text inside
@@ -55,14 +55,23 @@ static_assert(sizeof(TerrainLineDrawableUBO) == 7 * 16, "wrong size");
 
 // Fragment-only, bound at idDrawableReservedFragmentOnlyUBO. Filled in lockstep with
 // TerrainLineDrawableUBO (same index, same tile, every frame).
+//
+// Task 2.2: occlusion_eps/occlusion_far/depth_texel/depth_enabled are the terrain depth-texture
+// occlusion test (routes3d.js:425-480, reasoning at :111-175, occlusionFar() at :1365-1395).
+// They live here, NOT in TerrainLineDrawableUBO above, because that struct is bound at
+// idDrawableReservedVertexOnlyUBO, which is bound to the VERTEX stage only on Metal - see this
+// struct's own top-of-file comment for the dash-period bug that exact mistake caused.
 struct alignas(16) TerrainLineTilePropsUBO {
     /*  0 */ float dash_period;
     /*  4 */ float dash_on;
-    /*  8 */ float pad1;
-    /* 12 */ float pad2;
-    /* 16 */
+    /*  8 */ float occlusion_eps;
+    /* 12 */ float occlusion_far;
+    /* 16 */ float2 depth_texel;
+    /* 24 */ float depth_enabled;
+    /* 28 */ float pad1;
+    /* 32 */
 };
-static_assert(sizeof(TerrainLineTilePropsUBO) == 1 * 16, "wrong size");
+static_assert(sizeof(TerrainLineTilePropsUBO) == 2 * 16, "wrong size");
 
 struct alignas(16) TerrainLineEvaluatedPropsUBO {
     /*  0 */ float4 color;
@@ -71,7 +80,9 @@ struct alignas(16) TerrainLineEvaluatedPropsUBO {
     /* 24 */ float edge_px;
     /* 28 */ float rail_offset;
     /* 32 */ float depth_bias;
-    /* 36 */ float ghost_opacity; // 2.2b, unused so far
+    // Task 2.2: ghost_opacity is now read by the fragment shader's occlusion test below -
+    // `if (ghost <= 0) discard; else alpha *= ghost` (routes3d.js:474).
+    /* 36 */ float ghost_opacity;
     /* 40 */ float fade;          // 2.2b, unused so far
     /* 44 */ float fade_distance; // 2.2b, unused so far
     /* 48 */ float pad1;
@@ -92,7 +103,7 @@ struct ShaderSource<BuiltIn::TerrainLineShader, gfx::Backend::Type::Metal> {
 
     static const std::array<AttributeInfo, 4> attributes;
     static constexpr std::array<AttributeInfo, 0> instanceAttributes{};
-    static const std::array<TextureInfo, 1> textures;
+    static const std::array<TextureInfo, 2> textures;
 
     static constexpr auto prelude = terrainLineShaderPrelude;
     static constexpr auto source = R"(
@@ -186,7 +197,9 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
 half4 fragment fragmentMain(FragmentStage in [[stage_in]],
                             device const uint32_t& uboIndex [[buffer(idGlobalUBOIndex)]],
                             device const TerrainLineTilePropsUBO* tilePropsVector [[buffer(idTerrainLineTilePropsUBO)]],
-                            device const TerrainLineEvaluatedPropsUBO& props [[buffer(idTerrainLineEvaluatedPropsUBO)]]) {
+                            device const TerrainLineEvaluatedPropsUBO& props [[buffer(idTerrainLineEvaluatedPropsUBO)]],
+                            texture2d<float, access::sample> depthTexture [[texture(1)]],
+                            sampler depthSampler [[sampler(1)]]) {
 #if defined(OVERDRAW_INSPECTOR)
     return half4(1.0);
 #endif
@@ -198,9 +211,42 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
         discard_fragment();
     }
 
-    // 2.2b adds the terrain depth-texture occlusion test and the distance fade here, both keyed
-    // off in.center and props.ghost_opacity/fade/fade_distance - neither is read in this cut.
-    const float alpha = props.opacity;
+    float alpha = props.opacity;
+
+    // Task 2.2: terrain occlusion, ported from the web engine's fragment shader (routes3d.js:
+    // 454-475; the argument for the metres-based margin is at :111-175; occlusionFar() is at
+    // :1365-1395). Gated on depth_enabled (TerrainLineLayerTweaker::execute sets it to 0 whenever
+    // there is no terrain, or terrain is on but the depth pass has not produced a real texture
+    // yet) so the test costs nothing and changes nothing with terrain off.
+    if (tileProps.depth_enabled > 0.5) {
+        const float3 c = in.center.xyz / in.center.w;
+        // common.hpp's depth_opacity() samples the depth texture at (uv.x, 1.0 - uv.y) - our own
+        // y convention is flipped relative to clip space. Match it here for the same reason.
+        const float2 uv = float2(c.x * 0.5 + 0.5, 1.0 - (c.y * 0.5 + 0.5));
+        // The texture is at CSS-pixel size, nearest-sampled: on a steep face the texel under the
+        // centreline can belong to a neighbouring pixel whose terrain is metres nearer. The
+        // farthest of the 3x3 texels around the centreline decides, which leaks through a ridge
+        // by about one pixel and nothing more (routes3d.js:456-460).
+        float terrain = 0.0;
+        for (int j = -1; j <= 1; j++) {
+            for (int i = -1; i <= 1; i++) {
+                const float4 rgba = depthTexture.sample(depthSampler,
+                                                        uv + float2(float(i), float(j)) * tileProps.depth_texel);
+                terrain = max(terrain, unpack_depth(rgba));
+            }
+        }
+        // Round 14 phase 3 (routes3d.js:467-473): the margin, in NDC z, is the smaller of the
+        // constant that has shipped since round 10 (occlusion_eps) and occlusion_far_m metres of
+        // terrain converted to NDC z at THIS fragment's own depth (occlusion_far / w^2).
+        const float eps = min(tileProps.occlusion_eps,
+                              tileProps.occlusion_far / max(in.center.w * in.center.w, 1e-6));
+        if (terrain + eps < c.z) {
+            if (props.ghost_opacity <= 0.0) {
+                discard_fragment();
+            }
+            alpha *= props.ghost_opacity;
+        }
+    }
 
     const float d = abs(in.side) * (in.half_px + props.edge_px);
     const float a = clamp((in.half_px - d) / props.edge_px + 0.5, 0.0, 1.0);

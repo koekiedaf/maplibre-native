@@ -1292,20 +1292,44 @@ void TransformState::constrainCameraAboveTerrain(bool zoomRequested, bool pitchR
     //
     // So a transition that requested NOTHING, while no gesture is in progress, is not a change
     // to be protected from its own clamp: it is the correction channel finding an existing
-    // breach, and it runs WITHOUT the floor. It answers on PITCH, not on zoom, and that choice
-    // is a convergence argument rather than a preference. Lowering the pitch moves the camera's
-    // own ground point towards the centre, so the rise it is clamped against can only shrink,
-    // and at pitch 0 the rise is identically zero for any terrain; the clamp only ever LOWERS
-    // pitch (the `requestedPitch > pitchMax` gate below), so the sequence is monotone and
-    // bounded and cannot oscillate. Lowering the ZOOM instead pushes the camera FURTHER back
-    // over ground that may keep rising, which can walk the map out several levels - the same
-    // walk section 7 of the camera-collision note describes, in the one place the floor is not
-    // there to stop it.
+    // breach, and it runs WITHOUT the floor.
+    //
+    // TASK (David, 12 September 2026, following E1): "Camera must follow its own height that
+    // he has, except for when it flies into a mountain. Then it should increase altitude as to
+    // not fly into that mountain and maintain that new altitude." The rule is climb, never tilt
+    // - and one of David's original complaints was exactly the opposite symptom, "I cannot tilt
+    // horizontally enough so I can see the horizon." This channel used to answer on PITCH only,
+    // reasoned as a convergence argument (lowering pitch shrinks the rise monotonically, and
+    // lowering zoom instead pushes the camera further back over ground that may keep rising).
+    // That reasoning predates this rise's own forward lookahead (the 48-sample discounted flight
+    // line above, cameraGroundRise): the "zoom may walk out over still-rising ground" risk it
+    // was written against is exactly what the lookahead already samples and discounts before R
+    // is even computed, for this channel exactly as much as for a live pan. Measured at Gavarnie
+    // zoom 16 pitch 60 (rise 535 m, margin 60 m): before this change the pitch-only answer
+    // measured 38.39 degrees against a request of 60; there is no reason for this channel alone
+    // to answer differently from every other one in this function, so it now runs the same
+    // zoom-first, pitch-backstop solve as a pan or a pinch does, climbing (raising the camera's
+    // true altitude, cameraAltitude = centerAltitude + cos(pitch) * D) as far as R requires. The
+    // pitch backstop below still exists for the case this climb cannot fully answer (the zoom
+    // clamp bottoming out at min_scale, for instance); if that ever happens it is a real geometry
+    // finding to report with its own numbers, not a reason to reach for pitch first.
+    //
+    // Whether THIS particular correction is floored is unchanged from before: a rescue with no
+    // standing gesture floor - a fresh jumpTo/deep link arriving already underground, nothing has
+    // ever recorded a floor for it - runs unfloored, exactly as the pitch-only answer used to,
+    // because previousZoom here is simply the underground starting point, not a value achieved by
+    // anything worth protecting. A rescue arriving AFTER a gesture (the render thread's correction
+    // catching up once the fingers have lifted) DOES have a standing floor - the gesture's own
+    // start, set by setGestureInProgress and never cleared at gesture end - and that floor is kept
+    // exactly as tested (testFloorSurvivesGestureEndAndFloorsTheBareCorrectionAfterwards): this
+    // climb may use up to what the floor allows, and only what the floor does not allow falls to
+    // the pitch backstop, same as it already did for that scenario before this change.
     const bool nothingRequested = !zoomRequested && !pitchRequested && !centerRequested;
     const bool rescueExistingBreach = nothingRequested && !gestureInProgress;
-    const bool floorApplies = !centerRequested && !rescueExistingBreach;
+    const bool rescueWithNoStandingFloor = rescueExistingBreach && !terrainCameraFloorZoom;
+    const bool floorApplies = !centerRequested && !rescueWithNoStandingFloor;
 
-    if (!pitchOnly && !rescueExistingBreach) {
+    if (!pitchOnly) {
         // Zoom clamp: solves cos(pitch) * C * metersPerPixel(lat, zoom) == R for zoom, since
         // metersPerPixel(lat, zoom) is k * 2^-zoom: cos(pitch) * C * k * 2^-zoom == R
         // => zoom == log2(cos(pitch) * C * k / R).

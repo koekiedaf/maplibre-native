@@ -4,6 +4,7 @@
 #include <mln/map/transform_state.hpp>
 #include <mln/style/light.hpp>
 #include <mln/style/terrain.hpp>
+#include <mln/style/sky.hpp>
 #include <mln/style/image.hpp>
 #include <mln/style/source.hpp>
 #include <mln/style/layer.hpp>
@@ -36,6 +37,8 @@ public:
     const style::TransitionOptions transitionOptions;
     const Immutable<style::Light::Impl> light;
     const std::optional<Immutable<style::Terrain::Impl>> terrain;
+    // DuckMaps fork only, task T3: the style spec's `sky` root property.
+    const std::optional<Immutable<style::Sky::Impl>> sky;
     const Immutable<std::vector<Immutable<style::Image::Impl>>> images;
     const Immutable<std::vector<Immutable<style::Source::Impl>>> sources;
     const Immutable<std::vector<Immutable<style::Layer::Impl>>> layers;

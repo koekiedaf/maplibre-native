@@ -125,6 +125,7 @@ MLN_GENERATED_OPENGL_SHADER_HEADERS = [
     "include/mln/shaders/gl/terrain.hpp",
     "include/mln/shaders/gl/terrain_depth.hpp",
     "include/mln/shaders/gl/wide_vector.hpp",
+    "include/mln/shaders/gl/sky.hpp",
     "include/mln/shaders/gl/prelude.hpp",
 ]
 
@@ -373,6 +374,7 @@ MLN_CORE_SOURCE = [
     "src/mln/style/conversion/layer.cpp",
     "src/mln/style/conversion/light.cpp",
     "src/mln/style/conversion/terrain.cpp",
+    "src/mln/style/conversion/sky.cpp",
     "src/mln/style/conversion/position.cpp",
     "src/mln/style/conversion/property_value.cpp",
     "src/mln/style/conversion/hillshade_conversions.cpp",
@@ -505,6 +507,8 @@ MLN_CORE_SOURCE = [
     "src/mln/style/style_impl.hpp",
     "src/mln/style/terrain.cpp",
     "src/mln/style/terrain_impl.hpp",
+    "src/mln/style/sky.cpp",
+    "src/mln/style/sky_impl.hpp",
     "src/mln/style/types.cpp",
     "src/mln/style/variable_anchor_offset_collection.cpp",
     "src/mln/text/bidi.hpp",
@@ -770,6 +774,7 @@ MLN_CORE_HEADERS = [
     "include/mln/style/conversion/layer.hpp",
     "include/mln/style/conversion/light.hpp",
     "include/mln/style/conversion/terrain.hpp",
+    "include/mln/style/conversion/sky.hpp",
     "include/mln/style/conversion/position.hpp",
     "include/mln/style/conversion/property_value.hpp",
     "include/mln/style/conversion/rotation.hpp",
@@ -843,6 +848,8 @@ MLN_CORE_HEADERS = [
     "include/mln/style/style_property.hpp",
     "include/mln/style/terrain.hpp",
     "include/mln/style/terrain_observer.hpp",
+    "include/mln/style/sky.hpp",
+    "include/mln/style/sky_observer.hpp",
     "include/mln/style/transition_options.hpp",
     "include/mln/style/types.hpp",
     "include/mln/style/undefined.hpp",
@@ -1161,6 +1168,7 @@ MLN_DRAWABLES_MTL_SOURCE = [
     "src/mln/shaders/mtl/terrain_depth.cpp",
     "src/mln/shaders/mtl/symbol.cpp",
     "src/mln/shaders/mtl/widevector.cpp",
+    "src/mln/shaders/mtl/sky.cpp",
     "src/mln/style/layers/mtl/custom_layer_render_parameters.cpp",
 ]
 
@@ -1211,6 +1219,7 @@ MLN_DRAWABLES_MTL_HEADERS = [
     "include/mln/shaders/mtl/symbol.hpp",
     "include/mln/style/layers/mtl/custom_layer_render_parameters.hpp",
     "include/mln/shaders/mtl/widevector.hpp",
+    "include/mln/shaders/mtl/sky.hpp",
 ]
 
 MLN_DRAWABLES_WEBGPU_SOURCE = [

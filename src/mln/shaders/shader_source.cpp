@@ -46,7 +46,8 @@ MBGL_DEFINE_ENUM(BuiltIn, {
 {BuiltIn::TerrainDepthShader, "TerrainDepthShader"},
 {BuiltIn::TerrainLineShader, "TerrainLineShader"},
 {BuiltIn::TerrainContourShader, "TerrainContourShader"},
-{BuiltIn::WideVectorShader, "WideVectorShader"}
+{BuiltIn::WideVectorShader, "WideVectorShader"},
+{BuiltIn::SkyShader, "SkyShader"}
 });
 
 } // namespace mln

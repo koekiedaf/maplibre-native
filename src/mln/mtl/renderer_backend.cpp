@@ -34,6 +34,7 @@
 #include <mln/shaders/mtl/terrain_line.hpp>
 #include <mln/shaders/mtl/terrain_contour.hpp>
 #include <mln/shaders/mtl/widevector.hpp>
+#include <mln/shaders/mtl/sky.hpp>
 
 #include <cassert>
 #include <string>
@@ -127,7 +128,8 @@ void RendererBackend::initShaders(gfx::ShaderRegistry& shaders, const ProgramPar
                   shaders::BuiltIn::TerrainDepthShader,
                   shaders::BuiltIn::TerrainLineShader,
                   shaders::BuiltIn::TerrainContourShader,
-                  shaders::BuiltIn::WideVectorShader>(shaders, programParameters);
+                  shaders::BuiltIn::WideVectorShader,
+                  shaders::BuiltIn::SkyShader>(shaders, programParameters);
 }
 
 } // namespace mtl

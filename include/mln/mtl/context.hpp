@@ -29,6 +29,7 @@ using VertexAttributeArrayPtr = std::shared_ptr<VertexAttributeArray>;
 
 namespace shaders {
 struct ClipUBO;
+struct SkyUBO; // DuckMaps fork only, task T3
 } // namespace shaders
 
 namespace mtl {
@@ -155,6 +156,12 @@ public:
                                  RenderStaticData& staticData,
                                  const std::vector<shaders::ClipUBO>& tileUBOs);
 
+    /// DuckMaps fork only, task T3: draw the full-screen sky gradient once per frame, before
+    /// any layer. Mirrors renderTileClippingMasks's own raw, hand-built pipeline immediately
+    /// above (no tile drawable, no tweaker) - see mtl/sky.hpp and Renderer::Impl::render's sky
+    /// pass (renderer_impl.cpp) for the values that go into `sky`.
+    bool renderSky(gfx::RenderPass& renderPass, RenderStaticData& staticData, const shaders::SkyUBO& sky);
+
     /// Get the global uniform buffers
     const gfx::UniformBufferArray& getGlobalUniformBuffers() const override { return globalUniformBuffers; };
 
@@ -183,6 +190,18 @@ private:
     std::optional<BufferResource> clipMaskUniformsBuffer;
     bool clipMaskUniformsBufferUsed = false;
     const gfx::Renderable* stencilStateRenderable = nullptr;
+
+    // DuckMaps fork only, task T3: renderSky()'s own state, mirroring the clipMask* members
+    // immediately above one-for-one (own shader/pipeline/depth-stencil-state/uniform-buffer
+    // cache; a separate `skyStateRenderable` because the sky pass and the clip mask pass can be
+    // invalidated by different renderable changes independently of each other).
+    gfx::ShaderProgramBasePtr skyShader;
+    MTLDepthStencilStatePtr skyDepthStencilState;
+    MTLRenderPipelineStatePtr skyPipelineState;
+    std::optional<BufferResource> skyVertexBuffer;
+    std::optional<BufferResource> skyUniformsBuffer;
+    bool skyUniformsBufferUsed = false;
+    const gfx::Renderable* skyStateRenderable = nullptr;
 
     UniformBufferArray globalUniformBuffers;
 };

@@ -5,6 +5,7 @@
 #include <mln/style/source.hpp>
 #include <mln/style/light.hpp>
 #include <mln/style/terrain.hpp>
+#include <mln/style/sky.hpp>
 
 #include <mln/text/glyph.hpp>
 
@@ -41,6 +42,7 @@ public:
     TransitionOptions transition{{util::DEFAULT_TRANSITION_DURATION}};
     Light light;
     std::optional<Terrain> terrain;
+    std::optional<Sky> sky;
 
     std::string name;
     LatLng latLng;
@@ -57,6 +59,7 @@ private:
     void parseTransition(const JSValue&);
     void parseLight(const JSValue&);
     void parseTerrain(const JSValue&);
+    void parseSky(const JSValue&);
     void parseSources(const JSValue&);
     void parseSprites(const JSValue&);
     void parseLayers(const JSValue&);

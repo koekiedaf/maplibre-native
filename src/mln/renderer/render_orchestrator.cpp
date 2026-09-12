@@ -260,6 +260,11 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
     //
     // The DEM tiles read here are the previous frame's, as in gl-js: the cover only has
     // to be conservative, and a DEM that is still loading converges on the next frame.
+    // DuckMaps fork only, task T3: the style spec's `sky` root property. Just a value copy - no
+    // deactivate/create dance like RenderTerrain's above, since sky owns no GPU resources and
+    // drives no tile source (see the comment on RenderOrchestrator::sky in the header).
+    sky = updateParameters->sky;
+
     const bool terrainEnabled = renderTerrain && renderTerrain->isEnabled();
     const DEMElevationProvider elevationProvider{
         terrainEnabled ? getRenderSource(renderTerrain->getSourceID()) : nullptr,

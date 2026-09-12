@@ -30,6 +30,7 @@
 #include <mln/util/hash.hpp>            // drape signature: hash_combine
 #include <map>
 #include <mln/renderer/render_terrain.hpp>
+#include <mln/style/sky_impl.hpp> // DuckMaps fork only, task T3
 #include <mln/renderer/dem_elevation_provider.hpp>
 #include <mln/renderer/layers/terrain_layer_tweaker.hpp>
 #include <mln/util/tile_cover.hpp>
@@ -46,6 +47,8 @@
 
 #if MLN_RENDER_BACKEND_METAL
 #include <mln/mtl/renderer_backend.hpp>
+#include <mln/mtl/context.hpp>       // DuckMaps fork only, task T3: mtl::Context::renderSky
+#include <mln/shaders/mtl/sky.hpp>   // DuckMaps fork only, task T3: shaders::SkyUBO
 #include <Metal/MTLCaptureManager.hpp>
 #include <Metal/MTLCaptureScope.hpp>
 /// Enable programmatic Metal frame captures for specific frame numbers.
@@ -628,6 +631,71 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         }
     };
 
+    // DuckMaps fork only, task T3: the style spec's `sky` root property
+    // (https://maplibre.org/maplibre-style-spec/sky/). Draws a full-screen sky gradient once
+    // per frame, in the main render pass, before any layer group - so terrain and every layer
+    // paint over it, exactly as maplibre-gl-js's own sky pass behaves (its background layer,
+    // drawn into the drape targets rather than full screen when terrain is on, does not cover
+    // this for the same reason). When the style carries no `sky` root property at all
+    // (orchestrator.getSky() empty), this draws NOTHING - no drawable, no pass - which is half
+    // of this feature's own acceptance bar (see the task's own final report).
+    //
+    // Only Metal is implemented (see mtl::Context::renderSky and include/mln/shaders/mtl/sky.hpp
+    // for the shader itself); GL/Vulkan/WebGPU have unused ShaderSource specializations only,
+    // following this tree's own convention for a new shader (see terrain_contour's own gl.hpp,
+    // similarly untested).
+    const auto skyPass = [&] {
+#if MLN_RENDER_BACKEND_METAL
+        const auto& sky = orchestrator.getSky();
+        if (!sky) {
+            return;
+        }
+
+        // Reuses the enclosing render()'s own `state` (renderTreeParameters.transformParams.state,
+        // aliased by parameters.state too) rather than redeclaring it, to avoid shadowing it.
+        const double pitch = state.getPitch();
+        const double roll = state.getRoll();
+        const float cameraToCenterDistance = state.getCameraToCenterDistance();
+
+        // getMercatorHorizon(transform), ported verbatim from maplibre-gl-js (including the
+        // 0.85 constant) - see the task's own final report for the exact quote and where
+        // getPitch()/getCameraToCenterDistance() come from in TransformState.
+        const double horizonOffset = std::tan(M_PI_2 - pitch) * cameraToCenterDistance * 0.85;
+
+        // r = cos(roll), i = sin(roll) - written in the general form even though this app never
+        // rolls the camera (r=1, i=0 always today); see the task's own instructions on why a
+        // hardcoded zero would be a lie in the code.
+        const double r = std::cos(roll);
+        const double i = std::sin(roll);
+
+        const Size& size = state.getSize(); // CSS pixels, matching gl-js's transform.width/height
+        const float n = parameters.pixelRatio;
+
+        const float horizonX = static_cast<float>((static_cast<double>(size.width) / 2.0 - horizonOffset * i) * n);
+        const float horizonY = static_cast<float>((static_cast<double>(size.height) / 2.0 + horizonOffset * r) * n);
+        const float viewportHeight = static_cast<float>(parameters.renderableSize.height);
+
+        const std::array<float, 4> skyColor = (*sky)->skyColor;
+        const std::array<float, 4> horizonColor = (*sky)->horizonColor;
+
+        const shaders::SkyUBO skyUBO = {
+            .sky_color = skyColor,
+            .horizon_color = horizonColor,
+            .horizon = {horizonX, horizonY},
+            .horizon_normal = {static_cast<float>(-i), static_cast<float>(r)},
+            .sky_horizon_blend = (*sky)->skyHorizonBlend * static_cast<float>(size.height) / 2.0f * n,
+            // u_sky_blend = projectionTransition, 0 in mercator - the only projection this
+            // engine has (see mtl/sky.hpp's own comment on this uniform).
+            .sky_blend = 0.0f,
+            .viewport_height = viewportHeight,
+            .pad0 = 0.0f,
+        };
+
+        auto& mtlContext = static_cast<mtl::Context&>(context);
+        mtlContext.renderSky(*parameters.renderPass, parameters.staticData, skyUBO);
+#endif // MLN_RENDER_BACKEND_METAL
+    };
+
     // Actually render the layers
     // Drawables
     const auto drawableOpaquePass = [&] {
@@ -703,6 +771,9 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
     }
     commonClearPass();
     context.bindGlobalUniformBuffers(*parameters.renderPass);
+    // DuckMaps fork only, task T3: right after the main pass is created and bound, before any
+    // layer group draws into it - see skyPass's own comment above for why.
+    skyPass();
     drawableOpaquePass();
     drawableTranslucentPass();
     drawableDebugOverlays();

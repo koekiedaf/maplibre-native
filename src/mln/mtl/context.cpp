@@ -18,6 +18,7 @@
 #include <mln/renderer/render_static_data.hpp>
 #include <mln/renderer/render_target.hpp>
 #include <mln/shaders/mtl/clipping_mask.hpp>
+#include <mln/shaders/mtl/sky.hpp> // DuckMaps fork only, task T3
 #include <mln/shaders/mtl/shader_program.hpp>
 #include <mln/shaders/program_parameters.hpp>
 #include <mln/util/traits.hpp>
@@ -197,6 +198,10 @@ void Context::performCleanup() {
     stats.numDrawCalls = 0;
     stats.numFrames++;
     clipMaskUniformsBufferUsed = false;
+    // DuckMaps fork only, task T3: same per-frame reset the clip mask buffer gets immediately
+    // above. Without it the first frame claims the persistent buffer and every frame after it
+    // allocates a throwaway one.
+    skyUniformsBufferUsed = false;
 }
 
 gfx::UniqueDrawableBuilder Context::createDrawableBuilder(std::string name) {
@@ -457,6 +462,159 @@ bool Context::renderTileClippingMasks(gfx::RenderPass& renderPass,
                                        /*instanceCount=*/1);
     }
 #endif
+
+    stats.numDrawCalls++;
+    stats.totalDrawCalls++;
+    return true;
+}
+
+namespace {
+// DuckMaps fork only, task T3: no depth test, no depth write, no stencil test - the sky must
+// draw full screen regardless of what a previous frame left in either buffer, and must never
+// itself occlude anything drawn afterwards (terrain and every layer paint over it - see this
+// function's own header comment and Renderer::Impl::render's sky pass for where it is called
+// from in the frame).
+const auto skyDepthMode = gfx::DepthMode::disabled();
+const auto skyStencilMode = gfx::StencilMode::disabled();
+} // namespace
+
+bool Context::renderSky(gfx::RenderPass& renderPass, RenderStaticData& staticData, const shaders::SkyUBO& sky) {
+    using ShaderClass = shaders::ShaderSource<shaders::BuiltIn::SkyShader, gfx::Backend::Type::Metal>;
+
+    if (!skyShader) {
+        const auto group = staticData.shaders->getShaderGroup("SkyShader");
+        if (group) {
+            skyShader = std::static_pointer_cast<gfx::ShaderProgramBase>(group->getOrCreateShader(*this, {}));
+        }
+    }
+    if (!skyShader) {
+        assert(!"Failed to create shader for sky");
+        return false;
+    }
+
+    const auto& mtlShader = static_cast<const mtl::ShaderProgram&>(*skyShader);
+    auto& mtlRenderPass = static_cast<mtl::RenderPass&>(renderPass);
+    const auto& encoder = mtlRenderPass.getMetalEncoder();
+    // Straight (non-premultiplied) One / OneMinusSrcAlpha: with the shader's own fragColor
+    // always either fully opaque (alpha 1, above the horizon) or fully transparent (alpha 0,
+    // below it - see mtl/sky.hpp's header comment on the WebGL zero-init this reproduces), this
+    // is exactly "replace opaque, leave transparent untouched" - correct without needing to
+    // premultiply anything.
+    const auto colorMode = gfx::ColorMode::alphaBlended();
+
+    // Own dedicated NDC (-1..1) full-screen quad vertex buffer. RenderStaticData's shared tile
+    // buffer (getTileVertexBuffer()) holds EXTENT-space (0..util::EXTENT) coordinates meant to
+    // be carried through a per-tile matrix; SkyShader's vertex shader is the trivial
+    // `gl_Position = vec4(a_pos, 1.0, 1.0)` ported verbatim from maplibre-gl-js, which needs
+    // its input already in clip space, so that buffer's DATA cannot be reused as-is. The INDEX
+    // buffer (getTileIndexBuffer()) IS reused below without modification: two triangles over
+    // four corners is the same topology regardless of what space the corners are in.
+    constexpr auto vertexSize = sizeof(float) * 2;
+    if (!skyVertexBuffer) {
+        constexpr std::array<float, 8> quad = {
+            -1.0f, -1.0f, // bottom-left
+            1.0f,  -1.0f, // bottom-right
+            -1.0f, 1.0f,  // top-left
+            1.0f,  1.0f,  // top-right
+        };
+        auto buf = createBuffer(quad.data(),
+                                quad.size() * sizeof(float),
+                                gfx::BufferUsageType::StaticDraw,
+                                /*isIndexBuffer=*/false,
+                                /*persistent=*/true);
+        skyVertexBuffer = std::move(buf);
+    }
+    const auto& vertexRes = *skyVertexBuffer;
+    if (!vertexRes) {
+        return false;
+    }
+
+    constexpr NS::UInteger indexCount = 6;
+    const auto indexRes = &getTileIndexBuffer();
+    if (!indexRes) {
+        return false;
+    }
+
+    const auto& renderPassDescriptor = mtlRenderPass.getDescriptor();
+    const auto& renderable = renderPassDescriptor.renderable;
+    if (skyStateRenderable != &renderable) {
+        // We're on a new renderable, invalidate objects constructed for the previous one.
+        skyPipelineState.reset();
+        skyDepthStencilState.reset();
+        skyStateRenderable = &renderable;
+    }
+
+    if (!skyDepthStencilState) {
+        if (auto depthStencilState = makeDepthStencilState(skyDepthMode, skyStencilMode, renderable)) {
+            skyDepthStencilState = std::move(depthStencilState);
+        }
+    }
+    assert(skyDepthStencilState || !"Failed to create depth-stencil state for sky");
+    mtlRenderPass.setDepthStencilState(skyDepthStencilState);
+
+    if (!skyPipelineState) {
+        // A vertex descriptor tells Metal what's in the vertex buffer
+        auto vertDesc = NS::RetainPtr(MTL::VertexDescriptor::vertexDescriptor());
+        if (!vertDesc) {
+            return false;
+        }
+
+        const auto& attribDesc = vertDesc->attributes()->object(ShaderClass::attributes[0].index);
+        attribDesc->setBufferIndex(ShaderClass::attributes[0].bufferIndex);
+        attribDesc->setOffset(0);
+        attribDesc->setFormat(MTL::VertexFormatFloat2);
+
+        const auto& layoutDesc = vertDesc->layouts()->object(ShaderClass::attributes[0].bufferIndex);
+        layoutDesc->setStride(static_cast<NS::UInteger>(vertexSize));
+        layoutDesc->setStepFunction(MTL::VertexStepFunctionPerVertex);
+        layoutDesc->setStepRate(1);
+
+        const std::size_t hash = mln::util::hash(ShaderClass::attributes[0].index,
+                                                 0,
+                                                 MTL::VertexFormatFloat2,
+                                                 vertexSize,
+                                                 MTL::VertexStepFunctionPerVertex,
+                                                 1);
+        if (auto state = mtlShader.getRenderPipelineState(
+                renderable, vertDesc, colorMode, mln::util::hash(colorMode.hash(), hash))) {
+            skyPipelineState = std::move(state);
+        }
+    }
+    if (skyPipelineState) {
+        mtlRenderPass.setRenderPipelineState(skyPipelineState);
+    } else {
+        assert(!"Failed to create render pipeline state for sky");
+        return false;
+    }
+
+    // Create/update the buffer for the UBO data - single instance, no per-tile array (see
+    // mtl/sky.hpp's own header comment on why this is a raw immediate draw, not a drawable).
+    constexpr auto uboSize = sizeof(shaders::SkyUBO);
+
+    std::optional<BufferResource> tempBuffer;
+    auto& uboBuffer = skyUniformsBufferUsed ? tempBuffer : skyUniformsBuffer;
+    skyUniformsBufferUsed = true;
+    if (!uboBuffer || !*uboBuffer || uboBuffer->getSizeInBytes() < uboSize) {
+        uboBuffer = createBuffer(
+            &sky, uboSize, gfx::BufferUsageType::StaticDraw, /*isIndexBuffer=*/false, /*persistent=*/!skyUniformsBufferUsed);
+        if (!uboBuffer) {
+            return false;
+        }
+    } else {
+        uboBuffer->update(&sky, uboSize, /*offset=*/0);
+    }
+
+    mtlRenderPass.setCullMode(MTL::CullModeNone);
+
+    mtlRenderPass.bindVertex(vertexRes, /*offset=*/0, ShaderClass::attributes[0].bufferIndex);
+    mtlRenderPass.bindFragment(*uboBuffer, /*offset=*/0, shaders::idSkyUBO, /*size=*/uboSize);
+
+    encoder->drawIndexedPrimitives(MTL::PrimitiveType::PrimitiveTypeTriangle,
+                                   indexCount,
+                                   MTL::IndexType::IndexTypeUInt16,
+                                   indexRes->getMetalBuffer().get(),
+                                   /*indexOffset=*/0,
+                                   /*instanceCount=*/1);
 
     stats.numDrawCalls++;
     stats.totalDrawCalls++;

@@ -258,6 +258,15 @@ enum {
     clippingMaskUBOCount = getEnumValue(drawableReservedUBOCount, idClippingMaskUBO + 1)
 };
 
+// DuckMaps fork only, task T3: the style spec's `sky` root property. SkyShader is, like
+// ClippingMaskProgram just above, a raw once-per-frame draw outside the tile drawable/tweaker
+// system - see mtl/sky.hpp's own header comment - so it needs only this one fragment-only UBO
+// slot, matching the identically-named enum in that header's MSL prelude.
+enum {
+    idSkyUBO = getEnumValue(idDrawableReservedFragmentOnlyUBO, drawableUBOStartId),
+    skyUBOCount = getEnumValue(drawableReservedUBOCount, idSkyUBO + 1)
+};
+
 enum {
     colorReliefUBOCount = getEnumValue(colorReliefLayerUBOCount, drawableUBOStartId)
 };
@@ -339,6 +348,7 @@ enum {
 static constexpr uint32_t maxUBOCountPerShader = std::max({static_cast<uint32_t>(backgroundUBOCount),
                                                            static_cast<uint32_t>(circleUBOCount),
                                                            static_cast<uint32_t>(clippingMaskUBOCount),
+                                                           static_cast<uint32_t>(skyUBOCount),
                                                            static_cast<uint32_t>(collisionUBOCount),
                                                            static_cast<uint32_t>(colorReliefUBOCount),
                                                            static_cast<uint32_t>(customGeometryUBOCount),
@@ -677,6 +687,15 @@ enum {
     terrainContourVertexAttributeCount
 };
 
+// DuckMaps fork only, task T3: the style spec's `sky` root property. SkyShader is a raw,
+// once-per-frame full-screen draw (Context::renderSky, mirroring ClippingMaskProgram's own
+// Context::renderTileClippingMasks - see mtl/sky.hpp's header comment), not a per-tile drawable,
+// so it needs only one vertex attribute id and no per-drawable UBO array.
+enum {
+    idSkyPosVertexAttribute,
+    skyVertexAttributeCount
+};
+
 enum {
     idWideVectorScreenPos,
     idWideVectorColor,
@@ -716,6 +735,7 @@ static constexpr uint32_t maxAttributeCountPerShader = std::max({
     static_cast<uint32_t>(terrainContourVertexAttributeCount),
     static_cast<uint32_t>(wideVectorAttributeCount),
     static_cast<uint32_t>(wideVectorInstanceAttributeCount),
+    static_cast<uint32_t>(skyVertexAttributeCount),
 });
 
 } // namespace shaders

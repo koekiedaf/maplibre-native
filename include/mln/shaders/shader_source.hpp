@@ -47,7 +47,9 @@ enum class BuiltIn {
     TerrainDepthShader,
     TerrainLineShader,
     TerrainContourShader,
-    WideVectorShader
+    WideVectorShader,
+    // DuckMaps fork only, task T3: the style spec's `sky` root property.
+    SkyShader
 };
 
 /// @brief Select shader source based on a program type and a desired

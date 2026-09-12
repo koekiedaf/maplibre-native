@@ -1304,6 +1304,20 @@ std::vector<CanonicalTileID> RenderTerrain::getLastFrameMeshCoverTileIds() const
 }
 
 std::optional<RenderTerrain::TerrainData> RenderTerrain::getTerrainData(const UnwrappedTileID& tileID) const {
+    // Implemented in terms of getAllTerrainData so the two can never disagree on which candidate
+    // wins the ancestor-or-self case, or which descendant wins the tie-break when a caller only
+    // wants the single best candidate (every layer but terrain-line: terrain-contour matches its
+    // own mesh tile exactly and never reaches the descendant branch, symbol/circle/fill-extrusion
+    // sample one point and are unaffected by which of several tied descendants gets picked).
+    const auto all = getAllTerrainData(tileID);
+    if (all.empty()) {
+        return std::nullopt;
+    }
+    return all.front().second;
+}
+
+std::vector<std::pair<UnwrappedTileID, RenderTerrain::TerrainData>> RenderTerrain::getAllTerrainData(
+    const UnwrappedTileID& tileID) const {
     // Find the DEM texture matching the requested tile, or its closest available ancestor
     const UnwrappedTileID* demTileID = nullptr;
     const DEMTextureEntry* entry = nullptr;
@@ -1321,42 +1335,48 @@ std::optional<RenderTerrain::TerrainData> RenderTerrain::getTerrainData(const Un
         // normalized coordinates (0..1) of the (possibly ancestor) DEM tile
         const auto off = demSubTileOffset(tileID.canonical, demTileID->canonical);
 
-        return TerrainData{
-            .demTexture = entry->texture,
-            .demCoords = {{1.0f / (util::EXTENT * off.scale), off.dx / off.scale, off.dy / off.scale, 0.0f}},
-            .demDim = static_cast<float>(entry->dim),
-        };
+        return {{*demTileID,
+                 TerrainData{
+                     .demTexture = entry->texture,
+                     .demCoords = {{1.0f / (util::EXTENT * off.scale), off.dx / off.scale, off.dy / off.scale, 0.0f}},
+                     .demDim = static_cast<float>(entry->dim),
+                 }}};
     }
 
     // DuckMaps fork only, task E-vanish: tileID itself can be coarser than every resident DEM
-    // texture - see demSubTileOffsetFromDescendant's own comment above for why. Fall back to the
-    // finest resident DESCENDANT of tileID (the one covering the largest fraction of it, i.e. the
-    // smallest dz), rather than leaving the caller with nothing: real elevation for the quadrant
-    // it covers beats a flat, unelevated line for the whole tile, which the depth-texture
-    // occlusion test then discards outright against the real (elevated) terrain surface beneath
-    // it. Ties (more than one resident tile at the same smallest z) are broken by demTextures'
-    // own std::map order, deterministically, not by which tile happened to load first.
-    const UnwrappedTileID* descendantID = nullptr;
-    const DEMTextureEntry* descendantEntry = nullptr;
+    // texture - see demSubTileOffsetFromDescendant's own comment above for why. Fall back to
+    // EVERY resident DESCENDANT of tileID tied at the finest available zoom (up to four, one per
+    // quadrant of tileID's footprint) rather than a single arbitrary one: a caller that draws one
+    // drawable per candidate (terrain-line - see render_terrain_line_layer.cpp) can then cover the
+    // whole tile with real elevation, each candidate's own quadrant correctly placed in [0,1] and
+    // every other quadrant outside it (see demSubTileOffsetFromDescendant), which its own vertex
+    // shader uses to discard the ground it does not cover rather than sampling a false elevation
+    // off the wrong descendant's clamped edge texel. A caller that only wants one (getTerrainData
+    // above) gets the first entry, in demTextures' own std::map order - deterministic, matching
+    // this function's previous single-candidate behaviour exactly.
+    std::vector<std::pair<UnwrappedTileID, TerrainData>> descendants;
     int bestDescendantZoom = std::numeric_limits<int>::max();
     for (const auto& [candidate, candidateEntry] : demTextures) {
-        if (candidate.wrap == tileID.wrap && candidate.canonical.isChildOf(tileID.canonical) &&
-            static_cast<int>(candidate.canonical.z) < bestDescendantZoom) {
-            bestDescendantZoom = candidate.canonical.z;
-            descendantID = &candidate;
-            descendantEntry = &candidateEntry;
+        if (!candidateEntry.texture || candidate.wrap != tileID.wrap ||
+            !candidate.canonical.isChildOf(tileID.canonical)) {
+            continue;
+        }
+        const int z = static_cast<int>(candidate.canonical.z);
+        if (z < bestDescendantZoom) {
+            bestDescendantZoom = z;
+            descendants.clear();
+        }
+        if (z == bestDescendantZoom) {
+            const auto off = demSubTileOffsetFromDescendant(tileID.canonical, candidate.canonical);
+            descendants.emplace_back(candidate,
+                                     TerrainData{
+                                         .demTexture = candidateEntry.texture,
+                                         .demCoords = {{off.scale / util::EXTENT, off.dx, off.dy, 0.0f}},
+                                         .demDim = static_cast<float>(candidateEntry.dim),
+                                     });
         }
     }
-    if (!descendantEntry || !descendantEntry->texture) {
-        return std::nullopt;
-    }
-
-    const auto off = demSubTileOffsetFromDescendant(tileID.canonical, descendantID->canonical);
-    return TerrainData{
-        .demTexture = descendantEntry->texture,
-        .demCoords = {{off.scale / util::EXTENT, off.dx, off.dy, 0.0f}},
-        .demDim = static_cast<float>(descendantEntry->dim),
-    };
+    return descendants;
 }
 
 std::optional<UnwrappedTileID> RenderTerrain::debugDemTileIdForTile(const UnwrappedTileID& tileID) const {

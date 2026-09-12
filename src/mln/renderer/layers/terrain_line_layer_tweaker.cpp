@@ -397,13 +397,30 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
                                           /*aligned=*/false,
                                           /*renderToTerrain=*/false);
 
+        // DuckMaps fork only, task E-vanish part 2: which DEM candidate this specific drawable
+        // binds. drawable.getType() packs quadrantIndex*2 + passType (set in
+        // RenderTerrainLineLayer::update()) - almost always quadrantIndex 0, the tile's own DEM or
+        // its closest ancestor, exactly as getTerrainData() alone always returned before this
+        // task. It is only ever nonzero when this tile needed more than one covering descendant
+        // (see RenderTerrain::getAllTerrainData's own comment) and update() built one drawable
+        // pair per candidate; each such drawable binds ONE of those candidates, and the shader's
+        // own in-bounds test (terrain_line.vertex.glsl/mtl) draws only the ground that candidate's
+        // DEM texture actually covers, discarding the rest so the other candidates' drawables can
+        // cover it correctly instead of this one guessing at it.
+        const std::size_t quadrantIndex = drawable.getType() / 2;
+
         // Bind the covering DEM tile so the vertex shader can elevate both ends of every
         // sub-segment onto the terrain (RenderTerrain::getTerrainData, see
         // symbol_layer_tweaker.cpp:170-234's identical pattern). terrainEnabled itself is
         // computed once per frame above; only the per-tile DEM lookup happens here.
         std::optional<RenderTerrain::TerrainData> terrainData;
+        std::optional<UnwrappedTileID> terrainDataTileID;
         if (terrainEnabled) {
-            terrainData = parameters.terrain->getTerrainData(tileID);
+            const auto allData = parameters.terrain->getAllTerrainData(tileID);
+            if (quadrantIndex < allData.size()) {
+                terrainDataTileID = allData[quadrantIndex].first;
+                terrainData = allData[quadrantIndex].second;
+            }
         }
         if (parameters.terrain) {
             drawable.setTexture(
@@ -437,8 +454,11 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
         // header's TerrainLinePassType comment for why the value has to be duplicated into BOTH
         // TerrainLineDrawableUBO (vertex-only) and TerrainLineTilePropsUBO (fragment-only) below
         // rather than read from one shared place.
-        const float haloPass = drawable.getType() == static_cast<std::size_t>(TerrainLinePassType::Halo) ? 1.0f
-                                                                                                           : 0.0f;
+        // DuckMaps fork only, task E-vanish part 2: pass type is now the LOW bit of the packed
+        // type (see quadrantIndex above) - drawable.getType() % 2, not the raw value.
+        const float haloPass = (drawable.getType() % 2) == static_cast<std::size_t>(TerrainLinePassType::Halo)
+                                    ? 1.0f
+                                    : 0.0f;
 
         // Task 2.2b: this tile's own fade reference point and scale - see tileLocalPosition() and
         // metresPerExtentUnit() above. fade_k is 0 whenever terrain-line-fade-distance is not
@@ -503,11 +523,16 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
             uboHash = debugFnv1a64(&tilePropsUBORef, sizeof(tilePropsUBORef), uboHash);
             uboHash = debugFnv1a64(&evaluatedPropsUBOForTrace, sizeof(evaluatedPropsUBOForTrace), uboHash);
 
+            // DuckMaps fork only, task E-vanish part 2: identity comes from terrainDataTileID,
+            // resolved above for THIS drawable's own quadrantIndex, not a fresh
+            // debugDemTileIdForTile(tileID) lookup - that call knows nothing about which candidate
+            // this particular drawable bound and would always name candidate 0's tile even when
+            // this drawable is showing a different quadrant's DEM.
             std::string demTexIdentity;
             if (parameters.terrain) {
                 if (terrainData) {
-                    if (const auto demTileId = parameters.terrain->debugDemTileIdForTile(tileID)) {
-                        demTexIdentity = "dem:" + lineTileIdDebugKey(*demTileId);
+                    if (terrainDataTileID) {
+                        demTexIdentity = "dem:" + lineTileIdDebugKey(*terrainDataTileID);
                     } else {
                         demTexIdentity = "dem:resolved-but-untraced";
                     }

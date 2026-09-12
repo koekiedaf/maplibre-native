@@ -7,6 +7,7 @@
 #include <mln/renderer/layer_group.hpp>
 #include <mln/renderer/layers/terrain_line_layer_tweaker.hpp>
 #include <mln/renderer/paint_parameters.hpp>
+#include <mln/renderer/render_terrain.hpp>
 #include <mln/renderer/render_tile.hpp>
 #include <mln/renderer/update_parameters.hpp>
 #include <mln/shaders/shader_program_base.hpp>
@@ -84,7 +85,7 @@ void RenderTerrainLineLayer::update(gfx::ShaderRegistry& shaders,
                                     gfx::Context& context,
                                     const TransformState&,
                                     const std::shared_ptr<UpdateParameters>&,
-                                    const PaintParameters&,
+                                    const PaintParameters& parameters,
                                     const RenderTree&,
                                     UniqueChangeRequestVec& changes) {
     if (!renderTiles || renderTiles->empty()) {
@@ -153,13 +154,26 @@ void RenderTerrainLineLayer::update(gfx::ShaderRegistry& shaders,
         }
         setRenderTileBucketID(tileID, bucket.getID());
 
-        // If terrain-line-halo-width turned on or off since this tile's drawables were last
-        // built (with the bucket itself unchanged - the check above only catches a bucket
-        // rebuild), the existing drawable count no longer matches what this frame needs (one
-        // body-only, or one body plus one halo). updateTile's own "any existing drawable found ->
-        // leave it alone" shortcut below would otherwise silently leave the tile with a missing or
-        // stale halo drawable, so force a full rebuild in that case.
-        const std::size_t expectedDrawableCount = hasHalo ? 2 : 1;
+        // DuckMaps fork only, task E-vanish part 2: how many DEM candidates cover this tile this
+        // frame. Almost always 1 (this tile's own DEM, or its closest ancestor - the ordinary
+        // case every layer has always had). It is only ever >1 when this tile's own vector source
+        // (omt, maxzoom 14) is coarser than every resident DEM texture, which needs several
+        // covering descendants to draw the whole tile's ground truthfully rather than one
+        // arbitrary quadrant's elevation clamped across the rest - see
+        // RenderTerrain::getAllTerrainData's own comment. Clamped to at least 1 so a tile with no
+        // DEM coverage at all still gets its usual single placeholder-bound drawable, unchanged
+        // from before this task.
+        const bool terrainEnabled = parameters.terrain && parameters.terrain->isEnabled();
+        const std::size_t candidateCount = std::max<std::size_t>(
+            1, terrainEnabled ? parameters.terrain->getAllTerrainData(tileID.toUnwrapped()).size() : 1);
+
+        // If terrain-line-halo-width turned on or off, or the candidate count above changed,
+        // since this tile's drawables were last built (with the bucket itself unchanged - the
+        // check above only catches a bucket rebuild), the existing drawable count no longer
+        // matches what this frame needs. updateTile's own "any existing drawable found -> leave it
+        // alone" shortcut below would otherwise silently leave the tile with a missing, stale or
+        // wrongly-numbered set of drawables, so force a full rebuild in that case.
+        const std::size_t expectedDrawableCount = candidateCount * (hasHalo ? 2 : 1);
         const std::size_t existingDrawableCount = tileLayerGroup->getDrawableCount(renderPass, tileID);
         if (existingDrawableCount != 0 && existingDrawableCount != expectedDrawableCount) {
             removeTile(renderPass, tileID);
@@ -170,36 +184,6 @@ void RenderTerrainLineLayer::update(gfx::ShaderRegistry& shaders,
         };
         if (updateTile(renderPass, tileID, std::move(updateExisting))) {
             continue;
-        }
-
-        auto vertexAttrs = context.createVertexAttributeArray();
-        if (const auto& attr = vertexAttrs->set(idTerrainLinePosVertexAttribute)) {
-            attr->setSharedRawData(bucket.sharedVertices,
-                                   offsetof(TerrainLineLayoutVertex, a1),
-                                   /*vertexOffset=*/0,
-                                   sizeof(TerrainLineLayoutVertex),
-                                   gfx::AttributeDataType::Short2);
-        }
-        if (const auto& attr = vertexAttrs->set(idTerrainLineOtherVertexAttribute)) {
-            attr->setSharedRawData(bucket.sharedVertices,
-                                   offsetof(TerrainLineLayoutVertex, a2),
-                                   /*vertexOffset=*/0,
-                                   sizeof(TerrainLineLayoutVertex),
-                                   gfx::AttributeDataType::Short2);
-        }
-        if (const auto& attr = vertexAttrs->set(idTerrainLineFlagVertexAttribute)) {
-            attr->setSharedRawData(bucket.sharedVertices,
-                                   offsetof(TerrainLineLayoutVertex, a3),
-                                   /*vertexOffset=*/0,
-                                   sizeof(TerrainLineLayoutVertex),
-                                   gfx::AttributeDataType::Short2);
-        }
-        if (const auto& attr = vertexAttrs->set(idTerrainLineDistVertexAttribute)) {
-            attr->setSharedRawData(bucket.sharedVertices,
-                                   offsetof(TerrainLineLayoutVertex, a4),
-                                   /*vertexOffset=*/0,
-                                   sizeof(TerrainLineLayoutVertex),
-                                   gfx::AttributeDataType::Float);
         }
 
         // Body drawn on top of the halo: TileLayerGroup's own drawable set orders by draw
@@ -237,40 +221,87 @@ void RenderTerrainLineLayer::update(gfx::ShaderRegistry& shaders,
             return b;
         };
 
-        // Both drawables share this tile's own vertex buffer (the same buffer-sharing this
-        // function already did for its one drawable before this task) - only the draw priority
-        // and the per-drawable halo_pass flag (TerrainLineLayerTweaker::execute) differ between
-        // them. The halo builder gets a COPY of vertexAttrs (an lvalue set); the body builder,
-        // built and used last, takes ownership via move - the same pattern
-        // render_fill_extrusion_layer.cpp's own depth/color builder pair uses for its shared
-        // vertexAttrs.
-        auto bodyBuilder = makeBuilder("terrainLineBody", TerrainLineBodyDrawPriority);
-        gfx::UniqueDrawableBuilder haloBuilder;
-        if (hasHalo) {
-            haloBuilder = makeBuilder("terrainLineHalo", TerrainLineHaloDrawPriority);
-            haloBuilder->setVertexAttributes(vertexAttrs);
-        }
-        bodyBuilder->setVertexAttributes(std::move(vertexAttrs));
-
-        const auto finish = [&](gfx::DrawableBuilder& builder, TerrainLinePassType passType) {
-            builder.flush(context);
-            for (auto& drawable : builder.clearDrawables()) {
-                drawable->setTileID(tileID);
-                drawable->setType(static_cast<std::size_t>(passType));
-                drawable->setLayerTweaker(layerTweaker);
-                drawable->setRenderTile(renderTilesOwner, &tile);
-
-                tileLayerGroup->addDrawable(renderPass, tileID, std::move(drawable));
-                ++stats.drawablesAdded;
+        // DuckMaps fork only, task E-vanish part 2: one body(+halo) PAIR per DEM candidate this
+        // tile needs (see candidateCount above) - almost always one pass through this loop, the
+        // exact geometry every render tile has always built. Every candidate's pair shares the
+        // SAME vertex/index buffers (the whole tile's geometry, unclipped); what differs between
+        // candidates is only which DEM texture the tweaker binds each frame (decoded from
+        // drawable.getType(), packed as quadrantIndex*2 + passType below) and the shader's own
+        // in-bounds test, which draws only the ground this candidate's DEM texture actually covers
+        // and discards the rest - see terrain_line.vertex.glsl/mtl's dem coverage comment. This is
+        // what lets several candidates, each wrong outside its own quadrant, together cover the
+        // whole tile correctly with no re-tessellation of the line geometry itself.
+        for (std::size_t qi = 0; qi < candidateCount; ++qi) {
+            // Both drawables in a pair share this tile's own vertex buffer (the same
+            // buffer-sharing this function already did for its one drawable before this task) -
+            // only the draw priority and the per-drawable halo_pass/quadrant flag
+            // (TerrainLineLayerTweaker::execute) differ between them. The halo builder gets a
+            // COPY of vertexAttrs (an lvalue set); the body builder, built and used last, takes
+            // ownership via move - the same pattern render_fill_extrusion_layer.cpp's own
+            // depth/color builder pair uses for its shared vertexAttrs. Each candidate pair needs
+            // its OWN copy of vertexAttrs (the previous pair's body already moved its copy away).
+            auto vertexAttrsForCandidate = context.createVertexAttributeArray();
+            if (const auto& attr = vertexAttrsForCandidate->set(idTerrainLinePosVertexAttribute)) {
+                attr->setSharedRawData(bucket.sharedVertices,
+                                       offsetof(TerrainLineLayoutVertex, a1),
+                                       /*vertexOffset=*/0,
+                                       sizeof(TerrainLineLayoutVertex),
+                                       gfx::AttributeDataType::Short2);
             }
-        };
-        // Halo first: not required for correctness (draw priority alone decides render order),
-        // but it means the halo drawable's own ID is lower too, which keeps the sort stable and
-        // matches the render order for anyone reading gfx::DrawableLessByPriority's tie-break.
-        if (haloBuilder) {
-            finish(*haloBuilder, TerrainLinePassType::Halo);
+            if (const auto& attr = vertexAttrsForCandidate->set(idTerrainLineOtherVertexAttribute)) {
+                attr->setSharedRawData(bucket.sharedVertices,
+                                       offsetof(TerrainLineLayoutVertex, a2),
+                                       /*vertexOffset=*/0,
+                                       sizeof(TerrainLineLayoutVertex),
+                                       gfx::AttributeDataType::Short2);
+            }
+            if (const auto& attr = vertexAttrsForCandidate->set(idTerrainLineFlagVertexAttribute)) {
+                attr->setSharedRawData(bucket.sharedVertices,
+                                       offsetof(TerrainLineLayoutVertex, a3),
+                                       /*vertexOffset=*/0,
+                                       sizeof(TerrainLineLayoutVertex),
+                                       gfx::AttributeDataType::Short2);
+            }
+            if (const auto& attr = vertexAttrsForCandidate->set(idTerrainLineDistVertexAttribute)) {
+                attr->setSharedRawData(bucket.sharedVertices,
+                                       offsetof(TerrainLineLayoutVertex, a4),
+                                       /*vertexOffset=*/0,
+                                       sizeof(TerrainLineLayoutVertex),
+                                       gfx::AttributeDataType::Float);
+            }
+
+            auto bodyBuilder = makeBuilder("terrainLineBody", TerrainLineBodyDrawPriority);
+            gfx::UniqueDrawableBuilder haloBuilder;
+            if (hasHalo) {
+                haloBuilder = makeBuilder("terrainLineHalo", TerrainLineHaloDrawPriority);
+                haloBuilder->setVertexAttributes(vertexAttrsForCandidate);
+            }
+            bodyBuilder->setVertexAttributes(std::move(vertexAttrsForCandidate));
+
+            const auto finish = [&](gfx::DrawableBuilder& builder, TerrainLinePassType passType) {
+                builder.flush(context);
+                for (auto& drawable : builder.clearDrawables()) {
+                    drawable->setTileID(tileID);
+                    // Packs BOTH which DEM candidate this drawable binds (quadrantIndex, almost
+                    // always 0) and which pass it is (body/halo) into the one type field - decoded
+                    // the same way in TerrainLineLayerTweaker::execute.
+                    drawable->setType(qi * 2 + static_cast<std::size_t>(passType));
+                    drawable->setLayerTweaker(layerTweaker);
+                    drawable->setRenderTile(renderTilesOwner, &tile);
+
+                    tileLayerGroup->addDrawable(renderPass, tileID, std::move(drawable));
+                    ++stats.drawablesAdded;
+                }
+            };
+            // Halo first: not required for correctness (draw priority alone decides render
+            // order), but it means the halo drawable's own ID is lower too, which keeps the sort
+            // stable and matches the render order for anyone reading
+            // gfx::DrawableLessByPriority's tie-break.
+            if (haloBuilder) {
+                finish(*haloBuilder, TerrainLinePassType::Halo);
+            }
+            finish(*bodyBuilder, TerrainLinePassType::Body);
         }
-        finish(*bodyBuilder, TerrainLinePassType::Body);
     }
 }
 

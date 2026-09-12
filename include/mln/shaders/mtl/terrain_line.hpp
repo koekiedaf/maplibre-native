@@ -198,6 +198,11 @@ struct FragmentStage {
     // half_px above to turn `side` (a -1..1 fraction of the quad's own half-width) back into a
     // screen-pixel distance from the centreline.
     float ext_px;
+    // DuckMaps fork only, task E-vanish part 2: 1.0 when BOTH this sub-segment's endpoints fall
+    // inside the DEM texture this drawable bound (dem_coords maps them into [0,1]), 0.0
+    // otherwise - see vertexMain's own comment. Interpolated so a fragment straddling the
+    // boundary still discards rather than blending a partly-wrong elevation.
+    float dem_covered;
 };
 
 FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
@@ -220,6 +225,27 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
                                      drawable.dem_dim, drawable.dem_exaggeration, drawable.dem_enabled);
     const float eleB = get_elevation(other, demTexture, demSampler, drawable.dem_coords, drawable.dem_unpack,
                                      drawable.dem_dim, drawable.dem_exaggeration, drawable.dem_enabled);
+
+    // DuckMaps fork only, task E-vanish part 2: is this sub-segment actually covered by the DEM
+    // texture this drawable bound? get_elevation's own `pos * dem_coords.x + dem_coords.yz` is the
+    // texture's normalized [0,1] coordinate before the dem_dim/border adjustment - the same
+    // formula, read here directly rather than duplicating get_elevation's border math, since only
+    // the [0,1] test matters, not the sampled value. In the ordinary case (this tile's own DEM, or
+    // its closest ancestor - RenderTerrain::getTerrainData/getAllTerrainData's first branch) every
+    // tile-local position is inside its own [0, EXTENT] footprint by construction and this is
+    // always in [0,1], so dem_covered is always 1.0 - no change from before this task. It can only
+    // read false when this drawable bound one of SEVERAL covering descendant tiles (the coarser-
+    // than-DEM fallback, RenderTerrain::getAllTerrainData's second branch): each such descendant
+    // covers exactly one quadrant of this tile's footprint, and a position outside it must not be
+    // sampled from this (wrong) descendant's clamped edge texel - the fragment shader discards it
+    // instead, leaving that ground to whichever sibling drawable's own descendant actually covers
+    // it (RenderTerrainLineLayer::update() builds one drawable per covering descendant).
+    const float2 rawUvA = pos * drawable.dem_coords.x + drawable.dem_coords.yz;
+    const float2 rawUvB = other * drawable.dem_coords.x + drawable.dem_coords.yz;
+    constexpr float kCoverageEps = 1e-4;
+    const bool inBoundsA = all(rawUvA >= -kCoverageEps) && all(rawUvA <= 1.0 + kCoverageEps);
+    const bool inBoundsB = all(rawUvB >= -kCoverageEps) && all(rawUvB <= 1.0 + kCoverageEps);
+    const float demCovered = (drawable.dem_enabled == 0.0 || (inBoundsA && inBoundsB)) ? 1.0 : 0.0;
 
     float4 p0 = drawable.matrix * float4(pos, eleA, 1.0);
     float4 p1 = drawable.matrix * float4(other, eleB, 1.0);
@@ -297,6 +323,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
         .half_px  = halfPx,
         .fade     = fade,
         .ext_px   = ext,
+        .dem_covered = demCovered,
     };
 }
 
@@ -309,6 +336,15 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
 #if defined(OVERDRAW_INSPECTOR)
     return half4(1.0);
 #endif
+
+    // DuckMaps fork only, task E-vanish part 2: discard first, before any other work, when this
+    // sub-segment fell outside the DEM texture this drawable bound - see vertexMain's own
+    // comment. Ordinary tiles (this tile's own DEM or its closest ancestor) always interpolate
+    // dem_covered to 1.0, so this is a no-op for every drawable but the multi-candidate
+    // descendant-fallback case.
+    if (in.dem_covered < 0.5) {
+        discard_fragment();
+    }
 
     device const TerrainLineTilePropsUBO& tileProps = tilePropsVector[uboIndex];
     const bool isHalo = tileProps.halo_pass > 0.5;

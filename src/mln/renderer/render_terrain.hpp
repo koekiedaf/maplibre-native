@@ -17,6 +17,7 @@
 #include <string>
 #include <optional>
 #include <vector>
+#include <utility>
 #include <cstdint>
 #include <unordered_map>
 
@@ -413,6 +414,41 @@ public:
      * from the matching DEM tile or its closest available ancestor
      */
     std::optional<TerrainData> getTerrainData(const UnwrappedTileID&) const;
+
+    /**
+     * @brief DuckMaps fork only, task E-vanish part 2: every DEM candidate that
+     * covers `tileID`, for a caller (terrain-line) willing to draw one drawable
+     * per candidate rather than accept a single, possibly wrong, texture for the
+     * whole tile.
+     *
+     * When `tileID` itself or an ancestor has a resident DEM texture, this
+     * returns exactly that ONE candidate - byte-identical in content and
+     * selection to what getTerrainData() (implemented in terms of this) returns,
+     * so every existing single-drawable caller (terrain-contour matches its own
+     * mesh tile exactly and never falls into the branch below; symbol, circle,
+     * fill-extrusion sample one point and are unaffected either way) sees no
+     * change at all.
+     *
+     * When `tileID` is coarser than every resident DEM texture - the case
+     * getTerrainData's own descendant fallback (demSubTileOffsetFromDescendant)
+     * exists for, because terrain-line's own vector source has a maxzoom below
+     * the DEM's and a render tile can then cover several DEM tiles' worth of
+     * ground at once - this returns ALL tied finest-zoom descendants (up to
+     * four, one per quadrant of `tileID`'s footprint), not just the single
+     * arbitrary one getTerrainData's tie-break would pick. Each entry's
+     * demCoords places its own quadrant's ground truthfully in [0,1] and every
+     * other quadrant outside it (see demSubTileOffsetFromDescendant), which is
+     * exactly what the terrain-line shader's own in-bounds test (get_elevation's
+     * caller in terrain_line.vertex.glsl/mtl) uses to draw each candidate's own
+     * quadrant and discard the rest, rather than clamping to the wrong tile's
+     * edge texel and sampling a false elevation for the ground the candidate
+     * does not actually cover.
+     *
+     * Returns an empty vector when no DEM texture at all is available (the
+     * caller then binds the flat placeholder, same as getTerrainData's
+     * std::nullopt).
+     */
+    std::vector<std::pair<UnwrappedTileID, TerrainData>> getAllTerrainData(const UnwrappedTileID&) const;
 
     /**
      * @brief DuckMaps fork only, task C7: which DEM tile `getTerrainData` would resolve a given

@@ -14,6 +14,7 @@
 #include <mln/renderer/render_tree.hpp>
 #include <mln/shaders/layer_ubo.hpp>
 #include <mln/util/hash.hpp>
+#include <mln/util/logging.hpp>
 #include <mln/util/string.hpp>
 
 #include <cmath>
@@ -38,7 +39,13 @@ namespace mln {
 namespace {
 const bool gDrapeForceRebake = [] {
     const char* v = std::getenv("DUCKMAPS_DRAPE_FORCE_REBAKE");
-    return v && *v;
+    const bool on = v && *v;
+    if (on) {
+        // Said out loud, once, so an experiment can never be reported as "the
+        // switch changed nothing" when the switch never reached the process.
+        Log::Warning(Event::General, "DUCKMAPS_DRAPE_FORCE_REBAKE is ON: every drape target re-bakes every frame");
+    }
+    return on;
 }();
 } // namespace
 

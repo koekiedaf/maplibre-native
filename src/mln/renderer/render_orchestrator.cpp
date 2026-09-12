@@ -472,6 +472,22 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
             sourceNeedsRendering = true;
         }
 
+        // DuckMaps fork only, task M1c: tell the DEM source which tiles the terrain mesh
+        // will need, same "previous frame" convention as the elevationProvider set up
+        // above (this frame's mesh cover is not known yet - sources update before the
+        // mesh does). The mesh cover (RenderTerrain::computeMeshCover) is elevation-aware,
+        // dilated by one 8-neighbour ring, and not bounded by the DEM source's own
+        // zoomRange, so it can want tiles the DEM source's own util::tileCover-based cover
+        // (TilePyramid::update) never reaches - measured at the Gavarnie wall: mesh tile
+        // 12/2047/1510 is in the cover every frame, but its DEM (available from the
+        // server down to z8) is never requested, so it falls back to a coarse ancestor or
+        // the flat placeholder. Only set for the terrain's own DEM source; cleared to
+        // null for every other source in this loop so nothing else is affected.
+        tileParameters.requiredTiles =
+            (renderTerrain && renderTerrain->isEnabled() && sourceImpl->id == renderTerrain->getSourceID())
+                ? &renderTerrain->getLastFrameMeshCover()
+                : nullptr;
+
         tileParameters.isUpdateSynchronous = sourceImpl->isUpdateSynchronous();
         source->update(sourceImpl, filteredLayersForSource, sourceNeedsRendering, sourceNeedsRelayout, tileParameters);
         filteredLayersForSource.clear();

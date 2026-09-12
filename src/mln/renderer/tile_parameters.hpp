@@ -5,6 +5,7 @@
 
 #include <memory>
 #include <numbers>
+#include <set>
 
 #include <mapbox/std/weak.hpp>
 
@@ -15,6 +16,7 @@ class FileSource;
 class AnnotationManager;
 class ImageManager;
 class GlyphManager;
+class UnwrappedTileID;
 
 namespace gfx {
 class DynamicTextureAtlas;
@@ -47,6 +49,12 @@ public:
     /// Terrain elevation for the tile cover; null when there is no terrain, which
     /// leaves the cover flat. See util::TileElevationProvider.
     const util::TileElevationProvider* elevationProvider = nullptr;
+    /// DuckMaps fork only, task M1c: tiles this source must load in addition to its own
+    /// cover, because another consumer (the terrain mesh) needs them; null for every
+    /// source that has no such consumer. Set only on the terrain DEM source, from the
+    /// terrain mesh's previous frame's cover (RenderTerrain::getLastFrameMeshCover), and
+    /// consumed by TilePyramid::update to fold into idealTiles.
+    const std::set<UnwrappedTileID>* requiredTiles = nullptr;
 };
 
 } // namespace mln

@@ -102,6 +102,20 @@ public:
         frameMeshCover = std::move(cover);
     }
 
+    /// DuckMaps fork only, task M1c: the previous frame's cover, used to tell the DEM
+    /// source which tiles the mesh will need. The mesh cover is computed independently
+    /// of the DEM source's own tile cover (TilePyramid::update, via util::tileCover) and
+    /// dilated by one 8-neighbour ring with no zoom-range bound tying it to the DEM
+    /// source's minzoom/maxzoom, so a mesh tile can want a DEM tile the source's own
+    /// cover never reaches - measured at the Gavarnie wall: mesh tile 12/2047/1510 is in
+    /// the cover every frame, but its DEM (available from the server down to z8) is
+    /// simply never requested, so the tile draws off a z11 ancestor or the flat
+    /// placeholder depending on load timing. RenderOrchestrator::createRenderTree reads
+    /// this (this frame's mesh cover is not known yet - sources update before the mesh
+    /// does) and passes it into the DEM source's TileParameters::requiredTiles so
+    /// TilePyramid::update can fold it into idealTiles.
+    const std::set<UnwrappedTileID>& getLastFrameMeshCover() const { return lastFrameMeshCover; }
+
     /**
      * @brief Update terrain rendering (create/update drawables)
      * @param orchestrator Render orchestrator for accessing render sources

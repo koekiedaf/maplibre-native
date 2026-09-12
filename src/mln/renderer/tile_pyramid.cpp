@@ -153,6 +153,47 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
         }
     }
 
+    // DuckMaps fork only, task M1c: fold in the tiles the terrain mesh's previous frame
+    // needs from THIS source (RenderTerrain::getLastFrameMeshCover, passed through as
+    // TileParameters::requiredTiles by RenderOrchestrator::createRenderTree; null for
+    // every source but the terrain DEM source, so this is a no-op everywhere else).
+    //
+    // The mesh cover (RenderTerrain::computeMeshCover) is computed independently of this
+    // cover: it uses zoomRange {0, util::DEFAULT_MAX_ZOOM} and then dilates the result by
+    // one 8-neighbour ring, with neither bound tying it to this source's own zoomRange -
+    // so a tile the mesh needs can sit entirely outside what idealTiles above ever
+    // produces. Measured at the Gavarnie wall: mesh tile 12/2047/1510 is in the mesh
+    // cover every one of eight traced runs, and its DEM tile (and every ancestor down to
+    // z8) is on the server and answers in milliseconds, but this source's own cover never
+    // reached it, so the mesh tile bound a z11 ancestor in four runs and the flat
+    // placeholder (demZ -1) in the other four.
+    //
+    // For a required tile at canonical zoom z, the DEM tile that covers it is its
+    // ancestor at min(z, zoomRange.max) - this source cannot serve anything deeper than
+    // its own maxzoom. If that ancestor zoom is below zoomRange.min, this source has
+    // nothing covering the tile at all (e.g. the mesh descended below the DEM's own
+    // minzoom), so it is skipped rather than requesting a tile this source cannot serve.
+    // The OverscaledTileID is built with the same overscaledZ convention util::tileCover
+    // uses for an overscaled (underzoomed) tile above: overscaledZ carries the deeper zoom
+    // actually wanted (here, the mesh tile's own z) while canonical sits at the ancestor
+    // this source can actually load (see the `node.zoom == maxZoom ? overscaledZoom :
+    // node.zoom` ternary in util::tileCover). Duplicates already present in idealTiles are
+    // skipped; panTiles (prefetch) is left untouched - the mesh's need is for the tile
+    // itself, not a lower-res placeholder ahead of it.
+    if (parameters.requiredTiles) {
+        for (const auto& required : *parameters.requiredTiles) {
+            const uint8_t requiredZoom = required.canonical.z;
+            const uint8_t ancestorZoom = std::min(requiredZoom, zoomRange.max);
+            if (ancestorZoom < zoomRange.min) {
+                continue; // this source has nothing covering this tile at all
+            }
+            const OverscaledTileID id{requiredZoom, required.wrap, required.canonical.scaledTo(ancestorZoom)};
+            if (std::find(idealTiles.begin(), idealTiles.end(), id) == idealTiles.end()) {
+                idealTiles.push_back(id);
+            }
+        }
+    }
+
     // Stores a list of all the tiles that we're definitely going to retain.
     // There are two kinds of tiles we need: the ideal tiles determined by the
     // tile cover. They may not yet be in use because they're still loading. In

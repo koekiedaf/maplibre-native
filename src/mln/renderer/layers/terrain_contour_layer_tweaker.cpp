@@ -18,6 +18,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
+#include <tuple>
 
 namespace mln {
 
@@ -107,14 +109,70 @@ void TerrainContourLayerTweaker::execute(LayerGroupBase& layerGroup, const Paint
     const auto debugGroup = parameters.encoder->createDebugGroup(label.c_str());
 #endif
 
-    // Computed lazily below, from the first drawable this frame supplies: computeReferenceClipW
-    // needs one drawable's own (tileID, matrix) pair to be exact - see that function's comment.
-    // "Any one drawable's tile" is exact because same-zoom tiles' matrices differ only by a
-    // translation in tile units; the tile cover here is overwhelmingly uniform-zoom, and being
-    // off by one tile's translation on the rare mixed-LOD edge changes the reference by far less
-    // than the bug this replaces.
-    bool haveReferenceW = false;
+    // computeReferenceClipW needs one drawable's own (tileID, matrix) pair to be exact - see
+    // that function's comment. WHICH tile is not a free choice, and taking whichever drawable
+    // the layer group happened to supply first was a real defect: the drawables are visited in
+    // insertion order, which follows tile load order, so two runs of the identical harness link
+    // picked different reference tiles and every contour line in the frame came out a fraction
+    // of a pixel wider or narrower. Measured at the Gavarnie wall: five runs, terrain and DEM
+    // bindings and mesh cover byte-identical on every instrument, and up to 228 680 of
+    // 3 162 132 pixels differing, 92 percent of them by one or two of 255 and all of them on
+    // contour ink. With the native families off the same five runs were byte-identical, which
+    // is what located it here.
+    //
+    // The reference point IS the map centre, so the exact tile to evaluate it in is the tile
+    // that CONTAINS the map centre, at the deepest zoom present. That is a property of the
+    // frame, not of the load order, so it is the same in every run. Where no drawable covers
+    // the centre (the centre is off the layer's cover), fall back to the lowest tile key
+    // present, which is equally arbitrary in appearance and equally deterministic.
+    std::optional<UnwrappedTileID> referenceTile;
+    const LatLng referenceCentre = parameters.state.getLatLng();
+    const auto tileHoldsCentre = [&](const UnwrappedTileID& id) {
+        const Point<double> local = tileLocalPosition(id, referenceCentre);
+        return local.x >= 0.0 && local.x <= util::EXTENT && local.y >= 0.0 && local.y <= util::EXTENT;
+    };
+    const auto tileKey = [](const UnwrappedTileID& id) {
+        return std::tuple{id.wrap, id.canonical.z, id.canonical.x, id.canonical.y};
+    };
+    visitLayerGroupDrawables(layerGroup, [&](gfx::Drawable& drawable) {
+        if (!drawable.getTileID() || !checkTweakDrawable(drawable)) {
+            return;
+        }
+        const UnwrappedTileID candidate = drawable.getTileID()->toUnwrapped();
+        if (!referenceTile) {
+            referenceTile = candidate;
+            return;
+        }
+        const bool candidateHolds = tileHoldsCentre(candidate);
+        const bool currentHolds = tileHoldsCentre(*referenceTile);
+        if (candidateHolds != currentHolds) {
+            if (candidateHolds) {
+                referenceTile = candidate;
+            }
+            return;
+        }
+        if (candidateHolds) {
+            // Both cover the centre: the deepest one is the tile the viewer is actually on.
+            if (candidate.canonical.z > referenceTile->canonical.z ||
+                (candidate.canonical.z == referenceTile->canonical.z && tileKey(candidate) < tileKey(*referenceTile))) {
+                referenceTile = candidate;
+            }
+        } else if (tileKey(candidate) < tileKey(*referenceTile)) {
+            referenceTile = candidate;
+        }
+    });
+
     float referenceW = 1e-4f;
+    if (referenceTile) {
+        mat4 referenceMatrix = parameters.matrixForTile(*referenceTile);
+#if !MLN_RENDER_BACKEND_OPENGL
+        referenceMatrix[2] = 0.5 * (referenceMatrix[2] + referenceMatrix[3]);
+        referenceMatrix[6] = 0.5 * (referenceMatrix[6] + referenceMatrix[7]);
+        referenceMatrix[10] = 0.5 * (referenceMatrix[10] + referenceMatrix[11]);
+        referenceMatrix[14] = 0.5 * (referenceMatrix[14] + referenceMatrix[15]);
+#endif
+        referenceW = computeReferenceClipW(parameters, *referenceTile, referenceMatrix);
+    }
     const float pixelScale = parameters.pixelRatio / kReferenceRatio;
 
     if (!evaluatedPropsUniformBuffer || propertiesUpdated) {
@@ -183,11 +241,6 @@ void TerrainContourLayerTweaker::execute(LayerGroupBase& layerGroup, const Paint
         matrix[10] = 0.5 * (matrix[10] + matrix[11]);
         matrix[14] = 0.5 * (matrix[14] + matrix[15]);
 #endif
-
-        if (!haveReferenceW) {
-            referenceW = computeReferenceClipW(parameters, tileID, matrix);
-            haveReferenceW = true;
-        }
 
         // Bind the covering DEM tile so the vertex/fragment shaders can sample the terrain
         // elevation directly - RenderTerrain::getTerrainData, the same call

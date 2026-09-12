@@ -1683,18 +1683,6 @@ std::unique_ptr<gfx::Drawable> RenderTerrain::createDrawableForTile(gfx::Context
         } else {
             Log::Warning(Event::Render, "No drape texture for terrain tile " + util::toString(tileID));
         }
-
-        // DuckMaps fork only, task C7: order the "terrain" layer group's drawables by TILE,
-        // same defect engine c839bab31062 fixed for terrain-contour and terrain-line. This
-        // drawable never called setDrawPriority, so it kept gfx::Drawable's default of 0 for
-        // every tile, and LayerGroup's DrawableLessByPriority then broke the tie on getID(),
-        // a build-order counter that follows tile LOAD order rather than tile id - the exact
-        // measurement in renderer_impl.cpp's meshDrawOrder trace (task C7/R1B) found the
-        // "terrain" layer group's own submission order taking six distinct values across six
-        // runs of one link while everything upstream of it was single-valued. See
-        // gfx::tileDrawOrderPriority's own comment. Scoped to the non-depth drawable only: the
-        // depth pre-pass ("terrain-depth") is untouched, so this does not touch the depth test.
-        builder->setDrawPriority(gfx::tileDrawOrderPriority(tileID.toUnwrapped()));
     }
 
     // Flush to create the drawable

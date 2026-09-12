@@ -49,6 +49,11 @@ public:
 
     /** Instantaneously, synchronously applies the given camera options. */
     void jumpTo(const CameraOptions&);
+    /** Task E1: the ground under the map centre has changed. Holds the camera where it is and
+        re-solves the centre and the zoom against the new surface, then runs the terrain clamp,
+        exactly as the jumpTo this replaced did. See
+        TransformState::recalculateZoomAndCenterForCenterElevation. */
+    void recalculateForCenterElevation(double elevationMeters);
     /** Asynchronously transitions all specified camera options linearly along
         an optional time curve. However, center coordinate is not transitioned
         linearly as, instead, ground speed is kept linear.*/

@@ -102,6 +102,32 @@ void Transform::jumpTo(const CameraOptions& camera) {
     easeTo(camera);
 }
 
+void Transform::recalculateForCenterElevation(double elevationMeters) {
+    // This is the zero-duration shape of startTransition, written out rather than routed through
+    // easeTo, and it must stay that shape. The terrain clamp reads which AXES a transition asked
+    // for (startTransition's zoomRequested/pitchRequested/centerRequested, taken from the
+    // CameraOptions), and the elevation channel has always been the case where it asked for none
+    // of them - that is what makes constrainCameraAboveTerrain treat this call as the correction
+    // channel finding an existing breach rather than as a change to protect from its own clamp.
+    // Handing it a CameraOptions carrying the new centre and zoom would flip two of those flags
+    // and silently change the clamp's behaviour on the one path it was tuned against. So the
+    // state change happens directly and the clamp is called with the same three false flags, and
+    // the same previousZoom/previousPitch, that the old
+    // jumpTo(CameraOptions().withCenterAltitude(e)) produced.
+    if (transitionFinishFn) {
+        transitionFinishFn();
+    }
+    observer.onCameraWillChange(MapObserver::CameraChangeMode::Immediate);
+
+    const double previousZoom = state.getZoom();
+    const double previousPitch = state.getPitch();
+
+    state.recalculateZoomAndCenterForCenterElevation(elevationMeters);
+    state.constrainCameraAboveTerrain(false, false, false, previousZoom, previousPitch);
+
+    observer.onCameraDidChange(MapObserver::CameraChangeMode::Immediate);
+}
+
 /**
  * Change any combination of center, zoom, bearing, pitch and edgeInsets, with a
  * smooth animation between old and new values. The map will retain the current

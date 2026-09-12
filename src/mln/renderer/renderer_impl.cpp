@@ -1165,6 +1165,11 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                 os << "null";
             }
             os << ",\"cameraAltitudeM\":" << transformState.getCameraAltitudeMeters()
+               // Task E1: how many times the centre-elevation recalculation has refused because
+               // the camera was at or below the ground under the centre. A refusal leaves the
+               // camera where it is for the terrain clamp to answer; this field is what makes it
+               // visible rather than silent.
+               << ",\"centerElevationUnderCamera\":" << transformState.getCenterElevationUnderCameraCount()
                << ",\"terrain\":" << (traceTerrain ? "true" : "false") << ",\"center\":{\"m\":"
                << centerProbe.meters << ",\"demZ\":" << static_cast<int>(centerProbe.demZ)
                << ",\"demX\":" << centerProbe.demX << ",\"demY\":" << centerProbe.demY

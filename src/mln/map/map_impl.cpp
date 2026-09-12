@@ -353,9 +353,23 @@ void Map::Impl::onTerrainCenterElevationChanged(double elevationMeters) {
     // rather than by freezing harder ("Fix the camera jumping at the end of a pan or zoom gesture
     // on terrain", #7989, #3982; "gestures are now solved against the elevation of the terrain
     // under the gesture instead of the frozen center elevation", #8067).
-    // Raising the centre onto the terrain moves the orbit plane, not the centre's lng/lat,
-    // so this settles rather than feeding back into the next frame's sample.
-    transform.jumpTo(CameraOptions().withCenterAltitude(elevationMeters));
+    //
+    // TASK E1, 12 September 2026. What this used to do was
+    // `transform.jumpTo(CameraOptions().withCenterAltitude(elevationMeters))`: the centre's
+    // altitude was written and the zoom left alone, so the camera's own altitude above sea level
+    // moved with the ground, metre for metre, on every pan. That is the fault David reported with
+    // the app in his hand - "the camera height now follows the terrain no matter what" - and it
+    // was measured before the change (development/app-bench/traces/e1-before.jsonl): twelve real
+    // drags at a fixed zoom, ground 0 m to 2394 m, camera 1999 m to 4398 m, the difference
+    // constant to two metres.
+    //
+    // The camera now stays exactly where it is and the two quantities that ARE functions of the
+    // ground are re-solved instead: the centre slides along the view ray to meet the new surface,
+    // and the zoom follows from the new distance. maplibre-gl-js does precisely this and calls it
+    // recalculateZoomAndCenter; we never had it. So the camera keeps its own height, and the only
+    // things that change it are the user's own zoom and the forward-looking terrain clamp, which
+    // is what David asked for.
+    transform.recalculateForCenterElevation(elevationMeters);
     onUpdate();
 }
 

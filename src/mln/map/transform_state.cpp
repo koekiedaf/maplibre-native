@@ -1113,6 +1113,92 @@ void TransformState::setCenterAltitude(double alt_m) {
     requestMatricesUpdate = true;
 }
 
+bool TransformState::recalculateZoomAndCenterForCenterElevation(double alt_m) {
+    // TASK E1, David with the app in his hand, 12 September 2026: "the camera height now follows
+    // the terrain no matter what. That is not the behavior that I want. Camera must follow its own
+    // height that he has, except for when it flies into a mountain."
+    //
+    // It did follow the terrain, exactly and measurably. The camera's altitude above sea level is
+    // centerAltitude + cos(pitch) * D, and until this function existed the only answer to "the
+    // ground under the centre is now at E" was setCenterAltitude(E) with the zoom untouched, so
+    // the camera rose and fell with the ground metre for metre. Measured before the change
+    // (development/app-bench/traces/e1-before.jsonl, twelve real finger drags across Gavarnie at a
+    // fixed zoom 14.2): ground 1307 m gave camera 3310 m, ground 0 m gave camera 1999 m, ground
+    // 2394 m gave camera 4398 m. The difference is constant to about two metres across the whole
+    // trace, which is the definition of a terrain follower.
+    //
+    // The camera's position in space is not a function of the ground at all. Two things are: WHERE
+    // on the ground the camera is looking, which is wherever the view ray now meets the surface,
+    // and HOW FAR AWAY that point is, which is the zoom. So the camera is held exactly where it
+    // is and those two are re-solved against the new surface. This is maplibre-gl-js's own
+    // `recalculateZoomAndCenter` (Transform, called from the camera and the gesture handlers on
+    // every elevation change under the centre), which this engine never had; David's standard for
+    // the camera is the web's own experience, and on this the web was right and we were not.
+    //
+    // The arithmetic is TransformState::updateStateFromCamera's, unchanged, with one difference:
+    // that function intersects the view ray with the plane at the CURRENT centre altitude, which
+    // is what makes a getFreeCameraOptions/setFreeCameraOptions round trip land back where it
+    // started, and this one intersects it with the plane at the NEW ground elevation.
+    if (!valid()) {
+        return false;
+    }
+
+    updateCameraState();
+    const vec3 position = camera.getPosition();
+    const vec3 forward = camera.forward();
+    const double dz = forward[2];
+
+    // Metres to mercator for the new plane, the inverse of the conversion updateStateFromCamera
+    // uses on the way out. The latitude is the centre's own, before it moves: the centre travels
+    // only as far as the elevation change moved the intersection, so the latitude scaling cannot
+    // change materially, and gl-js makes the same choice (its `n` is built from `this.center.lat`
+    // and only the final zoom uses the new latitude). Everything after this line is in mercator
+    // units, which already carry the latitude scaling, so no second conversion is involved.
+    const double metersPerPixelAtZoomZero = Projection::getMetersPerPixelAtLatitude(getLatLng().latitude(), 0);
+    if (!(metersPerPixelAtZoomZero > 0.0)) {
+        return false;
+    }
+    const double planeZ = alt_m / (metersPerPixelAtZoomZero * util::tileSize_D);
+    const double heightAbovePlane = position[2] - planeZ;
+
+    // The camera is at or below the ground under the centre, or the view is beyond the horizon
+    // angle the mercator matrices are defined for. There is no intersection ahead to re-solve
+    // against, and inventing one (gl-js parks the centre a fixed ten kilometres down the ray)
+    // would throw the map across the world for a frame. This is a collision, and the caller's
+    // next act is constrainCameraAboveTerrain, which exists to answer exactly that. Refuse,
+    // count the refusal so it is visible in the elevation trace rather than silent, and leave
+    // the state untouched.
+    if (!(dz < -1.0e-9) || !(heightAbovePlane > 1.0e-9) || getPitch() > maxMercatorHorizonAngle) {
+        ++centerElevationUnderCameraCount;
+        return false;
+    }
+
+    const double travel = -heightAbovePlane / dz;
+    const double rayLength = heightAbovePlane / std::cos(getPitch());
+    if (!(rayLength > 0.0) || !std::isfinite(travel)) {
+        ++centerElevationUnderCameraCount;
+        return false;
+    }
+
+    // The camera-to-centre distance is a fixed number of pixels (it is the field of view and the
+    // viewport height, nothing else), so holding the camera still and moving the centre to a new
+    // distance is the same statement as changing the zoom: worldSize = cameraToCenterDistance /
+    // rayLength, and zoom = log2(worldSize / tileSize).
+    const double newZoom = util::log2(getCameraToCenterDistance() / (rayLength * util::tileSize_D));
+    if (!std::isfinite(newZoom)) {
+        ++centerElevationUnderCameraCount;
+        return false;
+    }
+
+    const Point<double> mercatorPoint = {position[0] + forward[0] * travel, position[1] + forward[1] * travel};
+    setLatLngZoom(latLngFromMercator(mercatorPoint), newZoom);
+    // setLatLngZoom changes the zoom but not z, and getCenterAltitude() reinterprets that raw z at
+    // whatever zoom is current, so the centre altitude is re-pinned afterwards - the same ordering
+    // updateStateFromCamera and the terrain clamp both use, and for the same reason.
+    setCenterAltitude(alt_m);
+    return true;
+}
+
 void TransformState::constrainCameraAboveTerrain(bool zoomRequested, bool pitchRequested, bool centerRequested,
                                                  double previousZoom, double previousPitch) {
     if (!terrainCameraGroundRise || !valid()) {

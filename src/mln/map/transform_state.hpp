@@ -411,6 +411,24 @@ public:
     void setLatLngZoom(const LatLng& latLng, double zoom);
     void setCenterAltitude(double alt_m);
 
+    /// Task E1: the ground under the map centre has changed (the camera was panned onto
+    /// different terrain), and the camera must NOT follow it up or down. Holds the camera
+    /// exactly where it is in space and re-solves the two things that are actually functions
+    /// of the ground: where on that ground the camera is looking (the centre moves along the
+    /// view ray to meet the new surface) and how far away it therefore is (the zoom). This is
+    /// maplibre-gl-js's own `recalculateZoomAndCenter`, which our engine never had; without it
+    /// the centre altitude was simply written and the camera rode up and down with the terrain.
+    /// Returns false and changes nothing when the camera is at or below the new surface, which
+    /// is a collision for `constrainCameraAboveTerrain` to answer, not something to re-solve.
+    bool recalculateZoomAndCenterForCenterElevation(double alt_m);
+
+    /// How many times `recalculateZoomAndCenterForCenterElevation` has refused because the
+    /// camera was at or below the ground under the centre. Never expected to move on a camera
+    /// that walked into a mountain (the forward-looking clamp stops that before it happens);
+    /// it moves when a camera ARRIVES underground from a jumpTo, flyTo or deep link. Reported
+    /// in the elevation trace so a silent refusal cannot hide.
+    uint64_t getCenterElevationUnderCameraCount() const { return centerElevationUnderCameraCount; }
+
     void constrain(double& scale, double& x, double& y) const;
     bool constrainScreen(double& scale_, double& x_, double& y_) const;
     void constrainCameraAndZoomToBounds(CameraOptions& camera, double& zoom) const;
@@ -492,6 +510,9 @@ private:
     // constrainCameraAboveTerrain.
     std::optional<double> terrainCameraFloorZoom;
     std::optional<double> terrainCameraFloorPitch;
+    // Task E1: counts the refusals of recalculateZoomAndCenterForCenterElevation (camera at or
+    // below the ground under the centre). Read through getCenterElevationUnderCameraCount().
+    uint64_t centerElevationUnderCameraCount = 0;
 
     // map position
     double x = 0, y = 0, z = 0;

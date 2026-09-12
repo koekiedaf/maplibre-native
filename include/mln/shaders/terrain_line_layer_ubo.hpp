@@ -41,9 +41,21 @@ struct alignas(16) TerrainLineDrawableUBO {
     // shrinks with depth away from it, like a real object would as the camera tilts. Read by the
     // vertex stage only.
     /* 108 */ float reference_w;
-    /* 112 */
+
+    // Task 2.2b: this tile's own distance-fade reference point and scale - see
+    // shaders/mtl/terrain_line.hpp's top-of-file comment for why these live here (vertex-only)
+    // rather than in TerrainLineEvaluatedPropsUBO below, and terrain_line_layer_tweaker.cpp's
+    // tileLocalPosition()/metresPerExtentUnit() for how each is computed. fade_ref is the map
+    // centre expressed in THIS TILE's own EXTENT-unit local coordinates (matching a_pos/a_other's
+    // own units, mln::TileCoordinate); fade_k is (metres per EXTENT unit at this tile's own zoom)
+    // divided by terrain-line-fade-distance, so the vertex shader's own
+    // `length(pos - fade_ref) * fade_k` needs one multiply and no divide.
+    /* 112 */ std::array<float, 2> fade_ref;
+    /* 120 */ float fade_k;
+    /* 124 */ float pad2;
+    /* 128 */
 };
-static_assert(sizeof(TerrainLineDrawableUBO) == 7 * 16);
+static_assert(sizeof(TerrainLineDrawableUBO) == 8 * 16);
 
 // Fragment-only per-tile data - see TerrainLineDrawableUBO's comment above for why this is a
 // separate struct/buffer rather than the fragment stage reading that one. Bound at
@@ -108,11 +120,16 @@ struct alignas(16) TerrainLineEvaluatedPropsUBO {
     /* 32 */ float depth_bias;  // constant DEPTH_BIAS = 0.00002, matching routes3d.js:100
                                 // Task 2.2: ghost_opacity is now read by the fragment shader's terrain occlusion test
                                 // (TerrainLineTilePropsUBO's comment above) - `if (ghost <= 0) discard; else alpha *=
-                                // ghost` (routes3d.js:474). fade/fade_distance remain unread; the distance fade is
-                                // still deferred past this task.
+                                // ghost` (routes3d.js:474).
     /* 36 */ float ghost_opacity;
-    /* 40 */ float fade;          // 2.2b, unused so far
-    /* 44 */ float fade_distance;
+    // Task 2.2b: fade (terrain-line-fade, the amount) is read by the VERTEX shader, even though
+    // this buffer's other fields are fragment-facing, because that buffer is already bound to
+    // both stages (unlike TerrainLineDrawableUBO above, vertex-only on Metal) - see
+    // shaders/mtl/terrain_line.hpp's top-of-file comment. fade_distance (terrain-line-fade-
+    // distance, the metres boundary) is not read directly by either shader stage; it is folded
+    // into TerrainLineDrawableUBO::fade_k once per tile instead, so the shader needs no divide.
+    /* 40 */ float fade;
+    /* 44 */ float fade_distance; // folded into TerrainLineDrawableUBO::fade_k, not read directly
     /* 48 */ float pad1;
     /* 52 */ float pad2;
     /* 56 */ float pad3;

@@ -19,7 +19,25 @@ namespace shaders {
 // Task 2.2: the terrain depth-texture occlusion test is now ported (u_depth/u_depth_texel/
 // u_occlusion_eps/u_occlusion_far/u_ghost in the web shader - routes3d.js:425-480 for the shader,
 // :111-175 for the argument for a metres-based margin, :1365-1395 for occlusionFar()). Still left
-// out: the distance fade (u_fade_ref/u_fade_k/u_fade_amount) and every debug early-out.
+// out: every debug early-out.
+//
+// Task 2.2b: the distance fade is now ported too (u_fade_ref/u_fade_k/u_fade_amount in the web
+// shader - routes3d.js:381-392 for the vertex math, :455 for where it multiplies alpha, :930-943
+// for the reference point and scale, :1035-1038 for the per-ribbon uniform set). fade_ref/fade_k
+// are PER-TILE, like dash_period/dash_on, so they live in TerrainLineDrawableUBO below, not
+// TerrainLineEvaluatedPropsUBO - the fade curve itself is computed in the VERTEX shader (v_fade
+// in the web), so they must be readable by the vertex stage, which is exactly what
+// TerrainLineDrawableUBO is bound as (idDrawableReservedVertexOnlyUBO - vertex stage only on
+// Metal, see this struct's own comment below). fade/fade_distance (the amount and the metres
+// boundary) stay in TerrainLineEvaluatedPropsUBO where they already were: that buffer is bound to
+// BOTH stages (it is passed into vertexMain below already, for half_px/edge_px/rail_offset/
+// depth_bias), so the vertex shader reads props.fade straight out of it rather than duplicating
+// it into TerrainLineDrawableUBO.
+//
+// The web anchors its fade to its own near-far anchor (state.nearFarAnchor, held still through
+// small pans, routes3d.js:930-934) - a hand-over point between this engine's 3D ribbon and a 2D
+// flat drawing beyond it. This engine has no such hand-over (there is no 2D fallback drawing to
+// hand over to), so fade_ref anchors to the live map centre (state.getLatLng()) instead.
 //
 // NOTE: this file is intentionally never run through clang-format. Its raw string literals are
 // Metal shader source, not C++; formatting it here has previously corrupted comment text inside
@@ -49,9 +67,21 @@ struct alignas(16) TerrainLineDrawableUBO {
     /* 104 */ float dem_enabled;
 
     /* 108 */ float reference_w;
-    /* 112 */
+
+    // Task 2.2b: this tile's own fade reference point and scale - see the file's top-of-file
+    // comment for why these two live here (vertex-only) rather than in
+    // TerrainLineEvaluatedPropsUBO below, and TerrainLineLayerTweaker::execute for how each is
+    // computed. fade_ref is the map centre expressed in THIS TILE's own EXTENT-unit local
+    // coordinates (matching a_pos/a_other's own units); fade_k is (metres per EXTENT unit at this
+    // tile's own zoom) divided by terrain-line-fade-distance, so the vertex shader's
+    // `length(pos - fade_ref) * fade_k` is one multiply with no divide, exactly as the web
+    // shader's own comment (routes3d.js:381-386) describes for its mercator-unit equivalent.
+    /* 112 */ float2 fade_ref;
+    /* 120 */ float fade_k;
+    /* 124 */ float pad2;
+    /* 128 */
 };
-static_assert(sizeof(TerrainLineDrawableUBO) == 7 * 16, "wrong size");
+static_assert(sizeof(TerrainLineDrawableUBO) == 8 * 16, "wrong size");
 
 // Fragment-only, bound at idDrawableReservedFragmentOnlyUBO. Filled in lockstep with
 // TerrainLineDrawableUBO (same index, same tile, every frame).
@@ -83,8 +113,14 @@ struct alignas(16) TerrainLineEvaluatedPropsUBO {
     // Task 2.2: ghost_opacity is now read by the fragment shader's occlusion test below -
     // `if (ghost <= 0) discard; else alpha *= ghost` (routes3d.js:474).
     /* 36 */ float ghost_opacity;
-    /* 40 */ float fade;          // 2.2b, unused so far
-    /* 44 */ float fade_distance; // 2.2b, unused so far
+    // Task 2.2b: fade is the distance-fade amount (terrain-line-fade), read by the VERTEX shader
+    // below (v_fade's own equivalent) even though this buffer's fields are otherwise fragment-
+    // facing - see the file's top-of-file comment for why it stays here rather than moving into
+    // TerrainLineDrawableUBO. fade_distance (terrain-line-fade-distance) is not read directly by
+    // either shader stage; it is folded into fade_k (TerrainLineDrawableUBO above) once per tile
+    // by TerrainLineLayerTweaker::execute instead, so the shader needs no divide.
+    /* 40 */ float fade;
+    /* 44 */ float fade_distance; // folded into TerrainLineDrawableUBO::fade_k, not read directly
     /* 48 */ float pad1;
     /* 52 */ float pad2;
     /* 56 */ float pad3;
@@ -121,6 +157,7 @@ struct FragmentStage {
     float dist;
     float side;
     float half_px;
+    float fade;
 };
 
 FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
@@ -185,12 +222,22 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     // does not z-fight with the terrain surface it sits directly on top of.
     p0.z -= props.depth_bias * w0;
 
+    // Task 2.2b: the distance fade, ported from the web vertex shader's v_fade (routes3d.js:
+    // 388-391). Computed from `pos`, this vertex's own tile-local EXTENT position, before the
+    // pixel-space offset above is applied - matching the web's use of a_pos.xy, its own
+    // pre-offset mercator position. drawable.fade_k is 0 whenever terrain-line-fade-distance is
+    // not positive (TerrainLineLayerTweaker::execute), which forces ft to 0 and fade to 1 - no
+    // fade - regardless of props.fade, the same "far > 0" gate the web applies on the CPU side.
+    const float ft = clamp(length(pos - drawable.fade_ref) * drawable.fade_k, 0.0, 1.0);
+    const float fade = 1.0 - props.fade * ft * ft * (3.0 - 2.0 * ft);
+
     return {
         .position = p0,
         .center   = center,
         .dist     = vertx.dist,
         .side     = float(vertx.flag.y),
         .half_px  = halfPx,
+        .fade     = fade,
     };
 }
 
@@ -211,7 +258,12 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
         discard_fragment();
     }
 
-    float alpha = props.opacity;
+    // Task 2.2b: the distance fade multiplies alpha here, BEFORE the occlusion test below, matching
+    // the web fragment shader's own ordering and its comment for why (routes3d.js:449-454): the
+    // fade is applied to every pass this program draws so the whole ribbon recedes together, and a
+    // ghosted (occluded-but-still-drawn) fragment must fade the same way a fully visible one does,
+    // or a faded line would stop reading as the same line where it crosses behind a ridge.
+    float alpha = props.opacity * in.fade;
 
     // Task 2.2: terrain occlusion, ported from the web engine's fragment shader (routes3d.js:
     // 454-475; the argument for the metres-based margin is at :111-175; occlusionFar() is at

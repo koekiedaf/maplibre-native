@@ -16,6 +16,7 @@
 #include <mln/util/geo.hpp>
 #include <mln/util/math.hpp>
 #include <mln/util/projection.hpp>
+#include <mln/util/tile_coordinate.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -117,6 +118,41 @@ float occlusionFarNDC(const PaintParameters& parameters, float occlusionEpsM) {
     return static_cast<float>(k * occlusionEpsM);
 }
 
+// Task 2.2b: the map centre's own position expressed in tileID's EXTENT-unit local coordinate
+// space - the same units a_pos/a_other carry, unclamped (the point need not fall inside this
+// tile's own footprint). Identical in spirit to terrain_contour_layer_tweaker.cpp's own
+// tileLocalPosition() (two tiles at the same zoom differ only by a translation in tile units, so
+// this stays exact for whichever tile's own EXTENT space the caller uses), duplicated here rather
+// than shared because that file's copy lives in its own anonymous namespace.
+//
+// This is fade_ref: the web anchors its fade to its own near-far anchor (state.nearFarAnchor,
+// held still through small pans - routes3d.js:930-934), a hand-over point between its 3D ribbon
+// and a 2D flat drawing beyond it. This engine has no such hand-over (there is no 2D fallback
+// drawing to hand over to), so fade_ref anchors to the live map centre instead - the same centre
+// computeReferenceClipW above already reads via state.getLatLng().
+Point<double> tileLocalPosition(const UnwrappedTileID& tileID, const LatLng& latLng) {
+    const TileCoordinate coord = TileCoordinate::fromLatLng(static_cast<double>(tileID.canonical.z), latLng);
+    const double tileScale = std::exp2(static_cast<double>(tileID.canonical.z));
+    return {(coord.p.x - static_cast<double>(tileID.canonical.x) - tileID.wrap * tileScale) * util::EXTENT,
+            (coord.p.y - static_cast<double>(tileID.canonical.y)) * util::EXTENT};
+}
+
+// Task 2.2b: metres per EXTENT unit at THIS TILE's own zoom (tileID.z - which, unlike the
+// frame-level facts above, can differ per tile once overzoomed tiles are in play). One EXTENT
+// unit is 1/util::EXTENT of one full tile width, and one tile always spans util::tileSize_D
+// world-pixel units in the mercator projection at that tile's own zoom (the same world-pixel
+// convention computeReferenceClipW's comment lays out at the frame zoom instead).
+// Projection::getMetersPerPixelAtLatitude(lat, zoom) converts world-pixel units at a given zoom to
+// metres; multiplying by (tileSize_D / EXTENT) finishes the conversion down to one EXTENT unit.
+// This is the same "which zoom, which exponent" question computeDashPeriodExtent's own comment
+// warns about, but simpler here: fade_ref/fade_k are computed directly in this tile's own EXTENT
+// space, so only tileID.z is ever in play, never a second anchor zoom.
+float metresPerExtentUnit(const LatLng& center, const CanonicalTileID& tileID) {
+    const double metresPerPixel =
+        Projection::getMetersPerPixelAtLatitude(center.latitude(), static_cast<double>(tileID.z));
+    return static_cast<float>(metresPerPixel * (util::tileSize_D / static_cast<double>(util::EXTENT)));
+}
+
 // The web's DASH_ANCHOR_ZOOM (routes3d.js:1171, groundDashPeriod at :1174-1187): the dash
 // pattern's period is computed from the line width evaluated at this FIXED zoom, never at the
 // zoom the camera happens to be at, so the dash never re-subdivides or rescales while zooming.
@@ -216,6 +252,13 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
 #endif
 
     const float referenceW = computeReferenceClipW(parameters);
+
+    // Task 2.2b: the fade's reference point and scale. The centre is a frame-level fact (read
+    // once here, like referenceW above); fade_ref/fade_k are still PER-TILE (tileLocalPosition and
+    // metresPerExtentUnit both depend on tileID), computed inside the per-drawable lambda below,
+    // the same way dash_period/dash_on are.
+    const LatLng fadeCenter = parameters.state.getLatLng();
+    const float fadeDistance = evaluated.get<TerrainLineFadeDistance>();
 
     // Task 2.2: the depth texture, the occlusion-far constant and depth_enabled are all
     // FRAME-level facts (the depth texture is one shared render target, the projection matrix and
@@ -334,6 +377,16 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
 
         const auto dashPeriod = computeDashPeriodExtent(dasharray, widthPxAtAnchorZoom, tileID.canonical);
 
+        // Task 2.2b: this tile's own fade reference point and scale - see tileLocalPosition() and
+        // metresPerExtentUnit() above. fade_k is 0 whenever terrain-line-fade-distance is not
+        // positive, which the vertex shader's own ft/fade formula turns into "no fade" regardless
+        // of terrain-line-fade's value - the same "far > 0" gate the web applies on the CPU side
+        // (routes3d.js:1037).
+        const Point<double> fadeRefLocal = tileLocalPosition(tileID, fadeCenter);
+        const float fadeK = fadeDistance > 0.0f
+                                ? metresPerExtentUnit(fadeCenter, tileID.canonical) / fadeDistance
+                                : 0.0f;
+
 #if MLN_UBO_CONSOLIDATION
         drawableUBOVector[i] = {
 #else
@@ -347,6 +400,9 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
             .dem_exaggeration = parameters.terrain ? parameters.terrain->getExaggeration() : 0.0f,
             .dem_enabled = terrainData ? 1.0f : 0.0f,
             .reference_w = referenceW,
+            .fade_ref = {{static_cast<float>(fadeRefLocal.x), static_cast<float>(fadeRefLocal.y)}},
+            .fade_k = fadeK,
+            .pad2 = 0,
         };
         // Fragment-only tile props (dash_period/dash_on plus the terrain occlusion inputs) - see
         // TerrainLineDrawableUBO's comment in terrain_line_layer_ubo.hpp for why the fragment

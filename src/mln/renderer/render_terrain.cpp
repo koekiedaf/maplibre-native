@@ -391,20 +391,68 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     const std::size_t postDilationCount = out.size();
     const int postDilationOverlapPairs = traceMeshCover ? countOverlappingPairs(out) : 0;
 
-    // Cap the mesh tile count: keep those nearest the map centre, drop the farthest (the
-    // horizon tiles a high tilt pulls in). Everything downstream scales with this count -
-    // mesh draws, DRAPE TARGETS and their re-renders, depth instances - which is why the cap
-    // belongs here, in the one function that answers "which tiles is this frame's terrain",
-    // rather than after the fact. It used to be applied in `update()`, by which point
-    // `Renderer::Impl::render` had already called this function itself and allocated one
-    // drape target per tile of the uncapped set; the cap then bounded the mesh and nothing
-    // else. Measured at Gavarnie pitch 80 before the move: 113 drape targets against a
-    // Quality cap of 64, at roughly 9 MB of texture each.
+    // Cap the mesh tile count. Everything downstream scales with it - mesh draws, DRAPE
+    // TARGETS and their re-renders, depth instances - which is why the cap belongs here, in
+    // the one function that answers "which tiles is this frame's terrain", rather than after
+    // the fact. It used to be applied in `update()`, by which point `Renderer::Impl::render`
+    // had already called this function itself and allocated one drape target per tile of the
+    // uncapped set; the cap then bounded the mesh and nothing else. Measured at Gavarnie
+    // pitch 80 before the move: 113 drape targets against a Quality cap of 64, at roughly
+    // 9 MB of texture each.
     //
     // Per-mode cap (TerrainLoadBudget::maxMeshTiles): Quality keeps a generous cap so terrain
     // render distance stays long; Balanced and Performance trade distance for frame time.
+    //
+    // HOW THE CAP IS APPLIED, and the fault it used to have. Until 12 September this kept the
+    // tiles nearest the map centre in normalised mercator and DROPPED the rest, which holes
+    // the cover: the ground of a dropped tile is meshed by nothing, because `util::tileCover`
+    // returns a disjoint partition and a dropped tile's coarser ancestor is not in the set to
+    // stand in for it. The hole draws as the style's own background with a hard edge, which is
+    // exactly the failure the pitch sweep found at the `gavarnie` viewpoint at pitch 80: the
+    // cover wanted 145 tiles, the budget allowed 64, and 81 tiles of ground - most of the near
+    // field, which at a steep tilt is a wide lateral swath needing many deep tiles - simply
+    // had no terrain. It is also why the cap's damage varied with bearing and camera in a way
+    // nobody could predict: which ground falls outside a disc around the map centre is not a
+    // property of what is on screen.
+    //
+    // A budget has to be spent on RESOLUTION, not on coverage. So the cover is COARSENED
+    // instead of trimmed: while it is over budget, every tile at the deepest zoom present is
+    // replaced by its parent and the set de-duplicated. That keeps the whole visible footprint
+    // meshed and pays for it with drape texel size in the near field, which is a soft picture
+    // rather than a missing one. It is coverage-preserving because a parent's footprint is a
+    // strict superset of its child's; it preserves disjointness, because two cover tiles are
+    // disjoint by construction and a deepest tile's parent cannot become a descendant of
+    // another cover tile without its child having been one already; and it is a pure function
+    // of the input set, so it cannot reintroduce the load-order dependence P2 removed. The
+    // loop drops one zoom level per pass, so it terminates in at most `zoomRange.max` passes.
+    //
+    // The old nearest-to-centre trim is KEPT as a last resort for the case the coarsening
+    // cannot reach (a budget smaller than the number of tiles at the shallowest zoom the cover
+    // reaches). It is not expected to fire; if it does, it holes the cover exactly as before,
+    // which is still better than ignoring the budget on a phone.
     const size_t maxMeshTiles = updateParameters ? terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles
                                                  : 0;
+    while (maxMeshTiles > 0 && out.size() > maxMeshTiles) {
+        uint8_t deepest = zoomRange.min;
+        for (const auto& id : out) {
+            deepest = std::max(deepest, id.canonical.z);
+        }
+        if (deepest <= zoomRange.min) {
+            break;
+        }
+        std::set<UnwrappedTileID> coarsened;
+        for (const auto& id : out) {
+            if (id.canonical.z == deepest) {
+                coarsened.emplace(id.wrap,
+                                  CanonicalTileID(static_cast<uint8_t>(deepest - 1),
+                                                  id.canonical.x >> 1,
+                                                  id.canonical.y >> 1));
+            } else {
+                coarsened.insert(id);
+            }
+        }
+        out = std::move(coarsened);
+    }
     if (maxMeshTiles > 0 && out.size() > maxMeshTiles) {
         // Map centre in normalised web-mercator [0,1] (standard projection)
         const LatLng centre = state.getLatLng();

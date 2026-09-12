@@ -154,6 +154,24 @@ protected:
     bool pending = false;
     bool loaded = false;
 
+    // True from the moment this tile reported the START of a piece of work
+    // (`RequestedFromCache`, `RequestedFromNetwork` or `StartParse`) until it
+    // reported that work ENDING (`EndParse`, `Error` or `Cancelled`).
+    //
+    // `pending` is not the same thing and cannot do this job: it is set only
+    // once a tile's DATA has arrived and its parse has begun, so a tile that
+    // is abandoned while its fetch is still outstanding has `pending == false`
+    // and used to report no terminal action at all. An observer counting
+    // requests against terminations - which is exactly what the DuckMaps app
+    // harness does to decide the map has settled - was then left holding a
+    // request that never ends. Measured at Gavarnie: one or two `terrain-q3`
+    // raster-dem tiles per launch logged `RequestedFromCache` and then nothing
+    // ever again, in 13 of 18 launches.
+    //
+    // Maintained in `Tile::onTileAction`, which every tile action passes
+    // through, and consumed by `~Tile` below.
+    bool tileActionOutstanding = false;
+
     TileObserver* observer = nullptr;
 };
 

@@ -39,10 +39,9 @@ RasterDEMTile::RasterDEMTile(const OverscaledTileID& id_,
 RasterDEMTile::~RasterDEMTile() {
     markObsolete();
 
-    if (pending) {
-        // This tile never finished loading or was abandoned, emit a cancellation event
-        observer->onTileAction(id, sourceID, TileOperation::Cancelled);
-    }
+    // The cancellation event for a tile abandoned with work still outstanding
+    // is emitted by ~Tile, which sees a fetch that never delivered as well as
+    // a parse that never finished. See `Tile::tileActionOutstanding`.
 
     // The bucket has resources that need to be released on the render thread.
     if (bucket) {
@@ -160,8 +159,11 @@ void RasterDEMTile::cancel() {
 
 void RasterDEMTile::markObsolete() {
     obsolete = true;
-    if (pending) {
-        observer->onTileAction(id, sourceID, TileOperation::Cancelled);
+    if (tileActionOutstanding) {
+        // Routed through `Tile::onTileAction` rather than straight at the
+        // observer so the outstanding flag is cleared by the same call, which
+        // is what stops ~Tile reporting the same cancellation a second time.
+        onTileAction(TileOperation::Cancelled);
     }
     pending = false;
     mailbox->abandon();

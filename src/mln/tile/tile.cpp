@@ -17,7 +17,18 @@ Tile::Tile(Kind kind_, OverscaledTileID id_, std::string sourceID_, TileObserver
     observer = observer_ ? observer_ : &nullObserver;
 }
 
-Tile::~Tile() = default;
+Tile::~Tile() {
+    // Every tile action that STARTS work has to be followed by one that ENDS
+    // it, or an observer counting the two against each other never balances.
+    // A tile destroyed with work still outstanding - most often a fetch that
+    // was abandoned before its data ever arrived, which no derived class sees
+    // because `pending` is only set once a parse begins - reports that ending
+    // here. `tileActionOutstanding` is cleared by `onTileAction` itself, so a
+    // derived class that already reported `Cancelled` does not report it twice.
+    if (tileActionOutstanding) {
+        onTileAction(TileOperation::Cancelled);
+    }
+}
 
 void Tile::setObserver(TileObserver* observer_) {
     observer = observer_;
@@ -66,6 +77,24 @@ float Tile::getQueryPadding(const std::unordered_map<std::string, const RenderLa
 void Tile::querySourceFeatures(std::vector<Feature>&, const SourceQueryOptions&) {}
 
 void Tile::onTileAction(TileOperation op) {
+    switch (op) {
+        case TileOperation::RequestedFromCache:
+        case TileOperation::RequestedFromNetwork:
+        case TileOperation::StartParse:
+            tileActionOutstanding = true;
+            break;
+        case TileOperation::EndParse:
+        case TileOperation::Error:
+        case TileOperation::Cancelled:
+            tileActionOutstanding = false;
+            break;
+        case TileOperation::LoadFromNetwork:
+        case TileOperation::LoadFromCache:
+        case TileOperation::NullOp:
+            // Data arriving is not an ending: the parse it hands off to is
+            // still to come, and `StartParse` follows in the same call stack.
+            break;
+    }
     observer->onTileAction(id, sourceID, op);
 };
 

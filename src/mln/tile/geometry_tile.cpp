@@ -221,10 +221,9 @@ GeometryTile::~GeometryTile() {
     glyphManager->removeRequestor(*this);
     imageManager->removeRequestor(*this);
 
-    if (pending) {
-        // This tile never finished loading or was abandoned, emit a cancellation event
-        observer->onTileAction(id, sourceID, TileOperation::Cancelled);
-    }
+    // The cancellation event for a tile abandoned with work still outstanding
+    // is emitted by ~Tile, which sees a fetch that never delivered as well as
+    // a parse that never finished. See `Tile::tileActionOutstanding`.
 
     if (layoutResult) {
         threadPool.runOnRenderThread(
@@ -271,12 +270,13 @@ void GeometryTile::setData(std::unique_ptr<const GeometryTileData> data_) {
 void GeometryTile::reset() {
     MLN_TRACE_FUNC();
 
-    // If there is pending work, indicate that work has been cancelled.
-    // Clear the pending status.
-    if (pending) {
-        observer->onTileAction(id, sourceID, TileOperation::Cancelled);
-        pending = false;
+    // If there is work outstanding, indicate that it has been cancelled.
+    // Clear the pending status. Routed through `Tile::onTileAction` so the
+    // outstanding flag is cleared with it (see `Tile::tileActionOutstanding`).
+    if (tileActionOutstanding) {
+        onTileAction(TileOperation::Cancelled);
     }
+    pending = false;
 
     // Reset the tile to an unloaded state to avoid signaling completion
     // after clearing the tile's pending status.

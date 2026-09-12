@@ -82,7 +82,22 @@ constexpr TerrainLoadBudget terrainLoadBudget(TerrainLoadMode mode) {
             return {8, 4, 24};
         case TerrainLoadMode::Quality:
         default:
-            return {0, 0, 64}; // no per-frame budget, generous tile cap
+            // DuckMaps fork only: raised from 64 to 512 per David's 12 September decision to
+            // go beyond the web on the near field (docs/plans/2026-09-11-camera-and-motion.md,
+            // "DAVID'S DECISION, 12 September" and its same-day amendment withdrawing any
+            // self-imposed memory ceiling). Measured from scratch after the Q2 underground-
+            // camera fault (engine 4003e9846a88) was fixed, since that fault had invalidated an
+            // earlier throwaway test of this same 512 number: a fresh sweep of the mesh cover's
+            // own postDilationCount (RenderTerrain::computeMeshCover's own trace field, taken
+            // BEFORE this cap is applied, so it is independent of the cap's own value) across
+            // the nine harness viewpoints x four bearings at pitch 85 found a worst case of 183
+            // (gavarnie, bearing 180); the gavarnie-wall camera named in the same brief (not one
+            // of the nine, but the one that motivated the pitch cap staying at 80) wanted up to
+            // 361 in one measurement, though that camera's mesh cover was also observed to
+            // oscillate between repeats at this extreme bearing/pitch combination, a separate,
+            // pre-existing instability this task did not chase. 512 comfortably covers every
+            // observed cell with margin and is the number this fork had already named once.
+            return {0, 0, 512};
     }
 }
 

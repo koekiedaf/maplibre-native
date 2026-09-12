@@ -601,6 +601,12 @@ enum {
     terrainVertexAttributeCount
 };
 
+// Sky is a once-per-frame full-screen draw rather than a per-tile drawable.
+enum {
+    idSkyPosVertexAttribute,
+    skyVertexAttributeCount
+};
+
 enum {
     idWideVectorScreenPos,
     idWideVectorColor,
@@ -636,6 +642,7 @@ static constexpr uint32_t maxAttributeCountPerShader = std::max({
     static_cast<uint32_t>(rasterVertexAttributeCount),
     static_cast<uint32_t>(symbolAttributeCount),
     static_cast<uint32_t>(terrainVertexAttributeCount),
+    static_cast<uint32_t>(skyVertexAttributeCount),
     static_cast<uint32_t>(wideVectorAttributeCount),
     static_cast<uint32_t>(wideVectorInstanceAttributeCount),
 });

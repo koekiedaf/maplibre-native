@@ -119,6 +119,12 @@ void Map::Impl::onUpdate() {
         terrainImpl = terrain->impl;
     }
 
+    // DuckMaps fork only, task T3: the style spec's `sky` root property.
+    std::optional<Immutable<style::Sky::Impl>> skyImpl;
+    if (auto* sky = style->impl->getSky()) {
+        skyImpl = sky->impl;
+    }
+
     UpdateParameters params = {.styleLoaded = style->impl->isLoaded(),
                                .mode = mode,
                                .pixelRatio = pixelRatio,
@@ -131,6 +137,7 @@ void Map::Impl::onUpdate() {
                                .transitionOptions = style->impl->getTransitionOptions(),
                                .light = style->impl->getLight()->impl,
                                .terrain = terrainImpl,
+                               .sky = skyImpl,
                                .images = style->impl->getImageImpls(),
                                .sources = style->impl->getSourceImpls(),
                                .layers = style->impl->getLayerImpls(),

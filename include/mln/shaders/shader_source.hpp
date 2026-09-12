@@ -45,7 +45,8 @@ enum class BuiltIn {
     SymbolTextAndIconShader,
     TerrainShader,
     TerrainDepthShader,
-    WideVectorShader
+    WideVectorShader,
+    SkyShader
 };
 
 /// @brief Select shader source based on a program type and a desired

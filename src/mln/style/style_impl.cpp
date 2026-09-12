@@ -33,6 +33,7 @@ Style::Impl::Impl(std::shared_ptr<FileSource> fileSource_, float pixelRatio, con
       spriteLoader(std::make_unique<SpriteLoader>(pixelRatio, threadPool_)),
       light(std::make_unique<Light>()),
       terrain(nullptr),
+      sky(nullptr),
       observer(&nullObserver) {
     spriteLoader->setObserver(this);
     light->setObserver(this);
@@ -128,6 +129,13 @@ void Style::Impl::parse(const std::string& json_) {
         setTerrain(std::make_unique<Terrain>(*parser.terrain));
     } else {
         setTerrain(nullptr);
+    }
+
+    // DuckMaps fork only, task T3: the style spec's `sky` root property.
+    if (parser.sky) {
+        setSky(std::make_unique<Sky>(*parser.sky));
+    } else {
+        setSky(nullptr);
     }
 
     if (fileSource) {
@@ -269,6 +277,21 @@ void Style::Impl::setTerrain(std::unique_ptr<Terrain> terrain_) {
 
 Terrain* Style::Impl::getTerrain() const {
     return terrain.get();
+}
+
+// DuckMaps fork only, task T3: mirrors setTerrain/getTerrain immediately above.
+void Style::Impl::setSky(std::unique_ptr<Sky> sky_) {
+    sky = std::move(sky_);
+    if (sky) {
+        sky->setObserver(this);
+        onSkyChanged(*sky);
+    } else {
+        observer->onUpdate();
+    }
+}
+
+Sky* Style::Impl::getSky() const {
+    return sky.get();
 }
 
 std::string Style::Impl::getName() const {
@@ -445,6 +468,10 @@ void Style::Impl::onLightChanged(const Light&) {
 }
 
 void Style::Impl::onTerrainChanged(const Terrain&) {
+    observer->onUpdate();
+}
+
+void Style::Impl::onSkyChanged(const Sky&) {
     observer->onUpdate();
 }
 

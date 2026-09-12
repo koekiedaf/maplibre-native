@@ -6,6 +6,7 @@
 #include <mln/style/conversion/layer.hpp>
 #include <mln/style/conversion/light.hpp>
 #include <mln/style/conversion/terrain.hpp>
+#include <mln/style/conversion/sky.hpp>
 #include <mln/style/conversion/sprite.hpp>
 #include <mln/style/conversion/transition_options.hpp>
 #include <mln/style/conversion_impl.hpp>
@@ -115,6 +116,13 @@ StyleParseResult Parser::parse(const std::string& json) {
 
     if (document.HasMember("terrain")) {
         parseTerrain(document["terrain"]);
+    }
+
+    // DuckMaps fork only, task T3: the style spec's `sky` root property. See
+    // style::Sky::Impl (sky_impl.hpp) for the spec's own defaults and which of its seven
+    // properties this engine actually renders.
+    if (document.HasMember("sky")) {
+        parseSky(document["sky"]);
     }
 
     if (document.HasMember("sources")) {
@@ -250,6 +258,17 @@ void Parser::parseTerrain(const JSValue& value) {
     }
 
     terrain = *converted;
+}
+
+void Parser::parseSky(const JSValue& value) {
+    conversion::Error error;
+    std::optional<Sky> converted = conversion::convert<Sky>(value, error);
+    if (!converted) {
+        Log::Warning(Event::ParseStyle, error.message);
+        return;
+    }
+
+    sky = *converted;
 }
 
 void Parser::parseSources(const JSValue& value) {

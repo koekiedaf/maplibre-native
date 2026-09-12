@@ -8,6 +8,7 @@
 #include <mln/style/layer_observer.hpp>
 #include <mln/style/light_observer.hpp>
 #include <mln/style/terrain_observer.hpp>
+#include <mln/style/sky_observer.hpp>
 #include <mln/sprite/sprite_loader_observer.hpp>
 #include <mln/style/image.hpp>
 #include <mln/style/source.hpp>
@@ -39,6 +40,7 @@ class Style::Impl : public SpriteLoaderObserver,
                     public LayerObserver,
                     public LightObserver,
                     public TerrainObserver,
+                    public SkyObserver,
                     public util::noncopyable {
 public:
     Impl(std::shared_ptr<FileSource>, float pixelRatio, const TaggedScheduler& threadPool_);
@@ -90,6 +92,12 @@ public:
     void setTerrain(std::unique_ptr<Terrain>);
     Terrain* getTerrain() const;
 
+    // DuckMaps fork only, task T3: the style spec's `sky` root property. No public setter is
+    // exposed (see sky.hpp's own comment - this task adds no public API), only the parse path
+    // below calls setSky().
+    void setSky(std::unique_ptr<Sky>);
+    Sky* getSky() const;
+
     std::optional<Immutable<style::Image::Impl>> getImage(const std::string&) const;
     void addImage(std::unique_ptr<style::Image>);
     void removeImage(const std::string&);
@@ -127,6 +135,7 @@ private:
     TransitionOptions transitionOptions;
     std::unique_ptr<Light> light;
     std::unique_ptr<Terrain> terrain;
+    std::unique_ptr<Sky> sky;
     std::unordered_map<std::string, bool> spritesLoadingStatus;
 
     // Defaults
@@ -152,6 +161,9 @@ private:
 
     // TerrainObserver implementation.
     void onTerrainChanged(const Terrain&) override;
+
+    // SkyObserver implementation.
+    void onSkyChanged(const Sky&) override;
 
     Observer nullObserver;
     Observer* observer = &nullObserver;

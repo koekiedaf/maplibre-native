@@ -9,6 +9,7 @@
 #include <mln/style/image.hpp>
 #include <mln/style/source.hpp>
 #include <mln/style/layer.hpp>
+#include <mln/style/sky.hpp>
 #include <mln/map/transform_state.hpp>
 #include <mln/map/zoom_history.hpp>
 #include <mln/text/cross_tile_symbol_index.hpp>
@@ -175,6 +176,12 @@ public:
 
     RenderTerrain* getRenderTerrain() const { return renderTerrain.get(); }
 
+    // DuckMaps fork only, task T3: the style spec's `sky` root property. Unlike RenderTerrain,
+    // sky owns no GPU resources of its own and drives no tiles/sources, so it needs no
+    // dedicated Render* class - the evaluated Impl is just carried through to
+    // Renderer::Impl::render's sky pass as-is.
+    const std::optional<Immutable<style::Sky::Impl>>& getSky() const { return sky; }
+
 private:
     bool isLoaded() const;
     bool hasTransitions(TimePoint) const;
@@ -226,6 +233,7 @@ private:
     std::unordered_map<std::string, std::unique_ptr<RenderLayer>> renderLayers;
     RenderLight renderLight;
     std::unique_ptr<RenderTerrain> renderTerrain;
+    std::optional<Immutable<style::Sky::Impl>> sky;
 
     CrossTileSymbolIndex crossTileSymbolIndex;
     PlacementController placementController;

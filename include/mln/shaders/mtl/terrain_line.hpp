@@ -231,7 +231,11 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     // max(props.half_px, 0) both collapse back to exactly today's halfPx + props.edge_px and
     // props.half_px, so an unset halo changes nothing here.
     const float haloHalfPx = (props.halo_half_px > 0.0) ? props.halo_half_px * widthScale : 0.0;
-    const float ext = max(halfPx + props.edge_px, haloHalfPx + props.halo_edge_px);
+    // The halo's own feather only widens the quad when there IS a halo. Without this guard an
+    // unset halo would still push `ext` up to halo_edge_px (0.5 by default) for any ribbon
+    // narrower than that, which is a change to a style that never asked for a halo.
+    const float ext = (haloHalfPx > 0.0) ? max(halfPx + props.edge_px, haloHalfPx + props.halo_edge_px)
+                                         : halfPx + props.edge_px;
     const float capPx = max(props.half_px, props.halo_half_px) * widthScale;
     // Square caps extend the quad forward and back by the same half width (u_cap_px equals
     // u_half_px in the web engine, routes3d.js:1120-1121), so it is not a separate property;
@@ -362,10 +366,11 @@ half4 fragment fragmentMain(FragmentStage in [[stage_in]],
     const float4 halo = props.halo_color * haloA;
     const float4 result = body + halo * (1.0 - body.a);
 
-    // A fully transparent fragment (no body, no halo, or a dash gap with no halo - already
-    // discarded above, but a halo whose own colour or width still lands here at zero coverage)
-    // writes nothing rather than a premultiplied no-op blend.
-    if (result.a <= 0.0) {
+    // A fully transparent fragment writes nothing rather than a premultiplied no-op blend. Gated
+    // on the halo being active: without a halo this shader has always let a zero-coverage
+    // fragment through to the blend as a no-op, and discarding it instead is a change (a discard
+    // also skips the depth write) to a style that never asked for a halo.
+    if (in.halo_half_px > 0.0 && result.a <= 0.0) {
         discard_fragment();
     }
 

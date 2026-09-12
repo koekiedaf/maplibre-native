@@ -1206,7 +1206,14 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                     firstMeshTile = false;
                 }
             }
-            os << "],\"meshCover\":[";
+            // DuckMaps fork only, task R1A: the CONTENT behind each DEM tile the demTiles array
+            // above already names - see RenderTerrain::debugDemTileContentJSON's own doc
+            // comment for why (the existing trace records which DEM tile a mesh tile binds, not
+            // the content of that texture or whether its one-texel backfilled border was
+            // filled). Same debug-only, off-by-default guard as the rest of this block; nothing
+            // here is computed when the trace is off.
+            os << "],\"demTileContent\":" << (traceTerrain ? traceTerrain->debugDemTileContentJSON() : "[]");
+            os << ",\"meshCover\":[";
             {
                 bool firstMeshEntry = true;
                 for (const auto& [z, count] : meshCoverHistogram) {

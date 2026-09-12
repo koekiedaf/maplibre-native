@@ -259,6 +259,21 @@ public:
     std::vector<CanonicalTileID> getResidentDemTileIds() const;
 
     /**
+     * @brief DuckMaps fork only, task R1A: for the same DEM tiles `getResidentDemTileIds`
+     * already reports, the CONTENT behind each one - `getResidentDemTileIds` says which DEM
+     * tile a mesh tile binds, this says whether the texture behind that tile is bit-identical
+     * between runs, in particular whether its one-texel backfilled border differs depending on
+     * which neighbour happened to already be renderable when RenderRasterDEMSource::onTileChanged
+     * ran the backfill (see RasterDEMTile::backfillBorder / DEMData::backfillBorder). Each
+     * array entry carries the tile's canonical "z/x/y" id, its `neighboringTiles` bitmask (see
+     * DEMTileNeighbors), a 64-bit FNV-1a hash of the whole DEMData image buffer (padding
+     * included), and a separate 64-bit FNV-1a hash of only the padding ring outside the tile's
+     * own dim x dim interior. Sorted by tile id so ordering cannot itself vary between runs.
+     * Debug-only; not called unless the elevation trace (`DUCKMAPS_ELEVATION_TRACE`) is on.
+     */
+    std::string debugDemTileContentJSON() const;
+
+    /**
      * @brief DuckMaps fork only, task C5: the canonical z/x/y of every tile in the mesh
      * cover Renderer::Impl computed for the last rendered frame (see setFrameMeshCover),
      * for the debug elevation trace's `meshCover` field. This is the cover the frame's

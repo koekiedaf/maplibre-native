@@ -79,6 +79,18 @@ DEMSubTileOffset demSubTileOffset(const CanonicalTileID& child, const CanonicalT
             static_cast<float>(child.y - (ancestor.y << dz))};
 }
 
+// DuckMaps fork only, debug instrumentation for task R1A: 64-bit FNV-1a, folded over `data` and
+// chained from `hash` so a caller can hash several disjoint byte ranges (e.g. a DEM tile's
+// border ring, which is not one contiguous run) as one value. Not used by any shipping path.
+uint64_t fnv1a64(const uint8_t* data, size_t len, uint64_t hash = 0xcbf29ce484222325ULL) {
+    constexpr uint64_t prime = 0x100000001b3ULL;
+    for (size_t i = 0; i < len; ++i) {
+        hash ^= data[i];
+        hash *= prime;
+    }
+    return hash;
+}
+
 // DuckMaps fork only: what "overlap" means for the mesh cover dilation. Two tiles cover the
 // same ground when they are the same tile, or one is an ancestor of the other in the quadtree
 // (same wrap - a different wrap is a different copy of the world and never overlaps, however
@@ -1175,6 +1187,83 @@ std::string RenderTerrain::debugMeshTileTiersJSON() const {
         }
         first = false;
         os << value;
+    }
+    os << "]";
+    return os.str();
+}
+
+std::string RenderTerrain::debugDemTileContentJSON() const {
+    // Debug-only, task R1A. See the header doc comment. Sorted so two runs can be compared
+    // line for line, exactly like debugMeshTileTiersJSON above.
+    struct Entry {
+        std::string id;
+        int neighbors = 0;
+        uint64_t full = 0;
+        uint64_t border = 0;
+    };
+    std::vector<Entry> entries;
+    if (demSource) {
+        const auto renderTiles = demSource->getRawRenderTiles();
+        entries.reserve(renderTiles->size());
+        for (const auto& renderTile : *renderTiles) {
+            const Tile& tile = renderTile.getTile();
+            if (tile.kind != Tile::Kind::RasterDEM) {
+                continue;
+            }
+            const auto& demTile = static_cast<const RasterDEMTile&>(tile);
+            const HillshadeBucket* bucket = demTile.getBucket();
+            if (!bucket) {
+                continue;
+            }
+            const DEMData& dem = bucket->getDEMData();
+            const PremultipliedImage* image = dem.getImage();
+            if (!image || !image->valid()) {
+                continue;
+            }
+
+            std::ostringstream idOs;
+            idOs << static_cast<int>(renderTile.id.canonical.z) << "/" << renderTile.id.canonical.x << "/"
+                 << renderTile.id.canonical.y;
+
+            const uint8_t* data = image->data.get();
+            const uint64_t full = fnv1a64(data, image->bytes());
+
+            // The border ring is every texel outside the tile's own dim x dim interior. The
+            // interior is dim x dim texels starting at texel (2, 2) in the stride x stride
+            // buffer (DEMData's private idx() is (y+2)*stride + (x+2) for x=y=0..dim-1); this
+            // mirrors that layout without needing idx() itself, which is private. Rows above
+            // and below the interior are hashed whole; interior rows are hashed only in their
+            // left and right padding columns (2 texels each side).
+            const int32_t dim = dem.dim;
+            const int32_t stride = dem.stride;
+            const size_t rowBytes = static_cast<size_t>(stride) * 4;
+            const size_t borderColBytes = 2 * 4;
+            uint64_t border = 0xcbf29ce484222325ULL;
+            for (int32_t y = 0; y < stride; ++y) {
+                const uint8_t* row = data + static_cast<size_t>(y) * rowBytes;
+                if (y < 2 || y >= 2 + dim) {
+                    border = fnv1a64(row, rowBytes, border);
+                } else {
+                    border = fnv1a64(row, borderColBytes, border);
+                    border = fnv1a64(row + static_cast<size_t>(2 + dim) * 4, borderColBytes, border);
+                }
+            }
+
+            entries.push_back(Entry{idOs.str(), static_cast<int>(demTile.neighboringTiles), full, border});
+        }
+    }
+    std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return a.id < b.id; });
+
+    std::ostringstream os;
+    os << "[";
+    bool first = true;
+    for (const auto& e : entries) {
+        if (!first) {
+            os << ",";
+        }
+        first = false;
+        os << "{\"id\":\"" << e.id << "\",\"neighbors\":" << e.neighbors << ",\"full\":" << e.full
+           << ",\"border\":" << e.border << "}";
     }
     os << "]";
     return os.str();

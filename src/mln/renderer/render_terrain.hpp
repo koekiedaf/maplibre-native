@@ -329,6 +329,17 @@ public:
     std::string debugMeshTileTiersJSON() const;
 
     /**
+     * @brief DuckMaps fork only: debug-only, off-by-default trace of computeMeshCover's own
+     * dilation step, drained by Renderer::Impl::render exactly like
+     * TerrainContourLayerTweaker::debugDrainContourReferenceTraceJSON. Reports the tile count
+     * and overlapping-pair count (see tilesOverlap in render_terrain.cpp) at three points: the
+     * raw util::tileCover output before dilation, the cover after the one-ring dilation and
+     * frustumCull, and the final cover after the maxMeshTiles cap. Returns "null" (not
+     * queried, no allocation) when the trace is off.
+     */
+    static std::string debugDrainMeshCoverDilationTraceJSON();
+
+    /**
      * @brief {scale, x offset, y offset, DEM dim} mapping a terrain drawable's
      * tile-local position (0..EXTENT) into its bound DEM texture's normalized
      * space, for the shader's get_elevation() (see the demCoords built in update)

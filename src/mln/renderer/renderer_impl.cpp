@@ -1226,6 +1226,10 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             // record - see TerrainContourLayerTweaker::debugDrainContourReferenceTraceJSON's
             // comment for why this is drained the same way debugDrainElevationQueries is.
             os << ",\"contour\":" << TerrainContourLayerTweaker::debugDrainContourReferenceTraceJSON();
+            // DuckMaps fork only: the mesh cover dilation's own before/after tile and
+            // overlapping-pair counts - see RenderTerrain::debugDrainMeshCoverDilationTraceJSON's
+            // comment. Drained the same way, once per frame, right alongside the other two.
+            os << ",\"meshCoverDilation\":" << RenderTerrain::debugDrainMeshCoverDilationTraceJSON();
             os << "}\n";
 
             const std::string line = os.str();

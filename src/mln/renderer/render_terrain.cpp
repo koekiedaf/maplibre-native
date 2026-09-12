@@ -51,9 +51,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <iomanip>
+#include <optional>
 #include <sstream>
 #include <unordered_set>
 
@@ -77,6 +79,124 @@ DEMSubTileOffset demSubTileOffset(const CanonicalTileID& child, const CanonicalT
             static_cast<float>(child.y - (ancestor.y << dz))};
 }
 
+// DuckMaps fork only: what "overlap" means for the mesh cover dilation. Two tiles cover the
+// same ground when they are the same tile, or one is an ancestor of the other in the quadtree
+// (same wrap - a different wrap is a different copy of the world and never overlaps, however
+// the x/y compare). This is deliberately NOT a frustum test: frustumCull answers "is this
+// tile's (elevation-extended) footprint on screen", which a culled coarse tile and a visible
+// fine descendant can both answer "yes" to while covering the identical ground - that is
+// exactly the fault the one-ring dilation had (a z12 neighbour landing on z13/z14/z15 tiles
+// the cover already held). Whether two tiles overlap is a property of their coordinates alone,
+// never of visibility, so a visibility test can never substitute for this one.
+bool tilesOverlap(const UnwrappedTileID& a, const UnwrappedTileID& b) {
+    if (a.wrap != b.wrap) {
+        return false;
+    }
+    if (a.canonical.z == b.canonical.z) {
+        return a.canonical.x == b.canonical.x && a.canonical.y == b.canonical.y;
+    }
+    return a.isChildOf(b) || b.isChildOf(a);
+}
+
+// DuckMaps fork only: whether `tile`'s ENTIRE footprint is already spoken for by a single
+// coarser-or-equal tile in `tiles` - the only case where dropping `tile` outright loses no
+// ground, because that one existing tile's footprint is a superset of `tile`'s.
+bool hasAncestorOrSelfIn(const UnwrappedTileID& tile, const std::set<UnwrappedTileID>& tiles) {
+    for (const auto& t : tiles) {
+        if (t.wrap == tile.wrap && (t == tile || tile.isChildOf(t))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// DuckMaps fork only: whether `tiles` holds anything strictly INSIDE `tile`'s footprint - i.e.
+// `tile` is at least partially (maybe, but not provably, wholly) already covered from below.
+// On its own this says nothing about the rest of `tile`'s area, which is exactly why a
+// dilation candidate cannot simply be rejected on this alone (see collectUncoveredParts).
+bool hasDescendantIn(const UnwrappedTileID& tile, const std::set<UnwrappedTileID>& tiles) {
+    for (const auto& t : tiles) {
+        if (t.wrap == tile.wrap && t.isChildOf(tile)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// DuckMaps fork only: the exact ground-level fix for the dilation's overlap fault. Rejecting a
+// whole dilation candidate the moment ANY part of it overlaps `out` was the first attempt at
+// this fix, and it traded one regression for another: a coarse frontier neighbour typically
+// overlaps `out` only along the narrow strip where the view frustum's own boundary cuts across
+// its footprint (that boundary has no reason to land on a tile edge), so most of that
+// neighbour's area is genuinely new ground the dilation exists to add - rejecting the whole
+// tile for a sliver of overlap reintroduced the skirts/holes the dilation itself was written to
+// prevent (measured: paper - the style's own background colour - appearing in the bottom-400-row
+// count of five of nine regression viewpoints at pitch 60, worse than the pre-fix baseline).
+//
+// The correct operation is a set difference at tile granularity: split `tile` into quadrants
+// only where `out` actually has something inside it, recursing until each remaining piece is
+// either wholly new ground (kept whole, no need to split further) or wholly already covered by
+// a single existing coarser-or-equal tile (dropped, contributing nothing). This is a pure
+// function of `tile` and the fixed (pre-dilation) `out` - it never looks at other dilation
+// candidates - so which frontier tile's neighbour loop visits `tile` first cannot change the
+// result. Recursion is bounded by `maxZ` (the deepest zoom already present in `out`, so it
+// never runs deeper than the data it is comparing against) purely as a safety net: in practice
+// it terminates within one or two levels, because it only ever descends where `out` already has
+// a tile to compare against.
+void collectUncoveredParts(const UnwrappedTileID& tile,
+                            const std::set<UnwrappedTileID>& out,
+                            uint8_t maxZ,
+                            std::set<UnwrappedTileID>& result) {
+    if (hasAncestorOrSelfIn(tile, out)) {
+        return; // wholly redundant - a single existing tile already spans all of this ground
+    }
+    if (!hasDescendantIn(tile, out)) {
+        result.insert(tile); // wholly new ground - keep it whole, no finer split needed
+        return;
+    }
+    if (tile.canonical.z >= maxZ) {
+        return; // safety net only (see comment above): never observed to trigger in practice
+    }
+    for (const auto& child : tile.children()) {
+        collectUncoveredParts(child, out, maxZ, result);
+    }
+}
+
+// DuckMaps fork only: the overlapping-pair diagnostic this task measures before and after the
+// dilation fix (see tilesOverlap above). O(n^2) over a mesh cover's tile count - tens of tiles
+// - so this is only ever computed on the debug trace path (see meshCoverTraceEnabled), never
+// in a normal frame.
+int countOverlappingPairs(const std::set<UnwrappedTileID>& tiles) {
+    int count = 0;
+    const std::vector<UnwrappedTileID> v(tiles.begin(), tiles.end());
+    for (std::size_t i = 0; i < v.size(); ++i) {
+        for (std::size_t j = i + 1; j < v.size(); ++j) {
+            if (tilesOverlap(v[i], v[j])) {
+                ++count;
+            }
+        }
+    }
+    return count;
+}
+
+// DuckMaps fork only: same shape as TerrainContourLayerTweaker's contourTraceEnabled()/
+// contourTraceSlot() - getenv checked once (static), the slot holds at most one frame's worth
+// of JSON and is cleared on drain (and on any early return out of computeMeshCover), so a
+// frame where terrain has no DEM source correctly reports "null" rather than repeating a
+// stale frame's counts.
+bool meshCoverTraceEnabled() {
+    static const bool enabled = [] {
+        const char* path = std::getenv("DUCKMAPS_ELEVATION_TRACE");
+        return path && *path;
+    }();
+    return enabled;
+}
+
+std::optional<std::string>& meshCoverTraceSlot() {
+    static std::optional<std::string> slot;
+    return slot;
+}
+
 } // namespace
 
 RenderTerrain::RenderTerrain(Immutable<style::Terrain::Impl> impl_)
@@ -87,6 +207,14 @@ RenderTerrain::~RenderTerrain() = default;
 std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     const TransformState& state, const std::shared_ptr<UpdateParameters>& updateParameters) const {
     std::set<UnwrappedTileID> out;
+    // DuckMaps fork only: clear any previous frame's trace before the early returns below, so
+    // a frame with no DEM source (or a zoom too shallow for any cover at all) correctly drains
+    // as "null" rather than repeating a stale frame's counts - same reasoning as
+    // TerrainContourLayerTweaker's own trace slot.
+    const bool traceMeshCover = meshCoverTraceEnabled();
+    if (traceMeshCover) {
+        meshCoverTraceSlot().reset();
+    }
     if (!demSource) {
         return out;
     }
@@ -143,6 +271,14 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
         out.insert(id.toUnwrapped());
     }
 
+    // DuckMaps fork only: trace point 1/3 - util::tileCover's own raw output, before this
+    // function touches it at all. Whether THIS set already contains overlapping pairs is a
+    // separate question from the dilation fix below (tileCover is a disjoint quadtree DFS, so
+    // it should not, but that is worth confirming rather than assuming) - see this task's own
+    // report for the measured count.
+    const std::size_t preDilationCount = out.size();
+    const int preDilationOverlapPairs = traceMeshCover ? countOverlappingPairs(out) : 0;
+
     // One-ring cover dilation. tileCover is a top-down DFS that only descends into tiles
     // whose (sea-level) ancestor intersects the frustum, so a frontier tile whose terrain
     // rises into view but whose flat ancestor was culled is never even visited - it stays
@@ -153,8 +289,50 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     // not-yet-loaded neighbours). The elevation sign decides which neighbours survive, so
     // this is correct for terrain above OR below sea level (bathymetry) without hardcoding
     // a direction; the frustum trim stops it from tripling the cover like a blind ring
-    // would. Drop the frustumCull line to fall back to a pure uniform 1-ring dilation.
-    std::set<UnwrappedTileID> dilated = out;
+    // would.
+    //
+    // The frustum trim alone is not enough: it answers "is this neighbour's footprint on
+    // screen", never "does the cover already have this ground at another zoom" - a culled
+    // coarse tile's neighbour, AT THAT SAME COARSE ZOOM, can be squarely on screen and still
+    // land on top of finer tiles the cover already holds (a z12 frontier tile's z12 neighbour
+    // over z13/z14/z15 tiles already in `out`), which is exactly the fault this dilation had:
+    // the same ground meshed, draped and contour-painted twice, in an order that follows tile
+    // load and so varies between otherwise identical runs.
+    //
+    // Rejecting a whole raw neighbour tile the moment ANY part of it overlaps `out`, and
+    // splitting a raw neighbour into its uncovered quadrants BEFORE the frustum trim, were both
+    // tried and both measured wrong in the same direction: paper (the style's own background
+    // colour) increased in the bottom 400 rows of several regression viewpoints at pitch 60
+    // versus the pre-fix baseline, on ground the OLD blind dilation used to mesh. The frustum
+    // trim (frustumCull, below) tests each tile's OWN elevation-extended footprint against the
+    // view frustum, and a coarse whole tile is far more likely to graze the frustum boundary
+    // than the small quadrant of it that is the ONLY part actually free of overlap - splitting
+    // first, or rejecting first, means the trim only ever gets to test the small piece, which a
+    // dilation ring sitting right at the frustum's edge can legitimately fail even though the
+    // coarse whole tile - the thing the OLD code actually tested - passed. So visibility is
+    // decided FIRST, on the exact raw whole-tile footprints the old blind dilation itself used
+    // (`dilated` below is built the same way it always was: every 8-neighbour, unfiltered),
+    // and only tiles that survive that same frustum trim are then split to remove whatever
+    // duplicates `out`. A tile already known to be visible does not need re-testing at a
+    // smaller size to stay visible.
+    //
+    // De-duplication happens in two passes over the post-cull result. First, each surviving
+    // raw neighbour is reduced to collectUncoveredParts(neighbour, out, ...) - its set
+    // difference against the ORIGINAL (pre-dilation, fixed) `out`, never against a set the loop
+    // is simultaneously growing, so this does not depend on which neighbour is visited first.
+    // Second, candidates from DIFFERENT raw neighbours can still overlap EACH OTHER (two
+    // different frontier tiles can each propose ground that nests one inside the other, with
+    // neither overlapping `out`); resolved by keeping only the candidates that are not
+    // themselves a descendant of some OTHER candidate, i.e. keeping the COARSEST tile offered
+    // for any patch of new ground and dropping its finer duplicates - coverage-preserving
+    // because an ancestor's footprint is a strict superset of every descendant's, and a pure
+    // function of the fixed candidate set (never "what was added already"), so this pass is
+    // order-independent for the same reason the first one is.
+    uint8_t maxOutZ = zoomRange.min;
+    for (const auto& id : out) {
+        maxOutZ = std::max(maxOutZ, id.canonical.z);
+    }
+    std::set<UnwrappedTileID> rawNeighbours;
     for (const auto& id : out) {
         const int32_t numTiles = 1 << id.canonical.z;
         for (int dy = -1; dy <= 1; ++dy) {
@@ -171,14 +349,47 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
                     nx -= numTiles;
                     ++nwrap;
                 }
-                dilated.emplace(static_cast<int16_t>(nwrap),
-                                CanonicalTileID(id.canonical.z, static_cast<uint32_t>(nx), static_cast<uint32_t>(ny)));
+                rawNeighbours.emplace(static_cast<int16_t>(nwrap),
+                                      CanonicalTileID(id.canonical.z, static_cast<uint32_t>(nx), static_cast<uint32_t>(ny)));
             }
         }
     }
+    std::set<UnwrappedTileID> dilated = out;
+    dilated.insert(rawNeighbours.begin(), rawNeighbours.end());
     if (dilated.size() != out.size()) {
-        out = util::frustumCull(coverParams, dilated);
+        dilated = util::frustumCull(coverParams, dilated);
     }
+    // Everything visible that is not one of the original `out` tiles: the raw neighbours that
+    // survived the SAME frustum trim the old blind dilation relied on.
+    std::set<UnwrappedTileID> visibleNeighbours;
+    for (const auto& id : dilated) {
+        if (out.find(id) == out.end()) {
+            visibleNeighbours.insert(id);
+        }
+    }
+    std::set<UnwrappedTileID> candidates;
+    for (const auto& neighbour : visibleNeighbours) {
+        collectUncoveredParts(neighbour, out, maxOutZ, candidates);
+    }
+    std::set<UnwrappedTileID> survivors;
+    for (const auto& candidate : candidates) {
+        bool isDescendantOfAnotherCandidate = false;
+        for (const auto& other : candidates) {
+            if (other != candidate && candidate.isChildOf(other)) {
+                isDescendantOfAnotherCandidate = true;
+                break;
+            }
+        }
+        if (!isDescendantOfAnotherCandidate) {
+            survivors.insert(candidate);
+        }
+    }
+    out.insert(survivors.begin(), survivors.end());
+
+    // DuckMaps fork only: trace point 2/3 - after the dilation and its frustum trim, before
+    // the tile-count cap below.
+    const std::size_t postDilationCount = out.size();
+    const int postDilationOverlapPairs = traceMeshCover ? countOverlappingPairs(out) : 0;
 
     // Cap the mesh tile count: keep those nearest the map centre, drop the farthest (the
     // horizon tiles a high tilt pulls in). Everything downstream scales with this count -
@@ -217,6 +428,20 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
             sorted.end(),
             [&](const UnwrappedTileID& a, const UnwrappedTileID& b) { return tileDist2(a) < tileDist2(b); });
         out = std::set<UnwrappedTileID>(sorted.begin(), sorted.begin() + static_cast<std::ptrdiff_t>(maxMeshTiles));
+    }
+
+    // DuckMaps fork only: trace point 3/3 - the final cover this frame will mesh, drape and
+    // draw contours over. Written once here rather than incrementally, so a frame that returns
+    // early above (no DEM source, zoom below range) leaves the slot cleared instead of holding
+    // a partial record.
+    if (traceMeshCover) {
+        std::ostringstream os;
+        os << "{\"preDilationCount\":" << preDilationCount
+           << ",\"preDilationOverlapPairs\":" << preDilationOverlapPairs
+           << ",\"postDilationCount\":" << postDilationCount
+           << ",\"postDilationOverlapPairs\":" << postDilationOverlapPairs << ",\"finalCount\":" << out.size()
+           << ",\"finalOverlapPairs\":" << countOverlappingPairs(out) << "}";
+        meshCoverTraceSlot() = os.str();
     }
 
     return out;
@@ -912,6 +1137,16 @@ std::size_t RenderTerrain::terrainSettleSignature() const {
         total += h;
     }
     return total;
+}
+
+std::string RenderTerrain::debugDrainMeshCoverDilationTraceJSON() {
+    auto& slot = meshCoverTraceSlot();
+    if (!slot) {
+        return "null";
+    }
+    std::string result = std::move(*slot);
+    slot.reset();
+    return result;
 }
 
 std::string RenderTerrain::debugMeshTileTiersJSON() const {

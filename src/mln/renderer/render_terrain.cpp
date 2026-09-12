@@ -55,6 +55,7 @@
 #include <cstring>
 #include <functional>
 #include <iomanip>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <unordered_set>
@@ -77,6 +78,30 @@ DEMSubTileOffset demSubTileOffset(const CanonicalTileID& child, const CanonicalT
     return {static_cast<float>(1u << dz),
             static_cast<float>(child.x - (ancestor.x << dz)),
             static_cast<float>(child.y - (ancestor.y << dz))};
+}
+
+// DuckMaps fork only, task E-vanish: the reverse of demSubTileOffset above. A requester can be
+// COARSER than every resident DEM texture - not just finer, which is the only direction
+// demSubTileOffset/getTerrainData's ancestor search originally handled. This happens whenever a
+// layer's own tile pyramid is capped below the DEM's (terrain-line's vector source has its own
+// maxzoom, e.g. 14, and never refines past it, while the terrain mesh keeps refining the DEM as
+// the camera zooms in - exactly the "meshing shallower than the DEM" case
+// RenderTerrain::update()'s own comment names and the mesh cover's zoomRange floor exists to
+// avoid FOR ITSELF; terrain-line has no such floor to avoid it with, because its tile pyramid
+// belongs to a different source entirely with a real, load-bearing maxzoom of its own).
+//
+// `descendant` covers exactly one 1/2^dz quadrant of `parent`'s own footprint. Sampling a point
+// in `parent`'s local space against `descendant`'s texture at the returned scale/offset lands in
+// [0,1] for that one quadrant and outside [0,1] - clamped to the texture's edge texel by the
+// sampler - everywhere else: real DEM data for the quadrant it has, the same kind of
+// approximation the ancestor path above already makes (a coarser stand-in) when the exact tile
+// has not loaded yet, just in the other direction.
+DEMSubTileOffset demSubTileOffsetFromDescendant(const CanonicalTileID& parent, const CanonicalTileID& descendant) {
+    const int dz = descendant.z - parent.z;
+    const float scale = static_cast<float>(1u << dz);
+    return {scale,
+            -static_cast<float>(descendant.x - (parent.x << dz)),
+            -static_cast<float>(descendant.y - (parent.y << dz))};
 }
 
 // DuckMaps fork only, debug instrumentation for task R1A: 64-bit FNV-1a, folded over `data` and
@@ -1291,18 +1316,46 @@ std::optional<RenderTerrain::TerrainData> RenderTerrain::getTerrainData(const Un
             entry = &candidateEntry;
         }
     }
-    if (!entry || !entry->texture) {
+    if (entry && entry->texture) {
+        // Map tile-local coordinates (0..EXTENT) of the requested tile into
+        // normalized coordinates (0..1) of the (possibly ancestor) DEM tile
+        const auto off = demSubTileOffset(tileID.canonical, demTileID->canonical);
+
+        return TerrainData{
+            .demTexture = entry->texture,
+            .demCoords = {{1.0f / (util::EXTENT * off.scale), off.dx / off.scale, off.dy / off.scale, 0.0f}},
+            .demDim = static_cast<float>(entry->dim),
+        };
+    }
+
+    // DuckMaps fork only, task E-vanish: tileID itself can be coarser than every resident DEM
+    // texture - see demSubTileOffsetFromDescendant's own comment above for why. Fall back to the
+    // finest resident DESCENDANT of tileID (the one covering the largest fraction of it, i.e. the
+    // smallest dz), rather than leaving the caller with nothing: real elevation for the quadrant
+    // it covers beats a flat, unelevated line for the whole tile, which the depth-texture
+    // occlusion test then discards outright against the real (elevated) terrain surface beneath
+    // it. Ties (more than one resident tile at the same smallest z) are broken by demTextures'
+    // own std::map order, deterministically, not by which tile happened to load first.
+    const UnwrappedTileID* descendantID = nullptr;
+    const DEMTextureEntry* descendantEntry = nullptr;
+    int bestDescendantZoom = std::numeric_limits<int>::max();
+    for (const auto& [candidate, candidateEntry] : demTextures) {
+        if (candidate.wrap == tileID.wrap && candidate.canonical.isChildOf(tileID.canonical) &&
+            static_cast<int>(candidate.canonical.z) < bestDescendantZoom) {
+            bestDescendantZoom = candidate.canonical.z;
+            descendantID = &candidate;
+            descendantEntry = &candidateEntry;
+        }
+    }
+    if (!descendantEntry || !descendantEntry->texture) {
         return std::nullopt;
     }
 
-    // Map tile-local coordinates (0..EXTENT) of the requested tile into
-    // normalized coordinates (0..1) of the (possibly ancestor) DEM tile
-    const auto off = demSubTileOffset(tileID.canonical, demTileID->canonical);
-
+    const auto off = demSubTileOffsetFromDescendant(tileID.canonical, descendantID->canonical);
     return TerrainData{
-        .demTexture = entry->texture,
-        .demCoords = {{1.0f / (util::EXTENT * off.scale), off.dx / off.scale, off.dy / off.scale, 0.0f}},
-        .demDim = static_cast<float>(entry->dim),
+        .demTexture = descendantEntry->texture,
+        .demCoords = {{off.scale / util::EXTENT, off.dx, off.dy, 0.0f}},
+        .demDim = static_cast<float>(descendantEntry->dim),
     };
 }
 
@@ -1310,7 +1363,8 @@ std::optional<UnwrappedTileID> RenderTerrain::debugDemTileIdForTile(const Unwrap
     // DuckMaps fork only, task C7: same resolution loop as getTerrainData above (kept in sync
     // with it deliberately - see this method's own doc comment in the header for why a second
     // copy exists rather than changing getTerrainData's return type), returning the WINNING
-    // tile id instead of its texture.
+    // tile id instead of its texture. Task E-vanish: the descendant fallback is mirrored here
+    // too, so the trace names the same tile getTerrainData actually bound.
     const UnwrappedTileID* demTileID = nullptr;
     int bestZoom = -1;
     for (const auto& [candidate, candidateEntry] : demTextures) {
@@ -1320,10 +1374,23 @@ std::optional<UnwrappedTileID> RenderTerrain::debugDemTileIdForTile(const Unwrap
             demTileID = &candidate;
         }
     }
-    if (!demTileID) {
+    if (demTileID) {
+        return *demTileID;
+    }
+
+    const UnwrappedTileID* descendantID = nullptr;
+    int bestDescendantZoom = std::numeric_limits<int>::max();
+    for (const auto& [candidate, candidateEntry] : demTextures) {
+        if (candidate.wrap == tileID.wrap && candidate.canonical.isChildOf(tileID.canonical) &&
+            static_cast<int>(candidate.canonical.z) < bestDescendantZoom) {
+            bestDescendantZoom = candidate.canonical.z;
+            descendantID = &candidate;
+        }
+    }
+    if (!descendantID) {
         return std::nullopt;
     }
-    return *demTileID;
+    return *descendantID;
 }
 
 const std::shared_ptr<gfx::Texture2D>& RenderTerrain::getPlaceholderDEMTexture(gfx::Context& context) {

@@ -8,6 +8,22 @@
 namespace mln {
 
 struct DebugDrawableUBOEntry;
+class PaintParameters;
+
+// Task 2.2: routes3d.js's OCCLUSION_EPS_DEFAULT (:133) - a fixed NDC-z tolerance alone buys
+// unbounded metres of terrain at distance, so the shader takes the smaller of this constant and
+// a metres-based margin converted to NDC z at each fragment (occlusionFarNDC() below). Shared
+// with terrain-contour's own depth-texture occlusion test (task: contour behind a ridge) rather
+// than a second copy of the same tuned constant - David's rule that a tuned value has one
+// definition.
+constexpr float OCCLUSION_EPS_DEFAULT = 0.002f;
+constexpr float OCCLUSION_EPS_M_DEFAULT = 60.0f;
+
+// Ported from the web engine's occlusionFar(m) (routes3d.js:1381-1395) - see
+// terrain_line_layer_tweaker.cpp's own copy of this comment (now moved here) for the full
+// derivation. Computed ONCE PER FRAME by whichever layer's tweaker calls it (it depends only on
+// the projection matrix and the map centre, not on any tile or any layer's own properties).
+float occlusionFarNDC(const PaintParameters& parameters, float occlusionEpsM);
 
 // DuckMaps fork only. Which pass a terrain-line drawable belongs to - stored via
 // gfx::Drawable::setType/getType, the same generic per-drawable "which variant" slot

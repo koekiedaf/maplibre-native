@@ -70,9 +70,18 @@ struct alignas(16) TerrainContourTilePropsUBO {
     /* 36 */ float dem_exaggeration;
     /* 40 */ float dem_enabled;
     /* 44 */ float reference_w;
-    /* 48 */
+    // Task: terrain depth-texture occlusion test, see terrain_contour_layer_ubo.hpp's comment
+    // on the C++ twin of this struct for the full reasoning.
+    /* 48 */ float occlusion_eps;
+    /* 52 */ float occlusion_far;
+    /* 56 */ float2 depth_texel;
+    /* 64 */ float depth_enabled;
+    /* 68 */ float pad1;
+    /* 72 */ float pad2;
+    /* 76 */ float pad3;
+    /* 80 */
 };
-static_assert(sizeof(TerrainContourTilePropsUBO) == 3 * 16, "wrong size");
+static_assert(sizeof(TerrainContourTilePropsUBO) == 5 * 16, "wrong size");
 
 struct alignas(16) TerrainContourEvaluatedPropsUBO {
     /*  0 */ float4 minor_color;
@@ -99,7 +108,7 @@ struct ShaderSource<BuiltIn::TerrainContourShader, gfx::Backend::Type::Metal> {
 
     static const std::array<AttributeInfo, 1> attributes;
     static constexpr std::array<AttributeInfo, 0> instanceAttributes{};
-    static const std::array<TextureInfo, 1> textures;
+    static const std::array<TextureInfo, 2> textures;
 
     static constexpr auto prelude = terrainContourShaderPrelude;
     static constexpr auto source = R"(
@@ -116,6 +125,13 @@ struct FragmentStage {
     float4 position [[position, invariant]];
     float2 pos_extent;
     float skirt;
+    // Task: the terrain depth-texture occlusion test - the raw clip-space position (BEFORE the
+    // depth_bias pull below and before the rasterizer's own perspective divide), matching
+    // terrain_line.hpp's v_center exactly. `in.position` cannot be reused for this: on Metal a
+    // fragment [[position]] is already in pixel/window coordinates with z remapped to [0,1] by
+    // the depth_bias-adjusted write below, not the NDC xyz the occlusion test needs to compare
+    // against the depth texture's own UV space.
+    float4 center;
 };
 
 struct FragmentOut {
@@ -160,6 +176,10 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
                                           drawable.dem_dim, drawable.dem_exaggeration, drawable.dem_enabled);
 
     float4 p = drawable.matrix * float4(pos, elevation, 1.0);
+    // Captured BEFORE the depth_bias pull below, same as terrain_line.hpp's `center = p0` -
+    // the occlusion test in fragmentMain needs this tile's true, unbiased position to look up
+    // the terrain depth texture, not the self-z-fight-avoidance value written to gl_Position.
+    const float4 center = p;
     // A small constant pull toward the camera in NDC z, scaled by w - this mesh sits exactly on
     // RenderTerrain's own terrain mesh (the SAME shared vertex/index buffers), so the two depth
     // values would otherwise differ only by floating-point noise between two independently
@@ -170,6 +190,7 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
         .position   = p,
         .pos_extent = pos,
         .skirt      = float(vertx.pos.z),
+        .center     = center,
     };
 }
 
@@ -178,7 +199,9 @@ FragmentOut fragment fragmentMain(FragmentStage in [[stage_in]],
                                   device const TerrainContourTilePropsUBO* tilePropsVector [[buffer(idTerrainContourTilePropsUBO)]],
                                   device const TerrainContourEvaluatedPropsUBO& props [[buffer(idTerrainContourEvaluatedPropsUBO)]],
                                   texture2d<float, access::sample> demTexture [[texture(0)]],
-                                  sampler demSampler [[sampler(0)]]) {
+                                  sampler demSampler [[sampler(0)]],
+                                  texture2d<float, access::sample> depthTexture [[texture(1)]],
+                                  sampler depthSampler [[sampler(1)]]) {
     FragmentOut out;
 
     // Slope-scaled depth bias (contours3d.js SLOPE_BIAS = 8.0): pulls a fragment toward the
@@ -210,6 +233,52 @@ FragmentOut fragment fragmentMain(FragmentStage in [[stage_in]],
     if (in.skirt > 0.5) {
         out.color = half4(0.0);
         return out;
+    }
+
+    // Task: the terrain depth-texture occlusion test, ported onto terrain-contour from
+    // terrain-line's own fragmentMain (task 2.2) - see terrain_contour_layer_ubo.hpp's comment on
+    // TerrainContourTilePropsUBO for why contour needs this IN ADDITION to (not instead of) its
+    // own hardware depth test/SLOPE_BIAS above: that hardware test can be won, at a grazing
+    // angle, by a fragment on ground the camera cannot actually see. This test reads the SAME
+    // pre-rendered terrain depth pass ribbons use, which carries no slope bias, so it catches
+    // exactly the case the biased hardware test can miss.
+    if (tileProps.depth_enabled > 0.5) {
+        const float3 c = in.center.xyz / in.center.w;
+        // common.hpp's unpack_depth() hands back GL NDC z in [-1, 1] - see that function's own
+        // comment: the depth pass packs Metal window depth in [0, 1] (rendered with a
+        // [0,1]-remapped matrix, exactly like this shader's own vertex stage below), then
+        // unpack_depth() converts BACK to GL [-1, 1] for callers whose own clip z is in that
+        // convention - which terrain-line's c.z is (its matrix, built via
+        // LayerTweaker::getTileMatrix, carries no such remap). This shader's `in.center` comes
+        // from the SAME remapped matrix TerrainContourDrawableUBO::matrix carries (this file's
+        // vertexMain, matching RenderTerrain's own matrixForTile remap) - Metal [0, 1] - so c.z
+        // must be converted to the same GL [-1, 1] convention before comparing against
+        // unpack_depth()'s result, or every fragment compares a [0,1] value against a [-1,1] one
+        // and (given typical depths land past the texture's own [-1,1] range's midpoint) fails
+        // almost everywhere: this was measured directly - the fix below took the occlusion test
+        // from discarding every contour fragment in the frame back to only the ones actually
+        // hidden behind a ridge.
+        const float cz = c.z * 2.0 - 1.0;
+        // common.hpp's depth_opacity() samples the depth texture at (uv.x, 1.0 - uv.y) - our own
+        // y convention is flipped relative to clip space. Match it here for the same reason.
+        const float2 uv = float2(c.x * 0.5 + 0.5, 1.0 - (c.y * 0.5 + 0.5));
+        // The texture is at CSS-pixel size, nearest-sampled: on a steep face the texel under this
+        // fragment can belong to a neighbouring pixel whose terrain is metres nearer. The
+        // farthest of the 3x3 texels around it decides, exactly like terrain-line's own test.
+        float terrain = 0.0;
+        for (int j = -1; j <= 1; j++) {
+            for (int i = -1; i <= 1; i++) {
+                const float4 rgba = depthTexture.sample(depthSampler,
+                                                        uv + float2(float(i), float(j)) * tileProps.depth_texel);
+                terrain = max(terrain, unpack_depth(rgba));
+            }
+        }
+        const float eps = min(tileProps.occlusion_eps,
+                              tileProps.occlusion_far / max(in.center.w * in.center.w, 1e-6));
+        if (terrain + eps < cz) {
+            out.color = half4(0.0);
+            return out;
+        }
     }
 
     const float e = get_elevation(in.pos_extent, demTexture, demSampler, tileProps.dem_coords, tileProps.dem_unpack,

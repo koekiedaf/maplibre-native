@@ -475,6 +475,11 @@ enum {
 
 enum {
     idTerrainContourDEMTexture,
+    // Task: the terrain depth-texture occlusion test, ported onto terrain-contour from
+    // terrain-line's own idTerrainLineDepthTexture (task 2.2) - see
+    // terrain_contour_layer_ubo.hpp's TerrainContourTilePropsUBO comment for why contour needed
+    // this too.
+    idTerrainContourDepthTexture,
     terrainContourTextureCount
 };
 

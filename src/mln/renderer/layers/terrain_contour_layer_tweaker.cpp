@@ -1,4 +1,5 @@
 #include <mln/renderer/layers/terrain_contour_layer_tweaker.hpp>
+#include <mln/renderer/layers/terrain_line_layer_tweaker.hpp>
 
 #include <mln/gfx/context.hpp>
 #include <mln/gfx/drawable.hpp>
@@ -315,6 +316,27 @@ void TerrainContourLayerTweaker::execute(LayerGroupBase& layerGroup, const Paint
     const float referenceRatio = evaluated.get<TerrainContourReferenceRatio>();
     const float pixelScale = referenceRatio > 0.f ? parameters.pixelRatio / referenceRatio : 1.f;
 
+    // Task: the terrain depth-texture occlusion test, ported onto terrain-contour from
+    // terrain-line's own TerrainLineLayerTweaker::execute (task 2.2) - see
+    // terrain_contour_layer_ubo.hpp's comment on TerrainContourTilePropsUBO for why. All four of
+    // these are FRAME-level facts (the depth texture is one shared render target; the projection
+    // matrix and terrain-on/off do not vary per tile), computed once here exactly like
+    // terrain-line's own copy, and copied into every tile's TilePropsUBO entry below.
+    const bool terrainEnabledForOcclusion = parameters.terrain && parameters.terrain->isEnabled();
+    const std::shared_ptr<gfx::Texture2D> depthTexture = parameters.terrain
+                                                             ? parameters.terrain->getDepthTexture(context)
+                                                             : nullptr;
+    // RenderTerrain::getDepthTexture() falls back to a 1x1 far-plane placeholder whenever the
+    // depth pass has not produced a real texture yet - texture size is the only public signal
+    // that tells the two apart, so depth_enabled follows it rather than terrainEnabledForOcclusion
+    // alone (same reasoning as terrain-line's own hasRealDepthTexture).
+    const bool hasRealDepthTexture = depthTexture && depthTexture->getSize() != Size{1, 1};
+    const float depthEnabled = (terrainEnabledForOcclusion && hasRealDepthTexture) ? 1.0f : 0.0f;
+    const Size depthSize = hasRealDepthTexture ? depthTexture->getSize() : Size{1, 1};
+    const std::array<float, 2> depthTexel = {1.0f / static_cast<float>(depthSize.width),
+                                             1.0f / static_cast<float>(depthSize.height)};
+    const float occlusionFar = occlusionFarNDC(parameters, OCCLUSION_EPS_M_DEFAULT);
+
     if (!evaluatedPropsUniformBuffer || propertiesUpdated) {
         const TerrainContourEvaluatedPropsUBO evaluatedPropsUBO = {
             .minor_color = premultiply(evaluated.get<TerrainContourMinorColor>(),
@@ -417,10 +439,14 @@ void TerrainContourLayerTweaker::execute(LayerGroupBase& layerGroup, const Paint
             drawable.setTexture(
                 terrainData ? terrainData->demTexture : parameters.terrain->getPlaceholderDEMTexture(context),
                 idTerrainContourDEMTexture);
+            // Packed terrain depth for the occlusion test below (same pattern as terrain-line's
+            // own binding; the texture itself is fetched once per frame above).
+            drawable.setTexture(depthTexture, idTerrainContourDepthTexture);
         } else {
-            // Keep the declared DEM sampler bound for Metal API validation (never sampled -
+            // Keep the declared DEM/depth samplers bound for Metal API validation (never sampled -
             // update() already tears this layer's drawables down whenever terrain is off).
             drawable.setTexture(context.getPlaceholderTexture2D(), idTerrainContourDEMTexture);
+            drawable.setTexture(context.getPlaceholderTexture2D(), idTerrainContourDepthTexture);
         }
 
         const auto demCoords = terrainData ? terrainData->demCoords : std::array<float, 4>{{0, 0, 0, 0}};
@@ -457,6 +483,13 @@ void TerrainContourLayerTweaker::execute(LayerGroupBase& layerGroup, const Paint
             .dem_exaggeration = demExaggeration,
             .dem_enabled = demEnabled,
             .reference_w = referenceW,
+            .occlusion_eps = OCCLUSION_EPS_DEFAULT,
+            .occlusion_far = occlusionFar,
+            .depth_texel = depthTexel,
+            .depth_enabled = depthEnabled,
+            .pad1 = 0.0f,
+            .pad2 = 0.0f,
+            .pad3 = 0.0f,
         };
 
         // DuckMaps fork only, task C7: the per-drawable UBO/texture trace entry, built from the

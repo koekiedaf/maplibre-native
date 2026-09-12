@@ -9,8 +9,9 @@ using TerrainContourShaderSource = ShaderSource<BuiltIn::TerrainContourShader, g
 const std::array<AttributeInfo, 1> TerrainContourShaderSource::attributes = {
     AttributeInfo{0, gfx::AttributeDataType::Short4, terrainContourUBOCount + 0, idTerrainContourPosVertexAttribute},
 };
-const std::array<TextureInfo, 1> TerrainContourShaderSource::textures = {
+const std::array<TextureInfo, 2> TerrainContourShaderSource::textures = {
     TextureInfo{0, idTerrainContourDEMTexture},
+    TextureInfo{1, idTerrainContourDepthTexture},
 };
 
 } // namespace shaders

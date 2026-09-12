@@ -81,69 +81,6 @@ float computeReferenceClipW(const PaintParameters& parameters) {
     return static_cast<float>(clip[3]);
 }
 
-// Task 2.2: routes3d.js's OCCLUSION_EPS_DEFAULT (:133) and OCCLUSION_EPS_M_DEFAULT (:173) - see
-// occlusionFarNDC()'s comment below for the argument (routes3d.js:111-175) for why both exist:
-// a fixed NDC-z tolerance alone buys unbounded metres of terrain at distance, so the shader takes
-// the smaller of this constant and a metres-based margin converted to NDC z at each fragment.
-constexpr float OCCLUSION_EPS_DEFAULT = 0.002f;
-constexpr float OCCLUSION_EPS_M_DEFAULT = 60.0f;
-
-// Ported from the web engine's occlusionFar(m) (routes3d.js:1381-1395): the frame's own
-// conversion from "metres of terrain depth" to the single NDC-z-per-(1/w^2) constant the
-// fragment shader divides by v_center.w^2 (terrain_line.hpp's fragmentMain). Computed ONCE PER
-// FRAME (it depends only on the projection matrix and the map centre, not on any tile), unlike
-// dash_period/dash_on below which are per-tile.
-//
-// For a perspective projection, clip z and clip w are both affine in position and z_ndc depends
-// on w alone: z_ndc = A + B/w, so dz_ndc/dm along the view axis is (a*w - zc*b) / w^2, where a and
-// b are clip z's and clip w's own rate per metre along that axis - the same numerator (k below)
-// everywhere in the frame, which is exactly the constant wanted. It is read straight off the
-// frame's own projection matrix (mln::matrix::transformMat4's column-major convention - verified
-// against mat4.cpp's own out[3] = m[3]*x + m[7]*y + m[11]*z + m[15]*w formula, which is exactly
-// routes3d.js's `w = m[3]*p[0] + m[7]*p[1] + m[11]*z + m[15]`), evaluated at the map centre at sea
-// level, with no assumption about near/far planes: the view axis is the direction clip w grows
-// fastest in, which is the matrix's own w row (m[3], m[7], m[11]).
-//
-// The four inputs, and where this engine gets each one (routes3d.js reads all four off its own
-// mainMatrix/state in normalised [0,1] mercator world units; this port uses the SAME world-PIXEL
-// mercator convention computeReferenceClipW() above already uses with the SAME projection matrix,
-// which differs from the web's only by a constant scale baked consistently into both the matrix
-// and the positions, so the derivation carries over unchanged):
-//   1. the projection matrix m       - parameters.transformParams.projMatrix (paint_parameters.hpp)
-//   2. the map centre in mercator    - Projection::project(state.getLatLng(), state.getScale())
-//                                      (util/projection.hpp), at z = 0 (sea level, matching the
-//                                      web's own zc0/w0 - see routes3d.js:1389-1392)
-//   3. metres-to-mercator factor mz  - 1 / Projection::getMetersPerPixelAtLatitude(lat, zoom)
-//                                      (util/projection.hpp), i.e. world-pixel units per metre -
-//                                      the exact reciprocal of computeReferenceClipW's own
-//                                      metresPerPixel, at the SAME latitude/zoom
-//   4. the centre's clip z and w     - zc0 = m[2]*pc.x + m[6]*pc.y + m[14] (no z term - sea level)
-//                                      w0  = m[3]*pc.x + m[7]*pc.y + m[15]
-float occlusionFarNDC(const PaintParameters& parameters, float occlusionEpsM) {
-    const mat4& m = parameters.transformParams.projMatrix;
-    const double gx = m[3];
-    const double gy = m[7];
-    const double gz = m[11];
-    const double g = std::sqrt(gx * gx + gy * gy + gz * gz);
-    if (!(g > 0.0)) {
-        return 0.0f;
-    }
-    const auto& state = parameters.state;
-    const LatLng center = state.getLatLng();
-    const double metresPerPixel = Projection::getMetersPerPixelAtLatitude(center.latitude(), state.getZoom());
-    const double mz = metresPerPixel > 0.0 ? 1.0 / metresPerPixel : 0.0; // world-pixel units per metre
-    const double ux = gx / g;
-    const double uy = gy / g;
-    const double uz = gz / g;
-    const double a = (m[2] * ux + m[6] * uy + m[10] * uz) * mz;
-    const double b = g * mz; // clip w per metre along the view axis
-    const Point<double> pc = Projection::project(center, state.getScale());
-    const double zc0 = m[2] * pc.x + m[6] * pc.y + m[14];
-    const double w0 = m[3] * pc.x + m[7] * pc.y + m[15];
-    const double k = std::abs(a * w0 - zc0 * b);
-    return static_cast<float>(k * occlusionEpsM);
-}
-
 // Task 2.2b: the map centre's own position expressed in tileID's EXTENT-unit local coordinate
 // space - the same units a_pos/a_other carry, unclamped (the point need not fall inside this
 // tile's own footprint). Identical in spirit to terrain_contour_layer_tweaker.cpp's own
@@ -262,6 +199,69 @@ DashPeriod computeDashPeriodExtent(const std::vector<float>& dasharray,
 }
 
 } // namespace
+
+// Task 2.2: routes3d.js's OCCLUSION_EPS_DEFAULT (:133) and OCCLUSION_EPS_M_DEFAULT (:173) - a
+// fixed NDC-z tolerance alone buys unbounded metres of terrain at distance, so the shader takes
+// the smaller of this constant and a metres-based margin converted to NDC z at each fragment.
+// Declared in terrain_line_layer_tweaker.hpp (not anonymous-namespaced any more) so
+// terrain_contour_layer_tweaker.cpp's own depth-texture occlusion test can share the identical
+// tuned constants rather than holding a second copy of them.
+//
+// Ported from the web engine's occlusionFar(m) (routes3d.js:1381-1395): the frame's own
+// conversion from "metres of terrain depth" to the single NDC-z-per-(1/w^2) constant the
+// fragment shader divides by v_center.w^2 (terrain_line.hpp's fragmentMain). Computed ONCE PER
+// FRAME (it depends only on the projection matrix and the map centre, not on any tile), unlike
+// dash_period/dash_on which are per-tile.
+//
+// For a perspective projection, clip z and clip w are both affine in position and z_ndc depends
+// on w alone: z_ndc = A + B/w, so dz_ndc/dm along the view axis is (a*w - zc*b) / w^2, where a and
+// b are clip z's and clip w's own rate per metre along that axis - the same numerator (k below)
+// everywhere in the frame, which is exactly the constant wanted. It is read straight off the
+// frame's own projection matrix (mln::matrix::transformMat4's column-major convention - verified
+// against mat4.cpp's own out[3] = m[3]*x + m[7]*y + m[11]*z + m[15]*w formula, which is exactly
+// routes3d.js's `w = m[3]*p[0] + m[7]*p[1] + m[11]*z + m[15]`), evaluated at the map centre at sea
+// level, with no assumption about near/far planes: the view axis is the direction clip w grows
+// fastest in, which is the matrix's own w row (m[3], m[7], m[11]).
+//
+// The four inputs, and where this engine gets each one (routes3d.js reads all four off its own
+// mainMatrix/state in normalised [0,1] mercator world units; this port uses the SAME world-PIXEL
+// mercator convention computeReferenceClipW() above already uses with the SAME projection matrix,
+// which differs from the web's only by a constant scale baked consistently into both the matrix
+// and the positions, so the derivation carries over unchanged):
+//   1. the projection matrix m       - parameters.transformParams.projMatrix (paint_parameters.hpp)
+//   2. the map centre in mercator    - Projection::project(state.getLatLng(), state.getScale())
+//                                      (util/projection.hpp), at z = 0 (sea level, matching the
+//                                      web's own zc0/w0 - see routes3d.js:1389-1392)
+//   3. metres-to-mercator factor mz  - 1 / Projection::getMetersPerPixelAtLatitude(lat, zoom)
+//                                      (util/projection.hpp), i.e. world-pixel units per metre -
+//                                      the exact reciprocal of computeReferenceClipW's own
+//                                      metresPerPixel, at the SAME latitude/zoom
+//   4. the centre's clip z and w     - zc0 = m[2]*pc.x + m[6]*pc.y + m[14] (no z term - sea level)
+//                                      w0  = m[3]*pc.x + m[7]*pc.y + m[15]
+float occlusionFarNDC(const PaintParameters& parameters, float occlusionEpsM) {
+    const mat4& m = parameters.transformParams.projMatrix;
+    const double gx = m[3];
+    const double gy = m[7];
+    const double gz = m[11];
+    const double g = std::sqrt(gx * gx + gy * gy + gz * gz);
+    if (!(g > 0.0)) {
+        return 0.0f;
+    }
+    const auto& state = parameters.state;
+    const LatLng center = state.getLatLng();
+    const double metresPerPixel = Projection::getMetersPerPixelAtLatitude(center.latitude(), state.getZoom());
+    const double mz = metresPerPixel > 0.0 ? 1.0 / metresPerPixel : 0.0; // world-pixel units per metre
+    const double ux = gx / g;
+    const double uy = gy / g;
+    const double uz = gz / g;
+    const double a = (m[2] * ux + m[6] * uy + m[10] * uz) * mz;
+    const double b = g * mz; // clip w per metre along the view axis
+    const Point<double> pc = Projection::project(center, state.getScale());
+    const double zc0 = m[2] * pc.x + m[6] * pc.y + m[14];
+    const double w0 = m[3] * pc.x + m[7] * pc.y + m[15];
+    const double k = std::abs(a * w0 - zc0 * b);
+    return static_cast<float>(k * occlusionEpsM);
+}
 
 void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParameters& parameters) {
     if (layerGroup.empty()) {

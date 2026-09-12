@@ -57,9 +57,34 @@ struct alignas(16) TerrainContourTilePropsUBO {
     // tile-dependent, but carried per-drawable like terrain-line's own reference_w so the
     // MLN_UBO_CONSOLIDATION per-drawable-array path needs no special case.
     /* 44 */ float reference_w;
-    /* 48 */
+
+    // Task: the terrain depth-texture occlusion test, ported onto terrain-contour from
+    // terrain-line's own TerrainLineTilePropsUBO (task 2.2) - see terrain_line_layer_ubo.hpp's
+    // comment on the same four fields for the full derivation (routes3d.js:425-480 for the
+    // shader, :111-175 for the metres-based margin, :1365-1395 for occlusionFar()).
+    //
+    // Contour keeps its own hardware depth test against RenderTerrain's coarse mesh (LEQUAL,
+    // DEPTH_BIAS/SLOPE_BIAS below win it reliably because contour draws on that SAME mesh's own
+    // vertices - unlike terrain-line, whose independently-elevated ribbon vertices would
+    // self-occlude against the mesh's coarser triangulation, see
+    // TerrainLineLayerTweaker::execute's comment on setEnableDepth). That hardware test is what
+    // SLOPE_BIAS exists to win at a near edge-on triangle (a cirque wall viewed along its own
+    // strike) - but the same unbounded slope-scaled pull can, at exactly that kind of grazing
+    // angle, push a hidden fragment's depth closer than a genuinely nearer ridge's own true
+    // (unbiased) depth, defeating the hardware test it was never meant to fight. This depth-
+    // texture test is independent of that bias entirely - it reads the SAME pre-rendered terrain
+    // depth pass ribbons already use, which carries no slope bias - so a fragment behind a ridge
+    // is discarded here regardless of what the biased hardware test decided.
+    /* 48 */ float occlusion_eps;
+    /* 52 */ float occlusion_far;
+    /* 56 */ std::array<float, 2> depth_texel;
+    /* 64 */ float depth_enabled;
+    /* 68 */ float pad1;
+    /* 72 */ float pad2;
+    /* 76 */ float pad3;
+    /* 80 */
 };
-static_assert(sizeof(TerrainContourTilePropsUBO) == 3 * 16);
+static_assert(sizeof(TerrainContourTilePropsUBO) == 5 * 16);
 
 /// Evaluated (per-layer, zoom-evaluated) properties that do not depend on the tile. All ten
 /// paint properties are non-data-driven (PropertyValue<T>) - see

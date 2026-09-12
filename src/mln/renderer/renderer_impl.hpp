@@ -125,6 +125,18 @@ private:
     // hard bound, so ground the DEM does not cover cannot spin the render loop. Re-armed
     // whenever the centre IS covered, so it is a per-episode budget, not a lifetime one.
     static constexpr int kMaxCenterElevationUnknownFrames = 30;
+    /// DuckMaps fork only, task M1: the terrain's own convergence. The mesh cover and the DEM
+    /// tile each mesh drawable binds keep moving for several frames after the last tile has
+    /// loaded, because the cover is elevation-aware and therefore depends on the DEM it is
+    /// itself asking for. A frame drawn while that is still moving is not a settled frame, and
+    /// reporting it as one is what let five runs of one harness link, each reporting no tile
+    /// outstanding, draw five different pictures. Held out of `fullyRendered` until
+    /// RenderTerrain::terrainSettleSignature() repeats, bounded by this counter so a terrain
+    /// that never converges costs a fixed number of frames and then settles honestly rather
+    /// than spinning forever. Same shape as the two counters above.
+    static constexpr int kMaxTerrainSettleFrames = 90;
+    std::optional<std::size_t> lastTerrainSettleSignature;
+    int terrainSettleFrames = 0;
     int centerElevationUnknownFrames = 0;
 
     enum class RenderState {

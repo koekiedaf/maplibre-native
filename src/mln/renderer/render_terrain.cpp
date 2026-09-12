@@ -880,6 +880,40 @@ std::vector<CanonicalTileID> RenderTerrain::getResidentDemTileIds() const {
     return ids;
 }
 
+std::size_t RenderTerrain::terrainSettleSignature() const {
+    // See the header for why this exists. Two accumulators, each salted, so a cover entry and
+    // a binding entry can never cancel each other out in the sum.
+    std::size_t total = 0;
+    for (const auto& id : lastFrameMeshCover) {
+        std::size_t h = 0x9e3779b9u;
+        util::hash_combine(h, id.wrap);
+        util::hash_combine(h, id.canonical.z);
+        util::hash_combine(h, id.canonical.x);
+        util::hash_combine(h, id.canonical.y);
+        total += h;
+    }
+    for (const auto& [tileID, demZoom] : tilesWithDrawables) {
+        std::size_t h = 0x85ebca6bu;
+        util::hash_combine(h, tileID.overscaledZ);
+        util::hash_combine(h, tileID.canonical.z);
+        util::hash_combine(h, tileID.canonical.x);
+        util::hash_combine(h, tileID.canonical.y);
+        util::hash_combine(h, static_cast<int>(demZoom));
+        if (const auto it = drawableDemCoords.find(tileID); it != drawableDemCoords.end()) {
+            for (const float v : it->second) {
+                // The exact bits, not the value: two runs that bind the same DEM tile with the
+                // same sub-tile offset must hash the same, and a half-ulp difference in that
+                // offset is a different sample and should not be smoothed away here.
+                std::uint32_t bits = 0;
+                std::memcpy(&bits, &v, sizeof(bits));
+                util::hash_combine(h, bits);
+            }
+        }
+        total += h;
+    }
+    return total;
+}
+
 std::string RenderTerrain::debugMeshTileTiersJSON() const {
     // Debug-only, task N1. Sorted so two runs can be compared line for line.
     std::vector<std::pair<std::string, std::string>> entries;

@@ -117,6 +117,25 @@ public:
     const std::set<UnwrappedTileID>& getLastFrameMeshCover() const { return lastFrameMeshCover; }
 
     /**
+     * @brief DuckMaps fork only, task M1: a hash of everything about the terrain that decides
+     * what the frame looks like AND that converges over several frames as DEM tiles arrive -
+     * the mesh cover, and for every mesh tile the canonical zoom of the DEM tile its drawable
+     * is bound to together with the sub-tile offset it samples that DEM with.
+     *
+     * Two consecutive frames with the same value drew the same terrain. A frame whose value
+     * moved is a frame the terrain was still settling on, and reporting such a frame as fully
+     * rendered is what let a screenshot catch the map mid-convergence: measured at the
+     * Gavarnie wall, five runs of one harness link, every one reporting no tile outstanding
+     * and every one drawing a different frame, by up to 268 910 of 3 162 132 pixels.
+     * Renderer::Impl::render uses this to hold such a frame out of `fullyRendered` and ask for
+     * another, bounded by its own counter so a terrain that never converges cannot spin.
+     *
+     * Order-independent: each entry is hashed on its own and the entries are SUMMED, so the
+     * iteration order of an unordered_map cannot make a still terrain look busy.
+     */
+    std::size_t terrainSettleSignature() const;
+
+    /**
      * @brief Update terrain rendering (create/update drawables)
      * @param orchestrator Render orchestrator for accessing render sources
      * @param shaders Shader registry for getting terrain shader

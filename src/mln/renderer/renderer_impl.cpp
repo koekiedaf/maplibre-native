@@ -1023,6 +1023,23 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         centerElevationSettling = centerElevationSettling || unknownHoldsFrame;
     }
 
+    // DuckMaps fork only, task M1: the terrain's own convergence. See
+    // kMaxTerrainSettleFrames in the header for why a frame drawn while the mesh cover or the
+    // per-tile DEM binding is still moving is not a settled frame.
+    bool terrainSettling = false;
+    if (auto* settleTerrain = orchestrator.getRenderTerrain()) {
+        const std::size_t signature = settleTerrain->terrainSettleSignature();
+        if (!lastTerrainSettleSignature || *lastTerrainSettleSignature != signature) {
+            lastTerrainSettleSignature = signature;
+            terrainSettling = ++terrainSettleFrames <= kMaxTerrainSettleFrames;
+        } else {
+            terrainSettleFrames = 0;
+        }
+    } else {
+        lastTerrainSettleSignature.reset();
+        terrainSettleFrames = 0;
+    }
+
     // DuckMaps fork only, task C1: debug-only, off-by-default per-frame elevation trace. Purely
     // observational - it reads transformState and calls RenderTerrain's own (also new, also
     // read-only) probe accessors, and changes no camera or elevation behaviour. The env var is
@@ -1214,13 +1231,14 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
     }
 
     observer->onDidFinishRenderingFrame(
-        (renderTreeParameters.loaded && !centerElevationSettling) ? RendererObserver::RenderMode::Full
-                                                                  : RendererObserver::RenderMode::Partial,
+        (renderTreeParameters.loaded && !centerElevationSettling && !terrainSettling)
+            ? RendererObserver::RenderMode::Full
+            : RendererObserver::RenderMode::Partial,
         // Request a follow-up frame if the drape budget deferred any target or the tile-build
         // budget deferred any new tile, so deferred drapes/tiles catch up progressively even
         // after the interaction stops.
         renderTreeParameters.needsRepaint || drapeWorkDeferred || context.newTileBuildWasDeferred() ||
-            terrainCoverPending || centerElevationSettling,
+            terrainCoverPending || centerElevationSettling || terrainSettling,
         renderTreeParameters.placementChanged,
         context.threadSafeCopyRenderingStats());
 

@@ -236,7 +236,16 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     // narrower than that, which is a change to a style that never asked for a halo.
     const float ext = (haloHalfPx > 0.0) ? max(halfPx + props.edge_px, haloHalfPx + props.halo_edge_px)
                                          : halfPx + props.edge_px;
-    const float capPx = max(props.half_px, props.halo_half_px) * widthScale;
+    // The square cap stays the BODY's own half width, NOT the halo's. The cap offset is applied
+    // in screen space while `dist` (the along-line distance the dash is computed from) is a
+    // per-vertex attribute that is not adjusted with it, so lengthening the cap stretches the
+    // dash. Measured at the Gavarnie wall with the cap taken from the halo instead: the alpine
+    // trail's own blue fell from 9 752 to 6 859 pixels, a 30 percent loss of body ink, while the
+    // halo colour rose 11 percent. The halo's own caps are therefore the body's length rather
+    // than its own width, which clips the halo only at the very end of a line - the ribbons are
+    // densified every 12 metres (terrain_line_layout.hpp), so every interior segment end is
+    // covered by its neighbour.
+    const float capPx = props.half_px * widthScale;
     // Square caps extend the quad forward and back by the same half width (u_cap_px equals
     // u_half_px in the web engine, routes3d.js:1120-1121), so it is not a separate property;
     // capPx (the wider of the body's and the halo's own half width) is reused directly here

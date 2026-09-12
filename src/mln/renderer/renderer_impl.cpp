@@ -34,12 +34,14 @@
 #include <mln/renderer/dem_elevation_provider.hpp>
 #include <mln/renderer/layers/terrain_contour_layer_tweaker.hpp>
 #include <mln/renderer/layers/terrain_layer_tweaker.hpp>
+#include <mln/renderer/layers/terrain_line_layer_tweaker.hpp>
 #include <mln/util/tile_cover.hpp>
 #include <mln/util/geo.hpp>             // elevation trace: complete LatLng type (task C1)
 #include <mln/util/monotonic_timer.hpp> // elevation trace: tMs (task C1)
 #include <mln/util/projection.hpp>      // C6: project/unproject the forward sample line
 
 #include <algorithm> // C6: std::max for the forward sample line
+#include <tuple> // C7: std::tie for the drawableUBOs sort key
 #include <cmath>   // C6: hypot for the forward sample line
 #include <cstdio>  // elevation trace: fopen/fwrite/fflush (task C1)
 #include <cstdlib> // elevation trace: getenv (task C1)
@@ -1295,6 +1297,90 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             // record - see TerrainContourLayerTweaker::debugDrainContourReferenceTraceJSON's
             // comment for why this is drained the same way debugDrainElevationQueries is.
             os << ",\"contour\":" << TerrainContourLayerTweaker::debugDrainContourReferenceTraceJSON();
+            // DuckMaps fork only, task C7: the two unrecorded inputs task R1A's own instruments
+            // could not reach - see this block's own comment at the top of the file for the
+            // full brief. (a) every terrain-contour/terrain-line drawable's own UBO bytes and
+            // texture bindings, drained from both tweakers and merged into ONE array here so a
+            // single sort key (layer, pass, tile id) governs both layer types at once and
+            // ordering cannot itself vary between runs.
+            {
+                auto entries = TerrainContourLayerTweaker::debugDrainContourDrawableUBOEntries();
+                auto lineEntries = TerrainLineLayerTweaker::debugDrainLineDrawableUBOEntries();
+                entries.insert(entries.end(), std::make_move_iterator(lineEntries.begin()),
+                               std::make_move_iterator(lineEntries.end()));
+                std::sort(entries.begin(), entries.end(), [](const DebugDrawableUBOEntry& a,
+                                                              const DebugDrawableUBOEntry& b) {
+                    if (a.layer != b.layer) {
+                        return a.layer < b.layer;
+                    }
+                    if (a.pass != b.pass) {
+                        return a.pass < b.pass;
+                    }
+                    return std::tie(a.wrap, a.z, a.x, a.y) < std::tie(b.wrap, b.z, b.x, b.y);
+                });
+                const auto jsonEscape = [](const std::string& s) {
+                    std::string out;
+                    out.reserve(s.size());
+                    for (char c : s) {
+                        if (c == '"' || c == '\\') {
+                            out += '\\';
+                        }
+                        out += c;
+                    }
+                    return out;
+                };
+                os << ",\"drawableUBOs\":[";
+                bool firstEntry = true;
+                for (const auto& e : entries) {
+                    if (!firstEntry) {
+                        os << ",";
+                    }
+                    firstEntry = false;
+                    os << "{\"layer\":\"" << jsonEscape(e.layer) << "\",\"id\":\"" << jsonEscape(e.id)
+                       << "\",\"pass\":" << e.pass << ",\"ubo\":" << e.ubo << ",\"tex\":[";
+                    for (std::size_t t = 0; t < e.tex.size(); ++t) {
+                        if (t) {
+                            os << ",";
+                        }
+                        os << "\"" << jsonEscape(e.tex[t]) << "\"";
+                    }
+                    os << "]}";
+                }
+                os << "]";
+            }
+            // DuckMaps fork only, task C7: (b) the terrain mesh's OWN submission order, before
+            // any sort - engine c839bab31062 gave terrain-contour/terrain-line drawables a
+            // tileDrawOrderPriority so their draw order is a pure function of tile id (see
+            // gfx::tileDrawOrderPriority's own comment), but never touched
+            // RenderTerrain::createDrawableForTile, which leaves every mesh drawable's
+            // DrawPriority at its default 0 - so LayerGroup's own DrawableLessByPriority
+            // (layer_group.hpp) breaks every tie on gfx::Drawable::getID(), a creation-order
+            // counter that follows tile LOAD order, not tile id. Read directly off the "terrain"
+            // LayerGroup's own drawable set via visitLayerGroupDrawables, which is the exact
+            // traversal order RenderOrchestrator draws in - not a recomputation, so this is
+            // what actually got submitted this frame, not an approximation of it.
+            os << ",\"meshDrawOrder\":[";
+            {
+                bool firstMeshDrawable = true;
+                orchestrator.visitLayerGroups([&](LayerGroupBase& layerGroup) {
+                    if (layerGroup.getType() != LayerGroupBase::Type::LayerGroup || layerGroup.getName() != "terrain") {
+                        return;
+                    }
+                    visitLayerGroupDrawables(layerGroup, [&](gfx::Drawable& drawable) {
+                        if (!drawable.getTileID()) {
+                            return;
+                        }
+                        const UnwrappedTileID tid = drawable.getTileID()->toUnwrapped();
+                        if (!firstMeshDrawable) {
+                            os << ",";
+                        }
+                        firstMeshDrawable = false;
+                        os << "\"" << static_cast<int>(tid.canonical.z) << "/" << tid.canonical.x << "/"
+                           << tid.canonical.y << "@" << tid.wrap << "\"";
+                    });
+                });
+            }
+            os << "]";
             // DuckMaps fork only: the mesh cover dilation's own before/after tile and
             // overlapping-pair counts - see RenderTerrain::debugDrainMeshCoverDilationTraceJSON's
             // comment. Drained the same way, once per frame, right alongside the other two.

@@ -51,6 +51,17 @@ std::optional<std::string>& contourTraceSlot() {
     return slot;
 }
 
+// DuckMaps fork only, task C7: the per-drawable UBO/texture trace's own slot, filled by the
+// second visitLayerGroupDrawables pass in execute() (the one that builds the real UBOs) and
+// drained once per frame by Renderer::Impl::render. Same "static, cleared on drain" contract as
+// contourTraceSlot() above - a frame where this layer group is empty leaves the vector empty
+// rather than repeating the previous frame's entries, since execute() returns before either
+// slot is touched.
+std::vector<DebugDrawableUBOEntry>& contourUboEntriesSlot() {
+    static std::vector<DebugDrawableUBOEntry> slot;
+    return slot;
+}
+
 std::string tileIdDebugKey(const UnwrappedTileID& id) {
     std::ostringstream os;
     os << id.wrap << "/" << static_cast<int>(id.canonical.z) << "/" << id.canonical.x << "/" << id.canonical.y;
@@ -336,6 +347,32 @@ void TerrainContourLayerTweaker::execute(LayerGroupBase& layerGroup, const Paint
     auto& layerUniforms = layerGroup.mutableUniformBuffers();
     layerUniforms.set(idTerrainContourEvaluatedPropsUBO, evaluatedPropsUniformBuffer);
 
+    // DuckMaps fork only, task C7: the evaluated-props UBO's own bytes, for the per-drawable UBO
+    // trace below - rebuilt fresh here (rather than reusing the struct inside the `if
+    // (!evaluatedPropsUniformBuffer || propertiesUpdated)` block above) because that struct is
+    // only recomputed on the frames the properties actually change, and this trace needs every
+    // drawable's full UBO set on every traced frame regardless. Field-for-field identical to the
+    // real construction above; the two must be kept in sync by hand since this is a second build
+    // of the same struct, not a shared helper - acceptable for a debug-only trace that costs
+    // nothing when off. Zero-initialised and skipped when the trace is off.
+    TerrainContourEvaluatedPropsUBO evaluatedPropsUBOForTrace{};
+    if (traceOn) {
+        evaluatedPropsUBOForTrace = {
+            .minor_color = premultiply(evaluated.get<TerrainContourMinorColor>(),
+                                       evaluated.get<TerrainContourMinorOpacity>()),
+            .index_color = premultiply(evaluated.get<TerrainContourIndexColor>(),
+                                       evaluated.get<TerrainContourIndexOpacity>()),
+            .minor_interval = evaluated.get<TerrainContourMinorInterval>(),
+            .index_interval = evaluated.get<TerrainContourIndexInterval>(),
+            .minor_width = evaluated.get<TerrainContourMinorWidth>() * pixelScale,
+            .index_width = evaluated.get<TerrainContourIndexWidth>() * pixelScale,
+            .fade_lo = evaluated.get<TerrainContourFadeLo>() * pixelScale,
+            .fade_hi = evaluated.get<TerrainContourFadeHi>() * pixelScale,
+            .depth_bias = 0.00015f,
+            .slope_bias = 8.0f,
+        };
+    }
+
 #if MLN_UBO_CONSOLIDATION
     int i = 0;
     std::vector<TerrainContourDrawableUBO> drawableUBOVector(layerGroup.getDrawableCount());
@@ -421,6 +458,64 @@ void TerrainContourLayerTweaker::execute(LayerGroupBase& layerGroup, const Paint
             .dem_enabled = demEnabled,
             .reference_w = referenceW,
         };
+
+        // DuckMaps fork only, task C7: the per-drawable UBO/texture trace entry, built from the
+        // exact CPU-side struct values just above rather than reading back the GPU buffer -
+        // correct even under MLN_UBO_CONSOLIDATION (see terrain_contour_layer_tweaker.hpp's
+        // comment on debugDrainContourDrawableUBOEntries): the consolidated path memcpys these
+        // SAME bytes into the layer group's shared buffer at this drawable's uboIndex, so hashing
+        // them here is hashing exactly what ends up bound, without needing to know which branch
+        // compiled. Hashed in binding-index order: the vertex-only drawable UBO
+        // (idTerrainContourDrawableUBO), then the fragment-only tile-props UBO
+        // (idTerrainContourTilePropsUBO), then the shared evaluated-props UBO
+        // (idTerrainContourEvaluatedPropsUBO) - ascending on this (Metal) backend, see
+        // shader_defines.hpp's getEnumValue(packed, unpacked) for non-Vulkan backends resolving
+        // to `packed`, which places idTerrainContourEvaluatedPropsUBO at
+        // terrainContourLayerSSBOCount == drawableReservedUBOCount, strictly after both
+        // reserved per-drawable ids.
+        if (traceOn) {
+#if MLN_UBO_CONSOLIDATION
+            const TerrainContourDrawableUBO& drawableUBORef = drawableUBOVector[i];
+            const TerrainContourTilePropsUBO& tilePropsUBORef = tilePropsUBOVector[i];
+#else
+            const TerrainContourDrawableUBO& drawableUBORef = drawableUBO;
+            const TerrainContourTilePropsUBO& tilePropsUBORef = tilePropsUBO;
+#endif
+            uint64_t uboHash = debugFnv1a64(&drawableUBORef, sizeof(drawableUBORef));
+            uboHash = debugFnv1a64(&tilePropsUBORef, sizeof(tilePropsUBORef), uboHash);
+            uboHash = debugFnv1a64(&evaluatedPropsUBOForTrace, sizeof(evaluatedPropsUBOForTrace), uboHash);
+
+            std::string texIdentity;
+            if (parameters.terrain) {
+                if (terrainData) {
+                    if (const auto demTileId = parameters.terrain->debugDemTileIdForTile(tileID)) {
+                        texIdentity = "dem:" + tileIdDebugKey(*demTileId);
+                    } else {
+                        // getTerrainData and debugDemTileIdForTile run the identical resolution
+                        // loop, so this should not happen; reported rather than silently reused
+                        // so a real mismatch would be visible in the trace, not hidden.
+                        texIdentity = "dem:resolved-but-untraced";
+                    }
+                } else {
+                    texIdentity = "dem:placeholder";
+                }
+            } else {
+                texIdentity = "dem:terrain-off-placeholder";
+            }
+
+            DebugDrawableUBOEntry entry;
+            entry.layer = layerGroup.getName();
+            entry.id = tileIdDebugKey(tileID);
+            entry.pass = drawable.getDrawPriority();
+            entry.ubo = uboHash;
+            entry.tex = {texIdentity};
+            entry.wrap = tileID.wrap;
+            entry.z = tileID.canonical.z;
+            entry.x = tileID.canonical.x;
+            entry.y = tileID.canonical.y;
+            contourUboEntriesSlot().push_back(std::move(entry));
+        }
+
 #if MLN_UBO_CONSOLIDATION
         drawable.setUBOIndex(i++);
 #else
@@ -463,6 +558,16 @@ std::string TerrainContourLayerTweaker::debugDrainContourReferenceTraceJSON() {
     }
     std::string result = std::move(*slot);
     slot.reset();
+    return result;
+}
+
+// DuckMaps fork only, task C7: see the .hpp declaration's own comment. Drained (and cleared)
+// exactly once per frame by Renderer::Impl::render, alongside debugDrainContourReferenceTraceJSON
+// above - empty when the trace is off or this layer group drew nothing this frame.
+std::vector<DebugDrawableUBOEntry> TerrainContourLayerTweaker::debugDrainContourDrawableUBOEntries() {
+    auto& slot = contourUboEntriesSlot();
+    std::vector<DebugDrawableUBOEntry> result = std::move(slot);
+    slot.clear();
     return result;
 }
 

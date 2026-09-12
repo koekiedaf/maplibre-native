@@ -3,8 +3,11 @@
 #include <mln/renderer/layer_tweaker.hpp>
 
 #include <string>
+#include <vector>
 
 namespace mln {
+
+struct DebugDrawableUBOEntry;
 
 // DuckMaps fork only. Which pass a terrain-line drawable belongs to - stored via
 // gfx::Drawable::setType/getType, the same generic per-drawable "which variant" slot
@@ -26,6 +29,16 @@ public:
     ~TerrainLineLayerTweaker() override = default;
 
     void execute(LayerGroupBase&, const PaintParameters&) override;
+
+    // DuckMaps fork only, task C7: terrain-line's own half of the per-drawable UBO/texture
+    // trace - see TerrainContourLayerTweaker::debugDrainContourDrawableUBOEntries's comment for
+    // the full contract (same DUCKMAPS_ELEVATION_TRACE guard, same shape, drained once per frame
+    // by Renderer::Impl::render). Every entry's "pass" is getDrawPriority(), which already
+    // separates a tile's halo drawable from its body drawable (see render_terrain_line_layer.cpp:
+    // TerrainLineHaloDrawPriority/TerrainLineBodyDrawPriority differ by exactly one
+    // kTileDrawOrderPassStride), so the same tile id legitimately appears twice - that is not a
+    // duplicate, it is the two passes.
+    static std::vector<DebugDrawableUBOEntry> debugDrainLineDrawableUBOEntries();
 
 protected:
     gfx::UniformBufferPtr evaluatedPropsUniformBuffer;

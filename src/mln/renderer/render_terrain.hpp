@@ -47,6 +47,36 @@ class Texture2DArray;
 } // namespace gl
 #endif
 
+// DuckMaps fork only, task C7: shared by TerrainContourLayerTweaker and TerrainLineLayerTweaker's
+// own per-drawable UBO/texture trace (DUCKMAPS_ELEVATION_TRACE), and by Renderer::Impl::render,
+// which drains both and emits them as one `drawableUBOs` array. A plain 64-bit FNV-1a over raw
+// bytes - not cryptographic, not collision-proof, but a single bit flipping anywhere in a matrix
+// or a dial changes it, which is all a "did this drawable's inputs change" trace needs.
+inline uint64_t debugFnv1a64(const void* data, std::size_t len, uint64_t hash = 0xcbf29ce484222325ULL) {
+    const auto* bytes = static_cast<const unsigned char*>(data);
+    for (std::size_t i = 0; i < len; ++i) {
+        hash ^= bytes[i];
+        hash *= 0x100000001b3ULL;
+    }
+    return hash;
+}
+
+// One entry per traced drawable - see TerrainContourLayerTweaker::debugDrainContourDrawableUBOEntries
+// / TerrainLineLayerTweaker::debugDrainLineDrawableUBOEntries's own comments for how this is filled.
+// Sort keys (wrap/z/x/y) are carried alongside the pre-formatted `id` string rather than derived
+// from it, so the combining trace can sort numerically without re-parsing text.
+struct DebugDrawableUBOEntry {
+    std::string layer;
+    std::string id; // "z/x/y@wrap"
+    int64_t pass = 0;
+    uint64_t ubo = 0;
+    std::vector<std::string> tex; // one stable identifier per bound texture, in binding order
+    int32_t wrap = 0;
+    uint8_t z = 0;
+    uint32_t x = 0;
+    uint32_t y = 0;
+};
+
 /**
  * @brief Manages 3D terrain rendering using DEM (Digital Elevation Model) data
  *
@@ -383,6 +413,20 @@ public:
      * from the matching DEM tile or its closest available ancestor
      */
     std::optional<TerrainData> getTerrainData(const UnwrappedTileID&) const;
+
+    /**
+     * @brief DuckMaps fork only, task C7: which DEM tile `getTerrainData` would resolve a given
+     * tile to - the tile itself if its own DEM texture is resident, otherwise the closest cached
+     * ancestor, mirroring getTerrainData's own resolution loop exactly (read-only, no side
+     * effects, does not touch `lastUsed`). getTerrainData returns the texture but not which tile
+     * backed it, so a caller that already has the texture pointer cannot tell whether it is
+     * sampling this tile's own DEM or a coarser ancestor - which is exactly the identity the
+     * per-drawable UBO/texture trace needs (a drawable binding a different DEM tile than it did
+     * last run is otherwise invisible). Returns nullopt when no DEM texture at all is available
+     * for this tile (the drawable then binds the flat placeholder). Debug-only; not called
+     * unless the elevation trace is on.
+     */
+    std::optional<UnwrappedTileID> debugDemTileIdForTile(const UnwrappedTileID&) const;
 
     /**
      * @brief A 1x1 zero-elevation DEM texture bound when no DEM tile is available,

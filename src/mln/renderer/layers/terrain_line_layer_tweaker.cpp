@@ -20,6 +20,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <sstream>
 
 namespace mln {
 
@@ -27,6 +29,30 @@ using namespace style;
 using namespace shaders;
 
 namespace {
+
+// DuckMaps fork only, task C7: same env-var gate as
+// terrain_contour_layer_tweaker.cpp's contourTraceEnabled() - see that file's comment.
+bool lineTraceEnabled() {
+    static const bool enabled = [] {
+        const char* path = std::getenv("DUCKMAPS_ELEVATION_TRACE");
+        return path && *path;
+    }();
+    return enabled;
+}
+
+// DuckMaps fork only, task C7: same contract as terrain_contour_layer_tweaker.cpp's
+// contourUboEntriesSlot() - filled during execute()'s per-drawable loop, drained (and cleared)
+// once per frame by Renderer::Impl::render via debugDrainLineDrawableUBOEntries.
+std::vector<DebugDrawableUBOEntry>& lineUboEntriesSlot() {
+    static std::vector<DebugDrawableUBOEntry> slot;
+    return slot;
+}
+
+std::string lineTileIdDebugKey(const UnwrappedTileID& id) {
+    std::ostringstream os;
+    os << id.wrap << "/" << static_cast<int>(id.canonical.z) << "/" << id.canonical.x << "/" << id.canonical.y;
+    return os.str();
+}
 
 // The web engine's referenceClipW() (routes3d.js:1223-1231): the clip-space w at the ground
 // under the map centre, at the centre's own sampled elevation. Scaling the ribbon's half-width
@@ -324,6 +350,30 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
     auto& layerUniforms = layerGroup.mutableUniformBuffers();
     layerUniforms.set(idTerrainLineEvaluatedPropsUBO, evaluatedPropsUniformBuffer);
 
+    // DuckMaps fork only, task C7: see terrain_contour_layer_tweaker.cpp's identical comment on
+    // its own evaluatedPropsUBOForTrace - same reason (this struct is only rebuilt on frames the
+    // properties change, but the trace needs it on every traced frame), same "kept in sync by
+    // hand" caveat.
+    const bool traceOn = lineTraceEnabled();
+    TerrainLineEvaluatedPropsUBO evaluatedPropsUBOForTrace{};
+    if (traceOn) {
+        evaluatedPropsUBOForTrace = {
+            .color = evaluated.get<TerrainLineColor>(),
+            .opacity = evaluated.get<TerrainLineOpacity>(),
+            .half_px = halfPx,
+            .edge_px = evaluated.get<TerrainLineBlur>(),
+            .rail_offset = evaluated.get<TerrainLineOffset>(),
+            .depth_bias = 0.00002f,
+            .ghost_opacity = evaluated.get<TerrainLineGhostOpacity>(),
+            .fade = evaluated.get<TerrainLineFade>(),
+            .fade_distance = evaluated.get<TerrainLineFadeDistance>(),
+            .pad1 = 0,
+            .pad2 = 0,
+            .halo_half_px = haloHalfPx,
+            .halo_edge_px = evaluated.get<TerrainLineHaloBlur>(),
+            .halo_color = evaluated.get<TerrainLineHaloColor>()};
+    }
+
 #if MLN_UBO_CONSOLIDATION
     int i = 0;
     std::vector<TerrainLineDrawableUBO> drawableUBOVector(layerGroup.getDrawableCount());
@@ -434,6 +484,65 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
             .depth_enabled = depthEnabled,
             .halo_pass = haloPass,
         };
+
+        // DuckMaps fork only, task C7: see terrain_contour_layer_tweaker.cpp's identical block
+        // for the full reasoning (hashing the CPU-side struct is correct under
+        // MLN_UBO_CONSOLIDATION too, same binding-index order argument applies here with
+        // idTerrainLineDrawableUBO/idTerrainLineTilePropsUBO/idTerrainLineEvaluatedPropsUBO in
+        // place of terrain-contour's own three ids). Two textures this time, in binding order:
+        // idTerrainLineDEMTexture then idTerrainLineDepthTexture.
+        if (traceOn) {
+#if MLN_UBO_CONSOLIDATION
+            const TerrainLineDrawableUBO& drawableUBORef = drawableUBOVector[i];
+            const TerrainLineTilePropsUBO& tilePropsUBORef = tilePropsUBOVector[i];
+#else
+            const TerrainLineDrawableUBO& drawableUBORef = drawableUBO;
+            const TerrainLineTilePropsUBO& tilePropsUBORef = tilePropsUBO;
+#endif
+            uint64_t uboHash = debugFnv1a64(&drawableUBORef, sizeof(drawableUBORef));
+            uboHash = debugFnv1a64(&tilePropsUBORef, sizeof(tilePropsUBORef), uboHash);
+            uboHash = debugFnv1a64(&evaluatedPropsUBOForTrace, sizeof(evaluatedPropsUBOForTrace), uboHash);
+
+            std::string demTexIdentity;
+            if (parameters.terrain) {
+                if (terrainData) {
+                    if (const auto demTileId = parameters.terrain->debugDemTileIdForTile(tileID)) {
+                        demTexIdentity = "dem:" + lineTileIdDebugKey(*demTileId);
+                    } else {
+                        demTexIdentity = "dem:resolved-but-untraced";
+                    }
+                } else {
+                    demTexIdentity = "dem:placeholder";
+                }
+            } else {
+                demTexIdentity = "dem:terrain-off-placeholder";
+            }
+            // The depth texture is one shared frame-level render target, not a per-tile
+            // resource - there is no tile id to hang an identity off, and (see
+            // RenderTerrain::debugDemTileIdForTile's own doc comment on why source bytes are not
+            // reachable here) no cheap CPU-side buffer to hash either, so this identifies it by
+            // size/real-vs-placeholder only. That is enough to see a drawable bound to a
+            // DIFFERENT depth texture object (a resize, or real vs placeholder), but NOT enough
+            // to see the SAME texture's content changing frame to frame - RenderTerrain's own
+            // depth-render-skip gate (renderDepth's cameraMoved/depthDirty check) means the
+            // object is normally stable for the whole life of a still camera, so this is a
+            // deliberate, reported limitation rather than an invented stand-in identity.
+            const std::string depthTexIdentity = std::string("depth:") + (hasRealDepthTexture ? "real:" : "placeholder:") +
+                                                 std::to_string(depthSize.width) + "x" + std::to_string(depthSize.height);
+
+            DebugDrawableUBOEntry entry;
+            entry.layer = layerGroup.getName();
+            entry.id = lineTileIdDebugKey(tileID);
+            entry.pass = drawable.getDrawPriority();
+            entry.ubo = uboHash;
+            entry.tex = {demTexIdentity, depthTexIdentity};
+            entry.wrap = tileID.wrap;
+            entry.z = tileID.canonical.z;
+            entry.x = tileID.canonical.x;
+            entry.y = tileID.canonical.y;
+            lineUboEntriesSlot().push_back(std::move(entry));
+        }
+
 #if MLN_UBO_CONSOLIDATION
         drawable.setUBOIndex(i++);
 #else
@@ -462,6 +571,16 @@ void TerrainLineLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPar
     }
     layerUniforms.set(idTerrainLineTilePropsUBO, tilePropsUniformBuffer);
 #endif
+}
+
+// DuckMaps fork only, task C7: see the .hpp declaration's own comment. Drained (and cleared)
+// exactly once per frame by Renderer::Impl::render, the same call site as
+// TerrainContourLayerTweaker::debugDrainContourDrawableUBOEntries.
+std::vector<DebugDrawableUBOEntry> TerrainLineLayerTweaker::debugDrainLineDrawableUBOEntries() {
+    auto& slot = lineUboEntriesSlot();
+    std::vector<DebugDrawableUBOEntry> result = std::move(slot);
+    slot.clear();
+    return result;
 }
 
 } // namespace mln

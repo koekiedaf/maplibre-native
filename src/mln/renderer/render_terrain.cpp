@@ -1306,6 +1306,26 @@ std::optional<RenderTerrain::TerrainData> RenderTerrain::getTerrainData(const Un
     };
 }
 
+std::optional<UnwrappedTileID> RenderTerrain::debugDemTileIdForTile(const UnwrappedTileID& tileID) const {
+    // DuckMaps fork only, task C7: same resolution loop as getTerrainData above (kept in sync
+    // with it deliberately - see this method's own doc comment in the header for why a second
+    // copy exists rather than changing getTerrainData's return type), returning the WINNING
+    // tile id instead of its texture.
+    const UnwrappedTileID* demTileID = nullptr;
+    int bestZoom = -1;
+    for (const auto& [candidate, candidateEntry] : demTextures) {
+        if ((candidate == tileID || tileID.isChildOf(candidate)) &&
+            static_cast<int>(candidate.canonical.z) > bestZoom) {
+            bestZoom = candidate.canonical.z;
+            demTileID = &candidate;
+        }
+    }
+    if (!demTileID) {
+        return std::nullopt;
+    }
+    return *demTileID;
+}
+
 const std::shared_ptr<gfx::Texture2D>& RenderTerrain::getPlaceholderDEMTexture(gfx::Context& context) {
     if (!placeholderDEMTexture) {
         auto image = std::make_shared<PremultipliedImage>(Size{1, 1});

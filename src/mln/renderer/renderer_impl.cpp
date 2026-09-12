@@ -986,6 +986,28 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             observer->onTerrainCameraGroundRiseChanged(cameraGroundRise);
         }
 
+        // Terrain is on but NO loaded DEM tile covers the map centre yet, so the camera is
+        // still orbiting a centre at sea level. Every launch passes through this state for
+        // its first few frames (measured at Gavarnie over 18 traced launches: 2 to 5 frames,
+        // 130 to 260 ms). It is not a settled frame and must not be reported as one: the
+        // camera is then 150 m above ground instead of 2000 m, the view is a hugely magnified
+        // blur, and - because reporting the frame as fully rendered is also what stops the
+        // render loop asking for another - the map could stay that way. Measured before this
+        // was added: roughly one launch in five of the identical harness link settled with
+        // `centreAltitudeMeters` 0 and stayed there, unchanged ten seconds later.
+        //
+        // Bounded by its own counter, re-armed the moment the centre is covered, so ground
+        // the DEM genuinely does not reach (outside a region's coverage) costs a fixed number
+        // of extra frames once and then settles honestly rather than spinning forever. Same
+        // shape as `terrainCoverRetryFrames` above.
+        const bool centerElevationUnknown = terrain && !queriedCenterElevation;
+        bool unknownHoldsFrame = false;
+        if (centerElevationUnknown) {
+            unknownHoldsFrame = ++centerElevationUnknownFrames <= kMaxCenterElevationUnknownFrames;
+        } else {
+            centerElevationUnknownFrames = 0;
+        }
+
         if (centerChanged || cameraGroundChanged) {
             // The camera only moves onto the terrain on a following frame, so this one was
             // drawn before either clamp caught up. Report the frame as not settled: a still
@@ -996,6 +1018,9 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         } else {
             centerElevationSettleFrames = 0;
         }
+        // Either reason is enough to say the frame is not settled, so they are ORed rather
+        // than letting the second decide on its own.
+        centerElevationSettling = centerElevationSettling || unknownHoldsFrame;
     }
 
     // DuckMaps fork only, task C1: debug-only, off-by-default per-frame elevation trace. Purely
@@ -1115,6 +1140,55 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             os << "],\"meshCoverCount\":" << meshCoverCount
                << ",\"meshCoverMinZ\":" << static_cast<int>(meshCoverMinZ)
                << ",\"meshCoverMaxZ\":" << static_cast<int>(meshCoverMaxZ);
+            // DuckMaps fork only, task N1: what every drape target last baked, and the
+            // (layer group, covering tile) pairs the draped layers would paint into them.
+            // Two runs of the identical harness link settled with identical DEM residency
+            // and an identical mesh cover and still drew different frames, so the question
+            // this answers is which of the drape's own inputs differed. Same debug-only,
+            // off-by-default guard as the rest of this block.
+            os << ",\"drapeTargets\":[";
+            {
+                bool firstTarget = true;
+                orchestrator.visitRenderTargets([&](RenderTarget& renderTarget) {
+                    if (!renderTarget.getDrapeTileID()) {
+                        return;
+                    }
+                    if (!firstTarget) {
+                        os << ",";
+                    }
+                    firstTarget = false;
+                    os << renderTarget.debugBakedCoverageJSON();
+                });
+            }
+            os << "],\"drapedDrawables\":[";
+            {
+                std::map<std::string, int> drapedTileCounts;
+                orchestrator.visitLayerGroups([&](LayerGroupBase& layerGroup) {
+                    if (layerGroup.getType() != LayerGroupBase::Type::TileLayerGroup ||
+                        !layerGroup.shouldRenderToTerrain()) {
+                        return;
+                    }
+                    static_cast<TileLayerGroup&>(layerGroup).visitDrawables([&](const gfx::Drawable& drawable) {
+                        if (!drawable.getEnabled() || !drawable.getTileID()) {
+                            return;
+                        }
+                        const auto& tid = *drawable.getTileID();
+                        std::ostringstream key;
+                        key << layerGroup.getName() << "@" << static_cast<int>(tid.canonical.z) << "/"
+                            << tid.canonical.x << "/" << tid.canonical.y;
+                        ++drapedTileCounts[key.str()];
+                    });
+                });
+                bool firstDraped = true;
+                for (const auto& [key, count] : drapedTileCounts) {
+                    if (!firstDraped) {
+                        os << ",";
+                    }
+                    firstDraped = false;
+                    os << "{\"k\":\"" << key << "\",\"n\":" << count << "}";
+                }
+            }
+            os << "]";
             os << ",\"elevationQueries\":" << DEMElevationProvider::debugDrainElevationQueries();
             os << "}\n";
 

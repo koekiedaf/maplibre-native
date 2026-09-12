@@ -1,5 +1,7 @@
 #include <mln/renderer/render_target.hpp>
 
+#include <sstream>
+
 #include <mln/gfx/context.hpp>
 #include <mln/gfx/drawable.hpp>
 #include <mln/gfx/offscreen_texture.hpp>
@@ -275,6 +277,22 @@ void RenderTarget::renderDrapedLayerGroups(RenderOrchestrator& orchestrator, Pai
     }
 }
 
+std::string RenderTarget::debugBakedCoverageJSON() const {
+    // Debug-only, for the DUCKMAPS_ELEVATION_TRACE diagnosis. Reports what this
+    // target last baked, not what it would bake now.
+    std::ostringstream os;
+    os << "{\"tile\":\"";
+    if (drapeTileID) {
+        os << static_cast<int>(drapeTileID->canonical.z) << "/" << drapeTileID->canonical.x << "/"
+           << drapeTileID->canonical.y;
+    }
+    os << "\",\"totalGroups\":" << bakedCoverage.totalGroups
+       << ",\"groupsWithContent\":" << bakedCoverage.groupsWithContent
+       << ",\"zoomDeficit\":" << bakedCoverage.zoomDeficit << ",\"contentHash\":" << bakedCoverage.contentHash
+       << ",\"zoom\":" << bakedCoverage.zoom << ",\"rendered\":" << (hasRenderedContent ? "true" : "false") << "}";
+    return os.str();
+}
+
 RenderTarget::RenderResult RenderTarget::render(RenderOrchestrator& orchestrator,
                                                 const RenderTree& renderTree,
                                                 PaintParameters& parameters,
@@ -328,22 +346,30 @@ RenderTarget::RenderResult RenderTarget::render(RenderOrchestrator& orchestrator
             return RenderResult::Skipped;
         }
 
-        // Otherwise the content did change. Keep what is already baked when the new
-        // content would be strictly worse (fewer draped layers with content, or
-        // coarser ancestor fallbacks): while browsing, a tile's content briefly
-        // drops out of the render set (eviction, reload) and re-rendering would
-        // flash the drape empty before it recovers. A genuine change - a tile's
-        // drawable set changing (contentHash) or crossing an integer zoom - is not
-        // "worse" and falls through to re-render. The target's lifetime bounds
-        // staleness: when its terrain tile leaves the cover it is destroyed.
-        if (coverage.worseThan(bakedCoverage)) {
-            // Keeping the already-baked (better) content: record that at this
-            // signature the decision was to hold, so future identical frames skip
-            // the scan too. A real change (drawable set, zoom, properties) moves the
-            // signature and re-opens evaluation, preserving the anti-flicker intent.
-            bakedSignature = targetSignature;
-            return RenderResult::Skipped;
-        }
+        // The content changed, so the baked texture is out of date: re-render it.
+        //
+        // There used to be an anti-flicker latch here - keep the baked texture when
+        // the new coverage would be "worse" (fewer draped layer groups with content,
+        // or coarser ancestor fallbacks) - and it was a fault, not a nicety. It also
+        // set `bakedSignature` to the new signature while keeping the OLD texture, so
+        // once it fired the target was frozen: every later frame hit the fast path
+        // above, matched the signature, and skipped. Whatever happened to be baked at
+        // that moment stayed on screen for the life of the target.
+        //
+        // Measured at the Gavarnie wall (task N1): four runs of the identical harness
+        // link settled with an IDENTICAL DEM tile set, an IDENTICAL terrain mesh cover
+        // and an IDENTICAL set of draped (layer group, covering tile) pairs, and still
+        // drew frames differing in up to 1.4 million pixels, because 18 to 28 of the 34
+        // drape targets were holding bakes from different moments of the load - one run
+        // with `groupsWithContent` 6 and `zoomDeficit` 0, another with 8 and 28, at the
+        // same target on the same frame. That is the map settling into a permanently
+        // wrong state, not a flicker being smoothed.
+        //
+        // maplibre-gl-js has no such latch: it re-renders a terrain tile's texture
+        // whenever the stack covering it changes. The remaining protection against a
+        // one-frame empty drape is the ancestor fallback in the covering set itself
+        // (computeDrapeCoverage's zoomDeficit accounting) plus the target's own
+        // lifetime, which is what gl-js relies on too.
 
         // Drape render budget: this target needs a re-render, but if the per-frame cap is
         // exhausted (canRerender == false) and it already has a baked texture, defer to a

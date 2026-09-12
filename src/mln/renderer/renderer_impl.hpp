@@ -119,6 +119,13 @@ private:
     /// open forever. Shared by both channels so the bounded retry still cannot spin.
     int centerElevationSettleFrames = 0;
     static constexpr int kMaxCenterElevationSettleFrames = 4;
+    // Frames the renderer will keep reporting "not settled" while terrain is enabled and no
+    // loaded DEM tile covers the map centre at all. Measured at Gavarnie: a cold launch is in
+    // that state for 2 to 5 frames. 30 leaves a six-fold margin for a slow load and is still a
+    // hard bound, so ground the DEM does not cover cannot spin the render loop. Re-armed
+    // whenever the centre IS covered, so it is a per-episode budget, not a lifetime one.
+    static constexpr int kMaxCenterElevationUnknownFrames = 30;
+    int centerElevationUnknownFrames = 0;
 
     enum class RenderState {
         Never,

@@ -144,12 +144,6 @@ protected:
         bool sameContentAs(const DrapeCoverage& other) const {
             return totalGroups == other.totalGroups && contentHash == other.contentHash && zoom == other.zoom;
         }
-        /// Whether this would draw less than `other`: fewer layers with content, or
-        /// the same layers via coarser ancestor fallbacks
-        bool worseThan(const DrapeCoverage& other) const {
-            return groupsWithContent < other.groupsWithContent ||
-                   (groupsWithContent == other.groupsWithContent && zoomDeficit > other.zoomDeficit);
-        }
     };
     DrapeCoverage computeDrapeCoverage(RenderOrchestrator&, const PaintParameters&) const;
 
@@ -163,11 +157,10 @@ protected:
     // apply_drape_transform; w = 1 marks an active drape target
     std::array<float, 4> drapeTileValues{{0, 0, 0, 0}};
     gfx::UniformBufferPtr drapeGlobalUniformBuffer;
-    // Coverage baked into the target texture by the last actual render. The
-    // target keeps its previously rendered content whenever the currently
-    // available coverage is strictly worse, so a drape never regresses to
-    // fewer layers / coarser fallbacks than it already shows (anti-flicker);
-    // see RenderTarget::render.
+    // Coverage baked into the target texture by the last actual render. Compared
+    // against the current coverage to decide whether the texture is still correct;
+    // see RenderTarget::render, which also records why the "keep the better bake"
+    // latch that used to live beside this was removed.
     DrapeCoverage bakedCoverage;
     // Opt-in "render once" for immutable targets (hillshade prepare, whose DEM input is
     // baked into the prepare drawable once). When set, the target renders on its first
@@ -184,6 +177,11 @@ protected:
 
 public:
     void setRenderOnce(bool value) { renderOnce = value; }
+
+    /// Debug-only, for the DUCKMAPS_ELEVATION_TRACE diagnosis: what this target
+    /// last actually baked, as a JSON object. Nothing reads it unless the trace
+    /// environment variable is set (see Renderer::Impl::render).
+    std::string debugBakedCoverageJSON() const;
 
 protected:
     // This target's own content signature (PaintParameters::perTargetDrapeSignature)

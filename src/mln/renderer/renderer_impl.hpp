@@ -66,8 +66,20 @@ private:
     // 1) draped roads look aliased because the line AA band, sized to the screen's device
     // pixel ratio, falls sub-texel in the lower-resolution target. Lower drapeQualityFactor
     // back to 1 to save GPU memory on constrained devices (each step is 4x memory/target).
+    //
+    // DuckMaps fork only: raised from 2 to 3, David's 12 September decision to go beyond
+    // the web on the near field (docs/plans/2026-09-11-camera-and-motion.md). The web's own
+    // qualityFactor 2 gives a fixed 1024-texel target for a tile spanning 512 CSS pixels -
+    // 0.67 texels per device pixel at the phone's dpr 3, at ANY zoom, because the ratio is
+    // set by CSS-pixel tile size versus device pixel ratio, not by which zoom level the
+    // near field happens to mesh at (task C5/N3's own finding: the near field is soft
+    // because of this ratio, not the tile cover). qualityFactor 3 raises the target to
+    // 1536x1536, exactly 1.0 texel per device pixel at dpr 3 - the obvious first step, and
+    // the one that stops the near field being sub-texel at all on David's own phone. Each
+    // step is still 4x/9x memory per target versus qualityFactor 1; see
+    // development/app-bench/journal.md for the measured cost against qualityFactor 2 and 4.
     static constexpr uint32_t drapeTileSize = 512;
-    static constexpr uint32_t drapeQualityFactor = 2;
+    static constexpr uint32_t drapeQualityFactor = 3;
     TexturePool texturePool{drapeTileSize * drapeQualityFactor};
 
     gfx::RendererBackend& backend;

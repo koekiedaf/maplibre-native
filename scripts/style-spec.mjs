@@ -521,6 +521,12 @@ modifiedReferenceSpec["paint_terrain-contour"] = {
   },
   "terrain-contour-minor-width": {
       "type": "number",
+      // DuckMaps: the style spec requires a default, so this number appears here as well as in
+      // the one definition it comes from (DuckMaps' style.py CONTOUR3D_*, served at
+      // /style-tokens.json and read by the web engine's contours3d.js and by the native style
+      // alike). It is a FALLBACK, not a second definition: the DuckMaps style always sets this
+      // property explicitly, so this value is never the one that ships. Keep it equal to
+      // style.py's if you touch either.
       "default": 1.3,
       "minimum": 0,
       "units": "pixels",
@@ -534,6 +540,12 @@ modifiedReferenceSpec["paint_terrain-contour"] = {
   },
   "terrain-contour-index-width": {
       "type": "number",
+      // DuckMaps: the style spec requires a default, so this number appears here as well as in
+      // the one definition it comes from (DuckMaps' style.py CONTOUR3D_*, served at
+      // /style-tokens.json and read by the web engine's contours3d.js and by the native style
+      // alike). It is a FALLBACK, not a second definition: the DuckMaps style always sets this
+      // property explicitly, so this value is never the one that ships. Keep it equal to
+      // style.py's if you touch either.
       "default": 2.1,
       "minimum": 0,
       "units": "pixels",
@@ -547,6 +559,12 @@ modifiedReferenceSpec["paint_terrain-contour"] = {
   },
   "terrain-contour-fade-lo": {
       "type": "number",
+      // DuckMaps: the style spec requires a default, so this number appears here as well as in
+      // the one definition it comes from (DuckMaps' style.py CONTOUR3D_*, served at
+      // /style-tokens.json and read by the web engine's contours3d.js and by the native style
+      // alike). It is a FALLBACK, not a second definition: the DuckMaps style always sets this
+      // property explicitly, so this value is never the one that ships. Keep it equal to
+      // style.py's if you touch either.
       "default": 0.6,
       "minimum": 0,
       "units": "pixels",
@@ -560,6 +578,12 @@ modifiedReferenceSpec["paint_terrain-contour"] = {
   },
   "terrain-contour-fade-hi": {
       "type": "number",
+      // DuckMaps: the style spec requires a default, so this number appears here as well as in
+      // the one definition it comes from (DuckMaps' style.py CONTOUR3D_*, served at
+      // /style-tokens.json and read by the web engine's contours3d.js and by the native style
+      // alike). It is a FALLBACK, not a second definition: the DuckMaps style always sets this
+      // property explicitly, so this value is never the one that ships. Keep it equal to
+      // style.py's if you touch either.
       "default": 2.2,
       "minimum": 0,
       "units": "pixels",
@@ -573,6 +597,12 @@ modifiedReferenceSpec["paint_terrain-contour"] = {
   },
   "terrain-contour-reference-ratio": {
       "type": "number",
+      // DuckMaps: the style spec requires a default, so this number appears here as well as in
+      // the one definition it comes from (DuckMaps' style.py CONTOUR3D_*, served at
+      // /style-tokens.json and read by the web engine's contours3d.js and by the native style
+      // alike). It is a FALLBACK, not a second definition: the DuckMaps style always sets this
+      // property explicitly, so this value is never the one that ships. Keep it equal to
+      // style.py's if you touch either.
       "default": 2,
       "minimum": 1,
       "transition": false,

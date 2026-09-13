@@ -51,6 +51,25 @@ struct alignas(16) SlopeShadingDrawableUBO {
 };
 static_assert(sizeof(SlopeShadingDrawableUBO) == 7 * 16, "wrong size");
 
+// DuckMaps fork only, avalanche/aspect comparison task (13 September 2026): this struct's
+// trailing pad used to be declared `float3 pad0` at byte offset 52. Metal Shading Language
+// aligns a float3 MEMBER to 16 bytes (same as float4), same rule as std140/HLSL constant
+// buffers - not the 4-byte packed layout its C++ offset comments assumed. Offset 52 is not a
+// multiple of 16, so the real Metal compiler inserted 12 bytes of padding BEFORE pad0 to
+// realign it, then rounded the struct up to 80 bytes (5*16) for its own 16-byte alignment,
+// silently mismatching this file's own `static_assert(... == 4 * 16)` (64 bytes) - not
+// silently in this specific case, since the assert lives in the shader source, so it failed
+// at Metal shader-compile time on every draw: "SlopeShadingShader ... compile failed:
+// static_assert failed due to requirement 'sizeof(SlopeShadingTilePropsUBO) == 4 * 16'".
+// A failed shader compile is a failed shader, in full: the layer generated drawables but drew
+// nothing, on every camera, at every zoom and pitch, with no error visible from the app's own
+// harness state (this only surfaces in the Metal/MapLibre console log, not state.json) - the
+// root cause of the entire app-vs-web avalanche/aspect disagreement this task exists to
+// explain, not the exaggeration divisor or the terrain mesh cover (both checked and are fine).
+// Fixed by three scalar `float` members instead of one `float3`: each is naturally 4-byte
+// aligned at its own packed offset, so nothing forces MSL to reinsert alignment padding, and
+// the struct is genuinely 64 bytes, matching what every C++ writer of this struct
+// (SlopeShadingLayerTweaker::execute) already assumes.
 struct alignas(16) SlopeShadingTilePropsUBO {
     /*  0 */ float4 dem_coords;
     /* 16 */ float4 dem_unpack;
@@ -59,7 +78,9 @@ struct alignas(16) SlopeShadingTilePropsUBO {
     /* 40 */ float dem_enabled;
     /* 44 */ float m_per_extent;
     /* 48 */ float dem_unbuilt;
-    /* 52 */ float3 pad0;
+    /* 52 */ float pad0;
+    /* 56 */ float pad1;
+    /* 60 */ float pad2;
     /* 64 */
 };
 static_assert(sizeof(SlopeShadingTilePropsUBO) == 4 * 16, "wrong size");

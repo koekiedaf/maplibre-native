@@ -31,6 +31,16 @@ NS_ASSUME_NONNULL_BEGIN
 /** Options for ``MLNMapView/decelerationRate``. */
 typedef CGFloat MLNMapViewDecelerationRate NS_TYPED_EXTENSIBLE_ENUM;
 
+/** Called after a Metal drawable has actually been presented. The timestamp
+ is in the display's monotonic timebase; zero means the drawable was not
+ presented and is never delivered. */
+typedef void (^MLNPresentedFrameHandler)(CFTimeInterval presentedTime);
+
+/** Receives Foundation gesture recognizer input and the resulting camera.
+ The dictionary contains only NSNumber and NSString values, and is delivered
+ synchronously on the main thread so an app recorder can copy it cheaply. */
+typedef void (^MLNFoundationGestureHandler)(NSDictionary<NSString *, id> *event);
+
 /** The default deceleration rate for a map view. */
 FOUNDATION_EXTERN MLN_EXPORT const MLNMapViewDecelerationRate MLNMapViewDecelerationRateNormal;
 
@@ -531,6 +541,50 @@ MLN_EXPORT
  average It is recommended to first configure the pixelRatio before adjusting TileLodZoomShift.
  */
 @property (nonatomic, assign) double tileLodZoomShift;
+
+/**
+ Scales the Metal map drawable in each dimension without scaling UIKit controls.
+
+ The default is 1.0. Values are clamped to 0.25 through 1.0. Changing this value
+ preserves the camera and logical map size.
+ */
+@property (nonatomic, assign) CGFloat renderScale;
+
+/** The actual current map drawable dimensions in physical pixels. */
+@property (nonatomic, readonly) CGSize renderDrawableSize;
+
+/**
+ Receives actual Metal presentation timestamps. The callback is invoked on a
+ Metal-owned queue and must return promptly. It is registered before each
+ drawable is presented, so callback counts are not render-loop estimates.
+ */
+@property (nonatomic, copy, nullable) MLNPresentedFrameHandler presentedFrameHandler;
+
+/** Enables the Foundation eye/MSL terrain controller. Off by default. */
+@property (nonatomic, assign) BOOL terrainFlightControllerEnabled;
+
+/** Extra decoded-terrain clearance retained by the Foundation controller. */
+@property (nonatomic, assign) CGFloat terrainFlightClearanceMeters;
+
+/** Current camera-eye altitude above mean sea level, in metres. */
+@property (nonatomic, readonly) CLLocationDistance terrainFlightEyeAltitudeMSL;
+
+/** Whether the current Foundation flight corridor has decoded DEM coverage. */
+@property (nonatomic, readonly) BOOL terrainFlightDEMAvailable;
+
+/**
+ Replaces MapLibre's stock camera recognizers with the Foundation flight
+ controller. It is opt-in and off by default, so normal MLNMapView behaviour
+ is unchanged. The Foundation controller has exactly one camera mutation path:
+ one-finger lateral pan, two-finger rotate and tilt, and pinch forward/back.
+ */
+@property (nonatomic, assign) BOOL foundationGestureControllerEnabled;
+
+/** Main-thread diagnostic hook for Foundation gesture states and camera deltas. */
+@property (nonatomic, copy, nullable) MLNFoundationGestureHandler foundationGestureHandler;
+
+/** Latest decision by the engine-owned Foundation flight arbiter. */
+@property (nonatomic, readonly) NSDictionary<NSString *, id> *foundationFlightTelemetry;
 
 // MARK: Terrain
 

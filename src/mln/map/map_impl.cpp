@@ -10,6 +10,9 @@
 #include <mln/util/action_journal_impl.hpp>
 #include <mln/gfx/rendering_stats.hpp>
 
+#include <algorithm>
+#include <cmath>
+
 namespace mln {
 
 #if !defined(NDEBUG)
@@ -341,6 +344,133 @@ void Map::Impl::onTerrainCenterElevationChanged(double elevationMeters) {
     // so this settles rather than feeding back into the next frame's sample.
     transform.jumpTo(CameraOptions().withCenterAltitude(elevationMeters));
     onUpdate();
+}
+
+void Map::Impl::onTerrainFlightAssessment(const TerrainFlightAssessment& assessment) {
+    const auto current = transform.getState().getFoundationFlightIntent();
+    // Render results are asynchronous. Never let an older envelope move or
+    // block the camera after a newer recognizer sample has replaced it. This
+    // also rejects a settled (sequence zero) result once an intent exists.
+    if (!foundationFlightAssessmentMatches(current, assessment.intentSequence)) {
+        return;
+    }
+    if (assessment.intentSequence != 0) {
+        foundationFlightTelemetry.lookaheadMeters = assessment.lookaheadMeters;
+        foundationFlightMinimumRayClearance = assessment.minimumRayClearanceMeters;
+        foundationFlightPathMeters = assessment.pathMeters;
+        foundationFlightCommittableFraction = assessment.committableFraction;
+        foundationFlightTerrainProfile = assessment.terrainProfile;
+        foundationFlightTruncatedByUnknownDEM = assessment.truncatedByUnknownDEM;
+        if (!assessment.elevationMeters) {
+            foundationFlightUnknownDEMLatched = true;
+        }
+    }
+    onTerrainFlightElevationChanged(assessment.elevationMeters);
+}
+
+void Map::Impl::onTerrainFlightElevationChanged(std::optional<double> elevationMeters) {
+    terrainFlightDEMAvailable = elevationMeters.has_value();
+    const auto intent = transform.getState().getFoundationFlightIntent();
+    if (!terrainFlightControllerEnabled || !elevationMeters) {
+        // Unknown DEM deliberately leaves the last trusted MSL floor intact.
+        if (intent) {
+            foundationFlightTelemetry.acceptedDistanceMeters = 0.0;
+            foundationFlightTelemetry.demAvailable = false;
+            foundationFlightTelemetry.blocked = true;
+            foundationFlightTelemetry.stopReason = "unknown_dem";
+            transform.getState().setFoundationFlightIntent(std::nullopt);
+            foundationFlightQueuedIntent.reset();
+        }
+        return;
+    }
+    foundationFlightTelemetry.demAvailable = true;
+
+    if (intent) {
+        // The renderer has sampled every point through the submitted travel
+        // envelope. This is the sole camera-translation commit: recognizers
+        // submit intent, this arbiter accepts a safe fraction and jumpTo
+        // applies centre and altitude together without changing orientation.
+        const double eyeMSL = transform.getState().getEyeAltitudeMSL();
+        const double gestureEyeMSL = intent->gestureStartEyeMSL.value_or(eyeMSL);
+        const double heldFloor = foundationFlightHeldEyeMSL.value_or(-std::numeric_limits<double>::infinity());
+        double requestedEyeMSL = gestureEyeMSL + intent->verticalEyeMSLDeltaMeters;
+        if (!intent->pinch) requestedEyeMSL = std::max(requestedEyeMSL, heldFloor);
+        const TimePoint now = Clock::now();
+        const double elapsed = std::clamp(
+            std::chrono::duration<double>(now - foundationFlightLastCommit).count(), 1.0 / 120.0, 0.10);
+        foundationFlightLastCommit = now;
+        // Stand-off can shorten the prefix, but terrain/climb safety is then
+        // evaluated against every station in that actual prefix. It never
+        // derives travel from max-elevation climb ratios.
+        const auto pinchPolicy = foundationFlightPolicy(true, intent->pinch, 0.0, 0.0,
+                                                        elapsed, foundationFlightMinimumRayClearance);
+        const double requestedLimit = foundationFlightCommittableFraction * pinchPolicy.acceptedFraction;
+        const auto trajectory = foundationFlightSafeTrajectory(
+            true,
+            eyeMSL,
+            requestedEyeMSL,
+            transform.getState().getTerrainFlightClearanceMeters(),
+            requestedLimit,
+            foundationFlightTerrainProfile,
+            foundationFlightVerticalVelocity,
+            elapsed);
+        foundationFlightVerticalVelocity = trajectory.nextVerticalVelocity;
+        const double fraction = trajectory.acceptedFraction;
+        const double targetEyeMSL = trajectory.targetEyeMSL;
+        const double altitudeDelta = targetEyeMSL - eyeMSL;
+        const double ascent = std::max(0.0, altitudeDelta);
+        const double safeDistance = std::abs(intent->requestedDistanceMeters) * fraction;
+
+        const auto current = transform.getState().getLatLng();
+        double lonDelta = intent->target.longitude() - current.longitude();
+        if (lonDelta > 180.0) lonDelta -= 360.0;
+        if (lonDelta < -180.0) lonDelta += 360.0;
+        const LatLng acceptedTarget{current.latitude() + (intent->target.latitude() - current.latitude()) * fraction,
+                                    current.longitude() + lonDelta * fraction};
+        cameraMutated = true;
+        transform.jumpToFoundationFlightTarget(acceptedTarget, targetEyeMSL);
+        onUpdate();
+        if (!intent->pinch && ascent > 0.0) {
+            foundationFlightHeldEyeMSL = foundationFlightHeldEyeMSL
+                ? std::max(*foundationFlightHeldEyeMSL, targetEyeMSL)
+                : targetEyeMSL;
+        }
+        transform.getState().setFoundationFlightIntent(std::nullopt);
+        foundationFlightTelemetry.acceptedDistanceMeters =
+            std::copysign(safeDistance, intent->requestedDistanceMeters);
+        foundationFlightTelemetry.lookaheadMeters = foundationFlightLookahead(intent->speedMetersPerSecond);
+        foundationFlightTelemetry.obstructionDistanceMeters =
+            foundationFlightPathMeters * trajectory.obstructionFraction;
+        foundationFlightTelemetry.safeDistanceMeters = safeDistance;
+        foundationFlightTelemetry.ascentMeters = ascent;
+        foundationFlightTelemetry.blocked = fraction <= 0.0;
+        const auto reason = pinchPolicy.reason != FoundationFlightStopReason::None
+            ? pinchPolicy.reason
+            : trajectory.reason;
+        switch (reason) {
+            case FoundationFlightStopReason::None: foundationFlightTelemetry.stopReason.clear(); break;
+            case FoundationFlightStopReason::UnknownDEM: foundationFlightTelemetry.stopReason = "unknown_dem"; break;
+            case FoundationFlightStopReason::AscentLimited: foundationFlightTelemetry.stopReason = "ascent_limited"; break;
+            case FoundationFlightStopReason::PinchDeceleration: foundationFlightTelemetry.stopReason = "pinch_deceleration_150m"; break;
+            case FoundationFlightStopReason::PinchStandOff: foundationFlightTelemetry.stopReason = "pinch_standoff_50m"; break;
+        }
+        if (foundationFlightTruncatedByUnknownDEM) {
+            foundationFlightUnknownDEMLatched = true;
+            foundationFlightQueuedIntent.reset();
+            foundationFlightTelemetry.stopReason = "unknown_dem";
+            foundationFlightTelemetry.blocked = fraction <= 0.0;
+        }
+        if (foundationFlightQueuedIntent && !foundationFlightUnknownDEMLatched) {
+            transform.getState().setFoundationFlightIntent(std::move(foundationFlightQueuedIntent));
+            foundationFlightQueuedIntent.reset();
+            onUpdate();
+        }
+        return;
+    }
+    // Keep the last decoded local terrain floor for the next contact, but do
+    // not snap the camera here. All flight altitude changes pass through the
+    // bounded arbiter above.
+    transform.getState().setTerrainFlightMinimumEyeMSL(elevationMeters);
 }
 
 void Map::Impl::jumpTo(const CameraOptions& camera) {

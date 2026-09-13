@@ -49,6 +49,10 @@ public:
 
     /** Instantaneously, synchronously applies the given camera options. */
     void jumpTo(const CameraOptions&);
+    /// Applies the final Foundation arbiter result as one centre/eye commit.
+    /// Terrain policy is evaluated before this method; this primitive only
+    /// preserves orientation while applying the signed target eye altitude.
+    void jumpToFoundationFlightTarget(const LatLng& center, double targetEyeMSL);
     /** Asynchronously transitions all specified camera options linearly along
         an optional time curve. However, center coordinate is not transitioned
         linearly as, instead, ground speed is kept linear.*/
@@ -123,6 +127,7 @@ public:
 
     // Transform state
     const TransformState& getState() const { return state; }
+    TransformState& getState() { return state; }
     bool isRotating() const { return state.isRotating(); }
     bool isScaling() const { return state.isScaling(); }
     bool isPanning() const { return state.isPanning(); }

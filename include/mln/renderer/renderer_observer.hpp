@@ -8,11 +8,15 @@
 #include <mln/gfx/backend.hpp>
 #include <mln/shaders/shader_source.hpp>
 #include <mln/util/symbol_error_observer.hpp>
+#include <mln/map/map.hpp>
 
 #include <cstdint>
 #include <exception>
 #include <functional>
+#include <limits>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace mln {
 
@@ -67,6 +71,31 @@ public:
     /// it - the DEM lives there - so a map that wants its centre to ride the terrain
     /// (Map::setCenterClampedToGround) learns of it here, one frame behind.
     virtual void onTerrainCenterElevationChanged(double /*elevationMeters*/) {}
+
+    /// Highest decoded terrain elevation relevant to the active flight camera.
+    /// nullopt means unknown DEM, never fabricated sea level.
+    virtual void onTerrainFlightElevationChanged(std::optional<double> /*elevationMeters*/) {}
+
+    /// A terrain envelope assessment belongs to the exact intent sequence the
+    /// renderer saw. The map must discard it if a newer touch sample has
+    /// replaced that intent before this render result returns.
+    struct TerrainFlightAssessment {
+        std::optional<double> elevationMeters;
+        uint64_t intentSequence = 0;
+        double lookaheadMeters = 0.0;
+        /// Lowest eye-to-terrain clearance along a pinch's actual 3D view
+        /// ray. Infinity means the assessment was not a pinch.
+        double minimumRayClearanceMeters = std::numeric_limits<double>::infinity();
+        double pathMeters = 0.0;
+        double committableFraction = 0.0;
+        std::vector<FoundationFlightTerrainSample> terrainProfile;
+        /// A required-path station after terrainProfile was unresolved. The
+        /// map may commit only the contiguous decoded prefix, then latches.
+        bool truncatedByUnknownDEM = false;
+    };
+    virtual void onTerrainFlightAssessment(const TerrainFlightAssessment& assessment) {
+        onTerrainFlightElevationChanged(assessment.elevationMeters);
+    }
 
     /// Style is missing an image
     using StyleImageMissingCallback = std::function<void()>;

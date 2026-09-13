@@ -508,6 +508,18 @@ double TransformState::getCenterAltitude() const {
     return z * Projection::getMetersPerPixelAtLatitude(getLatLng().latitude(), getZoom());
 }
 
+double TransformState::getEyeAltitudeMSL() const {
+    const double cameraDistanceMeters = static_cast<double>(getCameraToCenterDistance()) *
+                                        Projection::getMetersPerPixelAtLatitude(getLatLng().latitude(), getZoom());
+    return getCenterAltitude() + std::cos(getPitch()) * cameraDistanceMeters;
+}
+
+LatLng TransformState::getCameraLatLng() const {
+    updateCameraState();
+    const vec3 position = camera.getPosition();
+    return latLngFromMercator(Point<double>{position[0], position[1]});
+}
+
 double TransformState::pixel_x() const {
     const double center = (size.width - Projection::worldSize(scale)) / 2;
     return center + x;
@@ -1041,6 +1053,21 @@ void TransformState::setLatLngZoom(const LatLng& latLng, double zoom) {
 void TransformState::setCenterAltitude(double alt_m) {
     z = alt_m / Projection::getMetersPerPixelAtLatitude(getLatLng().latitude(), getZoom());
     requestMatricesUpdate = true;
+}
+
+bool TransformState::constrainEyeToTerrainFlightMinimum() {
+    if (!terrainFlightMinimumEyeMSL) {
+        return false;
+    }
+    const double requiredEyeMSL = *terrainFlightMinimumEyeMSL + terrainFlightClearanceMeters;
+    const double eyeMSL = getEyeAltitudeMSL();
+    if (!std::isfinite(requiredEyeMSL) || !std::isfinite(eyeMSL) || eyeMSL >= requiredEyeMSL) {
+        return false;
+    }
+    // Moving the centre altitude by this exact delta moves the eye by the same
+    // amount while preserving all orientation axes and the visible map point.
+    setCenterAltitude(getCenterAltitude() + (requiredEyeMSL - eyeMSL));
+    return true;
 }
 
 void TransformState::setScalePoint(const double newScale, const ScreenCoordinate& point) {

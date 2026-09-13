@@ -29,6 +29,8 @@
 #include <mln/renderer/bucket.hpp>      // drape signature: Bucket::getID content revision
 #include <mln/util/hash.hpp>            // drape signature: hash_combine
 #include <map>
+#include <algorithm>
+#include <cmath>
 #include <mln/renderer/render_terrain.hpp>
 #include <mln/style/sky_impl.hpp> // DuckMaps fork only, task T3
 #include <mln/renderer/dem_elevation_provider.hpp>
@@ -821,6 +823,132 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             lastReportedCenterElevation = centerElevation;
             observer->onTerrainCenterElevationChanged(centerElevation);
         }
+        // This is an independent, opt-in channel. Unlike the legacy centre
+        // clamp it only reports decoded DEM and therefore cannot invent a
+        // sea-level clearance while terrain is still arriving.
+        const auto centre = updateParameters->transformState.getLatLng();
+        const auto eye = updateParameters->transformState.getCameraLatLng();
+        const auto& flightIntent = updateParameters->transformState.getFoundationFlightIntent();
+        // An active Foundation intent supplies the centre's horizontal delta,
+        // applied to the camera eye below. Otherwise retain the settled
+        // eye-to-look-at sample used to remember the local terrain floor.
+        const LatLng corridorStart = eye;
+        LatLng corridorEnd = centre;
+        if (flightIntent) {
+            // The camera eye translates by the same horizontal delta as the
+            // look-at centre. Sampling centre-to-target can miss terrain under
+            // a pitched camera because the eye is offset behind that path.
+            double targetLonDelta = flightIntent->target.longitude() - centre.longitude();
+            if (targetLonDelta > 180.0) targetLonDelta -= 360.0;
+            if (targetLonDelta < -180.0) targetLonDelta += 360.0;
+            corridorEnd = LatLng{
+                eye.latitude() + flightIntent->target.latitude() - centre.latitude(),
+                eye.longitude() + targetLonDelta,
+            };
+        }
+        double lonDelta = corridorEnd.longitude() - corridorStart.longitude();
+        if (lonDelta > 180.0) lonDelta -= 360.0;
+        if (lonDelta < -180.0) lonDelta += 360.0;
+        const double latDelta = corridorEnd.latitude() - corridorStart.latitude();
+        const double metresNorth = latDelta * 111320.0;
+        const double metresEast = lonDelta * 111320.0 * std::cos(centre.latitude() * M_PI / 180.0);
+        const double corridorMetres = std::hypot(metresNorth, metresEast);
+        const double committableMeters = flightIntent
+            ? std::min(corridorMetres, foundationFlightMaximumCommittableMeters)
+            : 0.0;
+        const double lookahead = flightIntent && corridorMetres > 1.0
+            ? foundationFlightLookahead(flightIntent->speedMetersPerSecond)
+            : 0.0;
+        const double assessedMeters = committableMeters + lookahead;
+        // Bound work by truncating the distance this frame may commit, never
+        // by widening the sampling gap. A later contact callback assesses the
+        // next prefix. At the 50m path and 150m lookahead caps this is at most 41
+        // longitudinal stations x three cross-track queries per frame.
+        const std::size_t corridorIntervals =
+            foundationFlightLongitudinalIntervals(committableMeters, lookahead);
+        std::optional<double> flightElevation;
+        double minimumRayClearance = std::numeric_limits<double>::infinity();
+        bool unknownDEM = false;
+        bool optionalLookaheadEnded = false;
+        std::vector<FoundationFlightTerrainSample> terrainProfile;
+        terrainProfile.reserve(corridorIntervals + 1);
+        for (std::size_t index = 0; index <= corridorIntervals; ++index) {
+            const double distanceMeters = assessedMeters * static_cast<double>(index) /
+                                          static_cast<double>(corridorIntervals);
+            const double t = corridorMetres > 1e-6
+                ? distanceMeters / corridorMetres
+                : (flightIntent ? static_cast<double>(index) / static_cast<double>(corridorIntervals) : 0.0);
+            const double centreLatitude = corridorStart.latitude() + latDelta * t;
+            const double centreLongitude = corridorStart.longitude() + lonDelta * t;
+            std::optional<double> stationElevation;
+            for (const double crossTrackMeters : foundationFlightCorridorCrossTrackOffsets()) {
+                const auto crossTrack = foundationFlightCrossTrackOffset(
+                    metresNorth, metresEast, crossTrackMeters);
+                const double sampleLatitude = centreLatitude + crossTrack.northMeters / 111320.0;
+                const double longitudeMetres = 111320.0 * std::cos(centreLatitude * M_PI / 180.0);
+                const double sampleLongitude = centreLongitude +
+                    (std::abs(longitudeMetres) > 1e-6 ? crossTrack.eastMeters / longitudeMetres : 0.0);
+                const LatLng sample{sampleLatitude, sampleLongitude};
+                if (const auto elevation = terrain->queryElevationForLatLng(sample)) {
+                    flightElevation = flightElevation ? std::max(*flightElevation, *elevation) : elevation;
+                    stationElevation = stationElevation ? std::max(*stationElevation, *elevation) : elevation;
+                    if (flightIntent && flightIntent->pinch) {
+                        // The input carries the signed vertical component from
+                        // the actual view ray. Continue that slope through the
+                        // lookahead, which is conservative for forward descent.
+                        const double rayEyeMSL = flightIntent->gestureStartEyeMSL.value_or(
+                            updateParameters->transformState.getEyeAltitudeMSL()) +
+                            flightIntent->verticalEyeMSLDeltaMeters * t;
+                        minimumRayClearance = std::min(minimumRayClearance, rayEyeMSL - *elevation);
+                    }
+                } else if (foundationFlightSampleRequiresDEM(distanceMeters, committableMeters)) {
+                    // Unknown terrain on the movement actually being committed
+                    // is a hard stop. Unknown terrain only beyond that target
+                    // ends optional lookahead; with no inertia the camera will
+                    // not enter it before a later, separately assessed sample.
+                    unknownDEM = true;
+                    break;
+                } else {
+                    optionalLookaheadEnded = true;
+                    break;
+                }
+            }
+            if (unknownDEM || optionalLookaheadEnded) break;
+            if (stationElevation) {
+                terrainProfile.push_back({t, *stationElevation});
+            }
+        }
+        const double decodedPrefixFraction = terrainProfile.empty()
+            ? 0.0
+            : std::min(1.0, terrainProfile.back().pathFraction);
+        const double requestedCommittableFraction = corridorMetres > 1e-6
+            ? committableMeters / corridorMetres
+            : 1.0;
+        observer->onTerrainFlightAssessment(RendererObserver::TerrainFlightAssessment{
+            unknownDEM && terrainProfile.empty() ? std::nullopt : flightElevation,
+            flightIntent ? flightIntent->sequence : 0,
+            lookahead,
+            minimumRayClearance,
+            corridorMetres,
+            unknownDEM ? std::min(requestedCommittableFraction, decodedPrefixFraction)
+                       : requestedCommittableFraction,
+            std::move(terrainProfile),
+            unknownDEM,
+        });
+    } else {
+        // No terrain renderer is an explicitly unknown safety assessment, not
+        // a quiet absence that leaves an old contact free to creep onward.
+        const auto& flightIntent = updateParameters->transformState.getFoundationFlightIntent();
+        observer->onTerrainFlightAssessment(RendererObserver::TerrainFlightAssessment{
+            std::nullopt,
+            flightIntent ? flightIntent->sequence : 0,
+            flightIntent ? foundationFlightLookahead(flightIntent->speedMetersPerSecond) : 0.0,
+            std::numeric_limits<double>::infinity(),
+            0.0,
+            0.0,
+            {},
+            false,
+        });
     }
 
     observer->onDidFinishRenderingFrame(

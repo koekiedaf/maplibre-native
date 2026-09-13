@@ -727,6 +727,67 @@ double RenderTerrain::getElevationForLatLng(const LatLng& latLng) const {
     return getElevationWithExaggeration(sampleTile, localX, localY);
 }
 
+std::optional<double> RenderTerrain::queryElevationForLatLng(const LatLng& latLng) const {
+    if (!demSource) return std::nullopt;
+
+    int sampleZoom = -1;
+    const auto renderTiles = demSource->getRawRenderTiles();
+    for (const auto& renderTile : *renderTiles) {
+        if (renderTile.getTile().kind == Tile::Kind::RasterDEM) {
+            sampleZoom = std::max(sampleZoom, static_cast<int>(renderTile.id.canonical.z));
+        }
+    }
+    if (sampleZoom < 0) return std::nullopt;
+
+    const double n = std::pow(2.0, sampleZoom);
+    const auto point = Projection::project(latLng, sampleZoom);
+    const auto tx = static_cast<int64_t>(std::floor(point.x));
+    const auto ty = static_cast<int64_t>(std::floor(point.y));
+    if (ty < 0 || static_cast<double>(ty) >= n) return std::nullopt;
+
+    const UnwrappedTileID sampleTile(static_cast<uint8_t>(sampleZoom), tx, ty);
+    const auto localX = static_cast<float>((point.x - static_cast<double>(tx)) * util::EXTENT);
+    const auto localY = static_cast<float>((point.y - static_cast<double>(ty)) * util::EXTENT);
+
+    UnwrappedTileID tileID = sampleTile;
+    float x = localX;
+    float y = localY;
+    if (!normalizeTileCoordinates(tileID, x, y)) return std::nullopt;
+
+    const RenderTile* demRenderTile = nullptr;
+    int bestZoom = -1;
+    for (const auto& renderTile : *renderTiles) {
+        const auto& candidate = renderTile.id;
+        if ((candidate == tileID || tileID.isChildOf(candidate)) &&
+            static_cast<int>(candidate.canonical.z) > bestZoom) {
+            bestZoom = candidate.canonical.z;
+            demRenderTile = &renderTile;
+        }
+    }
+    if (!demRenderTile || demRenderTile->getTile().kind != Tile::Kind::RasterDEM) return std::nullopt;
+    auto* demTile = const_cast<RasterDEMTile*>(static_cast<const RasterDEMTile*>(&demRenderTile->getTile()));
+    auto* bucket = demTile->getBucket();
+    if (!bucket) return std::nullopt;
+    const auto& data = bucket->getDEMData();
+    if (!data.getImagePtr() || data.dim <= 0) return std::nullopt;
+
+    const auto offset = demSubTileOffset(tileID.canonical, demRenderTile->id.canonical);
+    const float xInDem = (offset.dx * util::EXTENT + x) / offset.scale;
+    const float yInDem = (offset.dy * util::EXTENT + y) / offset.scale;
+    const float dimension = static_cast<float>(data.dim);
+    const float px = util::clamp(xInDem / util::EXTENT * dimension, 0.0f, dimension - 1.0f);
+    const float py = util::clamp(yInDem / util::EXTENT * dimension, 0.0f, dimension - 1.0f);
+    const auto x0 = static_cast<int32_t>(std::floor(px));
+    const auto y0 = static_cast<int32_t>(std::floor(py));
+    const float fx = px - x0;
+    const float fy = py - y0;
+    const float top = static_cast<float>(data.get(x0, y0)) +
+                      (static_cast<float>(data.get(x0 + 1, y0)) - static_cast<float>(data.get(x0, y0))) * fx;
+    const float bottom = static_cast<float>(data.get(x0, y0 + 1)) +
+                         (static_cast<float>(data.get(x0 + 1, y0 + 1)) - static_cast<float>(data.get(x0, y0 + 1))) * fx;
+    return static_cast<double>(top + (bottom - top) * fy) * getExaggeration();
+}
+
 std::optional<RenderTerrain::TerrainData> RenderTerrain::getTerrainData(const UnwrappedTileID& tileID) const {
     // Find the DEM texture matching the requested tile, or its closest available ancestor
     const UnwrappedTileID* demTileID = nullptr;

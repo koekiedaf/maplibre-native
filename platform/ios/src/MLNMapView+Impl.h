@@ -51,6 +51,11 @@ public:
   // Called when UIView's layout has changed.
   virtual void layoutChanged() {};
 
+  // Scales only the renderer drawable. UIKit remains at native resolution.
+  virtual void setRenderScale(CGFloat) {}
+  virtual CGFloat getRenderScale() const { return 1.0; }
+  virtual CGSize getRenderDrawableSize() const { return CGSizeZero; }
+
   // Called by the view delegate when it's time to render.
   void render();
 

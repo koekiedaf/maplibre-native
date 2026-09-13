@@ -38,6 +38,10 @@ public:
   void deleteView() override;
   UIImage* snapshot() override;
   void layoutChanged() override;
+  void setRenderScale(CGFloat) override;
+  CGFloat getRenderScale() const override;
+  CGSize getRenderDrawableSize() const override;
+  MLNPresentedFrameHandler getPresentedFrameHandler() const;
   MLNBackendResource* getObject() override;
   // End implementation of MLNMapViewImpl
 };

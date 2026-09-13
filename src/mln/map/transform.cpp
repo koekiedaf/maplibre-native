@@ -93,6 +93,15 @@ CameraOptions Transform::getCameraOptions(const std::optional<EdgeInsets>& paddi
     return state.getCameraOptions(padding);
 }
 
+void Transform::jumpToFoundationFlightTarget(const LatLng& center, double targetEyeMSL) {
+    const double altitudeDelta = targetEyeMSL - state.getEyeAltitudeMSL();
+    CameraOptions camera = CameraOptions().withCenter(center);
+    if (std::abs(altitudeDelta) > 1e-9) {
+        camera = camera.withCenterAltitude(state.getCenterAltitude() + altitudeDelta);
+    }
+    jumpTo(camera);
+}
+
 /**
  * Change any combination of center, zoom, bearing, and pitch, without
  * a transition. The map will retain the current values for any options
@@ -206,6 +215,9 @@ void Transform::easeTo(const CameraOptions& inputCamera, const AnimationOptions&
             if (fov != startFov) {
                 state.setFieldOfView(util::interpolate(startFov, fov, t));
             }
+            // Foundation terrain correction is committed by Map::Impl after
+            // the renderer assesses the staged corridor. Applying the full
+            // terrain floor here would bypass the arbiter's bounded climb.
         },
         duration);
 }

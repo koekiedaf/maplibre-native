@@ -161,6 +161,10 @@ public:
      */
     double getElevationForLatLng(const LatLng& latLng) const;
 
+    /// Like getElevationForLatLng, but missing/unresolved DEM remains unknown.
+    /// Flight safety must never read an unloaded tile as sea level.
+    std::optional<double> queryElevationForLatLng(const LatLng& latLng) const;
+
     /**
      * @brief Get the terrain exaggeration multiplier
      */

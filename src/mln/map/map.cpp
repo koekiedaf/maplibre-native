@@ -23,6 +23,8 @@
 #include <mln/util/action_journal.hpp>
 
 #include <utility>
+#include <algorithm>
+#include <cmath>
 
 namespace mln {
 
@@ -618,6 +620,94 @@ void Map::setCenterClampedToGround(bool clamped) {
 
 bool Map::getCenterClampedToGround() const {
     return impl->centerClampedToGround;
+}
+
+void Map::setTerrainFlightControllerEnabled(bool enabled) {
+    impl->terrainFlightControllerEnabled = enabled;
+}
+
+bool Map::getTerrainFlightControllerEnabled() const {
+    return impl->terrainFlightControllerEnabled;
+}
+
+void Map::setTerrainFlightClearanceMeters(double metres) {
+    impl->transform.getState().setTerrainFlightClearanceMeters(std::max(0.0, metres));
+}
+
+double Map::getTerrainFlightClearanceMeters() const {
+    return impl->transform.getState().getTerrainFlightClearanceMeters();
+}
+
+double Map::getTerrainFlightEyeAltitudeMSL() const {
+    return impl->transform.getState().getEyeAltitudeMSL();
+}
+
+bool Map::getTerrainFlightDEMAvailable() const {
+    return impl->terrainFlightDEMAvailable;
+}
+
+void Map::submitFoundationFlightIntent(const FoundationFlightIntent& intent) {
+    if (std::abs(intent.requestedDistanceMeters) < 1e-9 && (intent.bearing || intent.pitch)) {
+        CameraOptions camera;
+        if (intent.bearing) camera = camera.withBearing(*intent.bearing);
+        if (intent.pitch) camera = camera.withPitch(*intent.pitch);
+        impl->jumpTo(camera);
+        impl->foundationFlightTelemetry = FoundationFlightTelemetry{};
+        impl->foundationFlightTelemetry.demAvailable = impl->terrainFlightDEMAvailable;
+        impl->foundationFlightTelemetry.stopReason = "orientation";
+        return;
+    }
+    if (intent.beginsContact) {
+        impl->foundationFlightUnknownDEMLatched = false;
+        const auto terrainFloor = impl->transform.getState().getTerrainFlightMinimumEyeMSL();
+        impl->foundationFlightHeldEyeMSL = terrainFloor
+            ? std::optional<double>(*terrainFloor + impl->transform.getState().getTerrainFlightClearanceMeters())
+            : std::nullopt;
+    }
+    if (!std::isfinite(intent.target.latitude()) || !std::isfinite(intent.target.longitude()) ||
+        !std::isfinite(intent.requestedDistanceMeters) || !std::isfinite(intent.speedMetersPerSecond) ||
+        !std::isfinite(intent.verticalEyeMSLDeltaMeters)) {
+        impl->transform.getState().setFoundationFlightIntent(std::nullopt);
+        impl->foundationFlightTelemetry.requestedDistanceMeters = intent.requestedDistanceMeters;
+        impl->foundationFlightTelemetry.acceptedDistanceMeters = 0.0;
+        impl->foundationFlightTelemetry.blocked = true;
+        impl->foundationFlightTelemetry.stopReason = "invalid_input";
+        return;
+    }
+    if (impl->foundationFlightUnknownDEMLatched) {
+        impl->foundationFlightTelemetry.requestedDistanceMeters = intent.requestedDistanceMeters;
+        impl->foundationFlightTelemetry.acceptedDistanceMeters = 0.0;
+        impl->foundationFlightTelemetry.demAvailable = false;
+        impl->foundationFlightTelemetry.blocked = true;
+        impl->foundationFlightTelemetry.stopReason = "unknown_dem";
+        return;
+    }
+    if (impl->transform.getState().getFoundationFlightIntent()) {
+        impl->foundationFlightQueuedIntent = intent;
+        impl->foundationFlightTelemetry.requestedDistanceMeters = intent.requestedDistanceMeters;
+        impl->foundationFlightTelemetry.speedMetersPerSecond = intent.speedMetersPerSecond;
+        impl->foundationFlightTelemetry.pinch = intent.pinch;
+        return;
+    }
+    impl->transform.getState().setFoundationFlightIntent(intent);
+    impl->foundationFlightTelemetry.requestedDistanceMeters = intent.requestedDistanceMeters;
+    impl->foundationFlightTelemetry.speedMetersPerSecond = intent.speedMetersPerSecond;
+    impl->foundationFlightTelemetry.pinch = intent.pinch;
+    impl->foundationFlightTelemetry.blocked = false;
+    impl->foundationFlightTelemetry.stopReason.clear();
+    impl->onUpdate();
+}
+
+void Map::cancelFoundationFlightIntent() {
+    impl->transform.getState().setFoundationFlightIntent(std::nullopt);
+    impl->foundationFlightQueuedIntent.reset();
+    impl->foundationFlightHeldEyeMSL.reset();
+    impl->foundationFlightUnknownDEMLatched = false;
+    impl->foundationFlightVerticalVelocity = 0.0;
+}
+
+FoundationFlightTelemetry Map::getFoundationFlightTelemetry() const {
+    return impl->foundationFlightTelemetry;
 }
 
 void Map::setDebugAboveGroundLog(bool enabled) {

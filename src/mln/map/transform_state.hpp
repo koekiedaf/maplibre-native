@@ -1,6 +1,7 @@
 #pragma once
 
 #include <mln/map/camera.hpp>
+#include <mln/map/map.hpp>
 #include <mln/map/mode.hpp>
 #include <mln/util/camera.hpp>
 #include <mln/util/constants.hpp>
@@ -14,6 +15,7 @@
 #include <array>
 #include <limits>
 #include <optional>
+#include <utility>
 
 namespace mln {
 
@@ -163,6 +165,13 @@ public:
     // Position
     LatLng getLatLng(LatLng::WrapMode = LatLng::Unwrapped) const;
     double getCenterAltitude() const;
+    /// The eye's altitude above mean sea level.  This is deliberately distinct
+    /// from the look-at centre altitude: the Foundation flight controller holds
+    /// the eye, not a terrain-following centre.
+    double getEyeAltitudeMSL() const;
+    /// Geographic ground position directly below the camera eye, derived from
+    /// the engine camera matrix rather than a centre-terrain approximation.
+    LatLng getCameraLatLng() const;
     double pixel_x() const;
     double pixel_y() const;
 
@@ -247,6 +256,25 @@ public:
     void setLatLngZoom(const LatLng& latLng, double zoom);
     void setCenterAltitude(double alt_m);
 
+    /// One opt-in controller owns terrain avoidance.  A value is accepted only
+    /// from a decoded DEM; callers must not turn missing terrain into sea level.
+    void setTerrainFlightMinimumEyeMSL(std::optional<double> altitude) {
+        terrainFlightMinimumEyeMSL = altitude;
+    }
+    std::optional<double> getTerrainFlightMinimumEyeMSL() const { return terrainFlightMinimumEyeMSL; }
+    void setTerrainFlightClearanceMeters(double metres) { terrainFlightClearanceMeters = metres; }
+    double getTerrainFlightClearanceMeters() const { return terrainFlightClearanceMeters; }
+    /// Raises only altitude. It never changes heading or pitch, and intentionally
+    /// never descends after a ridge.
+    bool constrainEyeToTerrainFlightMinimum();
+
+    void setFoundationFlightIntent(std::optional<FoundationFlightIntent> intent) {
+        foundationFlightIntent = std::move(intent);
+    }
+    const std::optional<FoundationFlightIntent>& getFoundationFlightIntent() const {
+        return foundationFlightIntent;
+    }
+
     void constrain(double& scale, double& x, double& y) const;
     bool constrainScreen(double& scale_, double& x_, double& y_) const;
     void constrainCameraAndZoomToBounds(CameraOptions& camera, double& zoom) const;
@@ -263,6 +291,10 @@ private:
     // Viewport center offset, from [size.width / 2, size.height / 2], defined
     // by |edgeInsets| in screen coordinates, with top left origin.
     ScreenCoordinate getCenterOffset() const;
+
+    std::optional<double> terrainFlightMinimumEyeMSL;
+    double terrainFlightClearanceMeters = 100.0;
+    std::optional<FoundationFlightIntent> foundationFlightIntent;
 
     LatLngBounds bounds;
 

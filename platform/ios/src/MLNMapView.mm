@@ -35,6 +35,8 @@
 #include <mln/util/run_loop.hpp>
 #include <mln/util/string.hpp>
 
+#include <cmath>
+
 #import "MLNFeature_Private.h"
 #import "MLNFoundation_Private.h"
 #import "MLNGeometry_Private.h"
@@ -354,6 +356,13 @@ public:
   NSString *viewReuseIdentifier;
 };
 
+typedef NS_ENUM(NSUInteger, MLNFoundationTwoFingerMode) {
+  MLNFoundationTwoFingerModeUndecided,
+  MLNFoundationTwoFingerModePinch,
+  MLNFoundationTwoFingerModeRotate,
+  MLNFoundationTwoFingerModeTilt,
+};
+
 // MARK: - Private -
 
 @interface MLNMapView () <UIGestureRecognizerDelegate,
@@ -383,6 +392,32 @@ public:
 @property (nonatomic) UIRotationGestureRecognizer *rotate;
 @property (nonatomic) UILongPressGestureRecognizer *quickZoom;
 @property (nonatomic) UIPanGestureRecognizer *twoFingerDrag;
+
+// Foundation owns its recognizers rather than layering targets onto MapLibre's
+// stock set. Leaving quick-zoom alive was the source of a zero-duration long
+// press racing the pan on the phone build.
+@property (nonatomic) UIPanGestureRecognizer *foundationPan;
+@property (nonatomic) UIPinchGestureRecognizer *foundationPinch;
+@property (nonatomic) UIRotationGestureRecognizer *foundationRotate;
+@property (nonatomic) UIPanGestureRecognizer *foundationTwoFinger;
+@property (nonatomic) CGFloat foundationRotateStartHeading;
+@property (nonatomic) CGFloat foundationTiltStartPitch;
+@property (nonatomic) CGFloat foundationPinchLastScale;
+@property (nonatomic) CGFloat foundationPinchStartScale;
+@property (nonatomic) MLNMapCamera *foundationFlightStartCamera;
+@property (nonatomic) double foundationFlightStartEyeMSL;
+@property (nonatomic) BOOL foundationFlightContactNeedsReset;
+@property (nonatomic) NSUInteger foundationGesturesInProgress;
+@property (nonatomic) uint64_t foundationFlightSequence;
+@property (nonatomic) MLNFoundationTwoFingerMode foundationTwoFingerMode;
+@property (nonatomic) CGFloat foundationTwoFingerScale;
+@property (nonatomic) CGFloat foundationTwoFingerRotation;
+@property (nonatomic) CGPoint foundationTwoFingerTranslation;
+@property (nonatomic) BOOL foundationRotateClassificationPending;
+@property (nonatomic) BOOL foundationRotationIsProvisional;
+@property (nonatomic) BOOL foundationPinchSamplerActive;
+@property (nonatomic) BOOL foundationRotateSamplerActive;
+@property (nonatomic) BOOL foundationTiltSamplerActive;
 
 @property (nonatomic) UIInterfaceOrientation currentOrientation;
 @property (nonatomic) UIInterfaceOrientationMask applicationSupportedInterfaceOrientations;
@@ -479,6 +514,7 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   std::unique_ptr<MLNRenderFrontend> _rendererFrontend;
 
   BOOL _opaque;
+  BOOL _foundationGestureControllerEnabled;
 
   MLNAnnotationTagContextMap _annotationContextsByAnnotationTag;
   MLNAnnotationObjectTagMap _annotationTagsByAnnotation;
@@ -2735,6 +2771,364 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   }
 }
 
+// MARK: - Foundation flight gestures -
+
+- (NSString *)foundationStateName:(UIGestureRecognizerState)state {
+  switch (state) {
+    case UIGestureRecognizerStatePossible: return @"possible";
+    case UIGestureRecognizerStateBegan: return @"began";
+    case UIGestureRecognizerStateChanged: return @"changed";
+    case UIGestureRecognizerStateEnded: return @"ended";
+    case UIGestureRecognizerStateCancelled: return @"cancelled";
+    case UIGestureRecognizerStateFailed: return @"failed";
+  }
+}
+
+- (NSDictionary<NSString *, id> *)foundationCameraValuesWithPrefix:(NSString *)prefix {
+  MLNMapCamera *camera = self.camera;
+  return @{
+      [prefix stringByAppendingString:@"lat"]: @(camera.centerCoordinate.latitude),
+      [prefix stringByAppendingString:@"lon"]: @(camera.centerCoordinate.longitude),
+      [prefix stringByAppendingString:@"heading"]: @(camera.heading),
+      [prefix stringByAppendingString:@"pitch"]: @(camera.pitch),
+      [prefix stringByAppendingString:@"eye_msl"]: @(self.terrainFlightEyeAltitudeMSL),
+  };
+}
+
+- (void)recordFoundationGesture:(NSString *)kind
+                      recognizer:(UIGestureRecognizer *)recognizer
+                     translation:(CGPoint)translation
+                           scale:(CGFloat)scale
+                        rotation:(CGFloat)rotation
+                          before:(NSDictionary<NSString *, id> *)before
+                   demStopReason:(nullable NSString *)demStopReason {
+  if (!self.foundationGestureHandler) return;
+  NSMutableDictionary<NSString *, id> *event = [NSMutableDictionary dictionaryWithDictionary:before];
+  [event addEntriesFromDictionary:[self foundationCameraValuesWithPrefix:@"after_"]];
+  event[@"kind"] = kind;
+  event[@"state"] = [self foundationStateName:recognizer.state];
+  event[@"touch_count"] = @(recognizer.numberOfTouches);
+  event[@"translation_x"] = @(translation.x);
+  event[@"translation_y"] = @(translation.y);
+  event[@"scale"] = @(scale);
+  event[@"rotation"] = @(rotation);
+  event[@"dem_available"] = @(self.terrainFlightDEMAvailable);
+  event[@"stand_off_clearance_m"] = @(self.terrainFlightClearanceMeters);
+  if (demStopReason) event[@"dem_stop_reason"] = demStopReason;
+  self.foundationGestureHandler(event);
+}
+
+- (void)beginFoundationGesture:(UIGestureRecognizer *)recognizer kind:(NSString *)kind {
+  [self cancelTransitions];
+  // Every translation callback is an absolute target from this immutable
+  // contact baseline. Renderer callbacks may be coalesced or arrive late;
+  // deriving each target from the last callback would otherwise drop motion.
+  self.foundationFlightStartCamera = [self.camera copy];
+  self.foundationFlightStartEyeMSL = self.mbglMap.getTerrainFlightEyeAltitudeMSL();
+  self.foundationFlightContactNeedsReset = YES;
+  if (self.foundationGesturesInProgress++ == 0) {
+    self.userTrackingMode = MLNUserTrackingModeNone;
+    [self notifyGestureDidBegin];
+  }
+  [self recordFoundationGesture:kind recognizer:recognizer translation:CGPointZero scale:1 rotation:0
+                         before:[self foundationCameraValuesWithPrefix:@"before_"] demStopReason:nil];
+}
+
+- (void)endFoundationGesture:(UIGestureRecognizer *)recognizer kind:(NSString *)kind {
+  NSDictionary *before = [self foundationCameraValuesWithPrefix:@"before_"];
+  [self recordFoundationGesture:kind recognizer:recognizer translation:CGPointZero scale:1 rotation:0
+                         before:before demStopReason:nil];
+  if (self.foundationGesturesInProgress > 0 && --self.foundationGesturesInProgress == 0) {
+    // A released finger revokes an uncommitted sample. The map may still hold
+    // its gained safety altitude, but it must never travel after release.
+    self.mbglMap.cancelFoundationFlightIntent();
+    // Foundation deliberately has no velocity continuation. A held finger is
+    // the only source of travel, which makes a stopped gesture stay stopped.
+    [self notifyGestureDidEndWithDrift:NO];
+    self.foundationFlightStartCamera = nil;
+  }
+}
+
+- (CLLocationCoordinate2D)foundationCoordinateFrom:(CLLocationCoordinate2D)coordinate
+                                             heading:(CLLocationDirection)heading
+                                      sidewaysMeters:(CLLocationDistance)sidewaysMeters
+                                       forwardMeters:(CLLocationDistance)forwardMeters {
+  // Local tangent-plane integration is both deterministic and sufficient for
+  // per-recognizer deltas. A new camera read happens after every delta, so it
+  // never accumulates globe-scale error in a single drag callback.
+  const double radians = heading * M_PI / 180.0;
+  const double north = forwardMeters * cos(radians) - sidewaysMeters * sin(radians);
+  const double east = forwardMeters * sin(radians) + sidewaysMeters * cos(radians);
+  const double metresPerLatitudeDegree = 111320.0;
+  const double metresPerLongitudeDegree = metresPerLatitudeDegree * cos(coordinate.latitude * M_PI / 180.0);
+  CLLocationCoordinate2D result = coordinate;
+  result.latitude += north / metresPerLatitudeDegree;
+  if (fabs(metresPerLongitudeDegree) > 1e-9) result.longitude += east / metresPerLongitudeDegree;
+  result.latitude = fmax(-85.05112878, fmin(85.05112878, result.latitude));
+  if (result.longitude > 180.0) result.longitude -= 360.0;
+  if (result.longitude < -180.0) result.longitude += 360.0;
+  return result;
+}
+
+- (BOOL)applyFoundationTranslationSideways:(CLLocationDistance)sidewaysMeters
+                                   forward:(CLLocationDistance)forwardMeters
+                                     reason:(NSString *)kind
+                                 recognizer:(UIGestureRecognizer *)recognizer
+                                translation:(CGPoint)translation
+                                      scale:(CGFloat)scale {
+  NSDictionary *before = [self foundationCameraValuesWithPrefix:@"before_"];
+  MLNMapCamera *camera = self.foundationFlightStartCamera ?: self.camera;
+  const BOOL pinch = [kind isEqualToString:@"pinch_forward"];
+  // Pinch travels on the current view ray. Its horizontal component vanishes
+  // at a top-down view and reaches the full requested distance at the horizon;
+  // the engine receives the pitch too, so its stand-off is measured on that
+  // same 3D ray rather than against a flat forward-only approximation.
+  const double horizontalForward = pinch
+      ? mln::foundationFlightRayHorizontalDistance(forwardMeters, camera.pitch)
+      : forwardMeters;
+  CLLocationCoordinate2D destination = [self foundationCoordinateFrom:camera.centerCoordinate
+                                                                heading:camera.heading
+                                                         sidewaysMeters:sidewaysMeters
+                                                          forwardMeters:horizontalForward];
+  const double requested = std::hypot(sidewaysMeters, forwardMeters);
+  double speed = 0.0;
+  if ([recognizer isKindOfClass:[UIPanGestureRecognizer class]]) {
+    const CGPoint velocity = [(UIPanGestureRecognizer *)recognizer velocityInView:recognizer.view];
+    const double mpp = [self metersPerPointAtLatitude:camera.centerCoordinate.latitude zoomLevel:self.zoomLevel];
+    speed = std::hypot(velocity.x, velocity.y) * mpp;
+  } else if ([recognizer isKindOfClass:[UIPinchGestureRecognizer class]]) {
+    speed = fabs([(UIPinchGestureRecognizer *)recognizer velocity]) * 250.0;
+  }
+  mln::FoundationFlightIntent intent;
+  intent.target = mln::LatLng{destination.latitude, destination.longitude};
+  intent.requestedDistanceMeters = forwardMeters < 0 ? -requested : requested;
+  intent.speedMetersPerSecond = speed;
+  intent.pinch = pinch;
+  intent.rayPitchDegrees = camera.pitch;
+  intent.verticalEyeMSLDeltaMeters = pinch
+      ? mln::foundationFlightRayVerticalDisplacement(forwardMeters, camera.pitch)
+      : 0.0;
+  intent.gestureStartEyeMSL = self.foundationFlightStartEyeMSL;
+  intent.beginsContact = self.foundationFlightContactNeedsReset;
+  self.foundationFlightContactNeedsReset = NO;
+  intent.sequence = ++self.foundationFlightSequence;
+  self.mbglMap.submitFoundationFlightIntent(intent);
+  [self recordFoundationGesture:kind recognizer:recognizer translation:translation scale:scale rotation:0
+                         before:before demStopReason:self.terrainFlightDEMAvailable ? @"arbiter_pending" : @"unknown_dem_pending"];
+  return YES;
+}
+
+- (void)handleFoundationPanGesture:(UIPanGestureRecognizer *)pan {
+  if (pan.state == UIGestureRecognizerStateBegan) {
+    [self beginFoundationGesture:pan kind:@"one_finger_plane"];
+    return;
+  }
+  if (pan.state == UIGestureRecognizerStateChanged) {
+    CGPoint delta = [pan translationInView:pan.view];
+    MLNMapCamera *baseline = self.foundationFlightStartCamera ?: self.camera;
+    const double mpp = [self metersPerPointAtLatitude:baseline.centerCoordinate.latitude zoomLevel:self.zoomLevel];
+    // Both finger axes become a translation in the horizontal world plane.
+    // Neither changes altitude, zoom, heading or pitch. UIKit's positive y is
+    // down, hence a drag up advances along the current view direction.
+    [self applyFoundationTranslationSideways:delta.x * mpp forward:-delta.y * mpp reason:@"one_finger_plane"
+                                  recognizer:pan translation:delta scale:1];
+    return;
+  }
+  if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled ||
+      pan.state == UIGestureRecognizerStateFailed) [self endFoundationGesture:pan kind:@"one_finger_plane"];
+}
+
+// UIKit's pan recognizer does not begin for a stationary-centroid pinch or
+// rotation. Native pinch, rotation and two-finger-pan therefore act only as
+// simultaneous *samplers*. They share this one mode latch; exactly the sampler
+// that wins it may submit camera intents for the contact lifetime.
+- (NSUInteger)foundationTwoFingerModeForTranslation:(CGPoint)translation
+                                               scale:(CGFloat)scale
+                                            rotation:(CGFloat)rotation {
+  const CGFloat pinchAmount = fabs(log(MAX(scale, 0.001)));
+  const CGFloat rotateAmount = fabs(rotation);
+  const CGFloat tiltAmount = fabs(translation.y);
+  const CGFloat pinchThreshold = 0.035;
+  const CGFloat rotateThreshold = 0.08;
+  const CGFloat tiltThreshold = 8.0;
+  if (pinchAmount < pinchThreshold && rotateAmount < rotateThreshold && tiltAmount < tiltThreshold) {
+    return MLNFoundationTwoFingerModeUndecided;
+  }
+
+  // Compare normalized excess so a small incidental rotation during a pinch
+  // (or a slight separation change during a tilt) cannot steal ownership.
+  const CGFloat pinchScore = pinchAmount / pinchThreshold;
+  const CGFloat rotateScore = rotateAmount / rotateThreshold;
+  const CGFloat tiltScore = tiltAmount / tiltThreshold;
+  if (pinchScore >= rotateScore && pinchScore >= tiltScore) return MLNFoundationTwoFingerModePinch;
+  if (rotateScore >= tiltScore) return MLNFoundationTwoFingerModeRotate;
+  return MLNFoundationTwoFingerModeTilt;
+}
+
+- (BOOL)foundationHasActiveTwoFingerSampler {
+  return self.foundationPinchSamplerActive || self.foundationRotateSamplerActive || self.foundationTiltSamplerActive;
+}
+
+- (void)beginFoundationTwoFingerSampler:(UIGestureRecognizer *)recognizer kind:(NSString *)kind {
+  const BOOL wasActive = [self foundationHasActiveTwoFingerSampler];
+  if ([recognizer isKindOfClass:[UIPinchGestureRecognizer class]]) self.foundationPinchSamplerActive = YES;
+  else if ([recognizer isKindOfClass:[UIRotationGestureRecognizer class]]) self.foundationRotateSamplerActive = YES;
+  else self.foundationTiltSamplerActive = YES;
+  if (wasActive) return;
+  self.foundationTwoFingerMode = MLNFoundationTwoFingerModeUndecided;
+  self.foundationTwoFingerScale = 1.0;
+  self.foundationTwoFingerRotation = 0.0;
+  self.foundationTwoFingerTranslation = CGPointZero;
+  self.foundationRotateClassificationPending = NO;
+  self.foundationRotationIsProvisional = NO;
+  self.foundationPinchLastScale = 1.0;
+  self.foundationPinchStartScale = 1.0;
+  self.foundationRotateStartHeading = self.camera.heading;
+  self.foundationTiltStartPitch = self.camera.pitch;
+  [self beginFoundationGesture:recognizer kind:kind];
+}
+
+- (void)endFoundationTwoFingerSampler:(UIGestureRecognizer *)recognizer {
+  if ([recognizer isKindOfClass:[UIPinchGestureRecognizer class]]) self.foundationPinchSamplerActive = NO;
+  else if ([recognizer isKindOfClass:[UIRotationGestureRecognizer class]]) self.foundationRotateSamplerActive = NO;
+  else self.foundationTiltSamplerActive = NO;
+  if ([self foundationHasActiveTwoFingerSampler]) return;
+  NSString *kind = @"two_finger_unclassified";
+  if (self.foundationTwoFingerMode == MLNFoundationTwoFingerModePinch) kind = @"pinch_forward";
+  if (self.foundationTwoFingerMode == MLNFoundationTwoFingerModeRotate) kind = @"two_finger_rotate";
+  if (self.foundationTwoFingerMode == MLNFoundationTwoFingerModeTilt) kind = @"two_finger_tilt";
+  [self endFoundationGesture:recognizer kind:kind];
+  self.foundationTwoFingerMode = MLNFoundationTwoFingerModeUndecided;
+}
+
+- (void)classifyFoundationTwoFingerSampler:(UIGestureRecognizer *)recognizer {
+  if (self.foundationTwoFingerMode != MLNFoundationTwoFingerModeUndecided) return;
+  if (fabs(log(MAX(self.foundationTwoFingerScale, 0.001))) >= 0.035) {
+    self.foundationTwoFingerMode = MLNFoundationTwoFingerModePinch;
+  } else {
+  self.foundationTwoFingerMode = (MLNFoundationTwoFingerMode)[self foundationTwoFingerModeForTranslation:self.foundationTwoFingerTranslation
+                                                                                                    scale:self.foundationTwoFingerScale
+                                                                                                 rotation:self.foundationTwoFingerRotation];
+  }
+  if (self.foundationTwoFingerMode != MLNFoundationTwoFingerModeUndecided) {
+    [self recordFoundationGesture:@"two_finger_classified" recognizer:recognizer
+                       translation:self.foundationTwoFingerTranslation scale:self.foundationTwoFingerScale
+                          rotation:self.foundationTwoFingerRotation
+                           before:[self foundationCameraValuesWithPrefix:@"before_"] demStopReason:nil];
+  }
+}
+
+- (void)applyFoundationRotationSample:(UIRotationGestureRecognizer *)rotate {
+  NSDictionary *before = [self foundationCameraValuesWithPrefix:@"before_"];
+  const double heading = fmod(self.foundationRotateStartHeading - self.foundationTwoFingerRotation * 180.0 / M_PI + 360.0, 360.0);
+  mln::FoundationFlightIntent intent;
+  intent.target = self.mbglMap.getCameraOptions().center.value_or(mln::LatLng{});
+  intent.bearing = heading;
+  intent.sequence = ++self.foundationFlightSequence;
+  self.mbglMap.submitFoundationFlightIntent(intent);
+  [self recordFoundationGesture:@"two_finger_rotate" recognizer:rotate translation:self.foundationTwoFingerTranslation
+                         scale:self.foundationTwoFingerScale rotation:self.foundationTwoFingerRotation before:before demStopReason:nil];
+}
+
+- (void)handleFoundationPinchGesture:(UIPinchGestureRecognizer *)pinch {
+  if (pinch.state == UIGestureRecognizerStateBegan) {
+    [self beginFoundationTwoFingerSampler:pinch kind:@"two_finger_classifying"];
+    self.foundationTwoFingerScale = MAX(pinch.scale, 0.001);
+    self.foundationPinchLastScale = self.foundationTwoFingerScale;
+    self.foundationPinchStartScale = self.foundationTwoFingerScale;
+    return;
+  }
+  if (pinch.state == UIGestureRecognizerStateChanged) {
+    self.foundationTwoFingerScale = MAX(pinch.scale, 0.001);
+    if (self.foundationTwoFingerMode == MLNFoundationTwoFingerModeRotate &&
+        self.foundationRotationIsProvisional &&
+        fabs(log(self.foundationTwoFingerScale)) >= 0.035) {
+      mln::FoundationFlightIntent restore;
+      restore.target = self.mbglMap.getCameraOptions().center.value_or(mln::LatLng{});
+      restore.bearing = self.foundationRotateStartHeading;
+      restore.sequence = ++self.foundationFlightSequence;
+      self.mbglMap.submitFoundationFlightIntent(restore);
+      self.foundationTwoFingerMode = MLNFoundationTwoFingerModePinch;
+      self.foundationRotationIsProvisional = NO;
+    }
+    [self classifyFoundationTwoFingerSampler:pinch];
+    if (self.foundationTwoFingerMode != MLNFoundationTwoFingerModePinch) return;
+    const double delta = mln::foundationFlightCumulativePinchRayDistance(self.foundationTwoFingerScale,
+                                                                           self.foundationPinchStartScale);
+    self.foundationPinchLastScale = self.foundationTwoFingerScale;
+    const double metres = delta;
+    [self applyFoundationTranslationSideways:0 forward:metres reason:@"pinch_forward"
+                                  recognizer:pinch translation:self.foundationTwoFingerTranslation
+                                       scale:self.foundationTwoFingerScale];
+    return;
+  }
+  if (pinch.state == UIGestureRecognizerStateEnded || pinch.state == UIGestureRecognizerStateCancelled ||
+      pinch.state == UIGestureRecognizerStateFailed) [self endFoundationTwoFingerSampler:pinch];
+}
+
+- (void)handleFoundationRotateGesture:(UIRotationGestureRecognizer *)rotate {
+  if (rotate.state == UIGestureRecognizerStateBegan) {
+    [self beginFoundationTwoFingerSampler:rotate kind:@"two_finger_classifying"];
+    self.foundationTwoFingerRotation = rotate.rotation;
+    return;
+  }
+  if (rotate.state == UIGestureRecognizerStateChanged) {
+    self.foundationTwoFingerRotation = rotate.rotation;
+    if (self.foundationTwoFingerMode == MLNFoundationTwoFingerModeUndecided) {
+      if (!self.foundationRotateClassificationPending) {
+        self.foundationRotateClassificationPending = YES;
+        __weak MLNMapView *weakSelf = self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.10 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+          MLNMapView *strongSelf = weakSelf;
+          if (!strongSelf) return;
+          strongSelf.foundationRotateClassificationPending = NO;
+          if (strongSelf.foundationTwoFingerMode != MLNFoundationTwoFingerModeUndecided ||
+              strongSelf.foundationPinchSamplerActive) return;
+          [strongSelf classifyFoundationTwoFingerSampler:rotate];
+          if (strongSelf.foundationTwoFingerMode == MLNFoundationTwoFingerModeRotate) {
+            strongSelf.foundationRotationIsProvisional = YES;
+            [strongSelf applyFoundationRotationSample:rotate];
+          }
+        });
+      }
+      return;
+    }
+    if (self.foundationTwoFingerMode != MLNFoundationTwoFingerModeRotate) return;
+    [self applyFoundationRotationSample:rotate];
+    return;
+  }
+  if (rotate.state == UIGestureRecognizerStateEnded || rotate.state == UIGestureRecognizerStateCancelled ||
+      rotate.state == UIGestureRecognizerStateFailed) {
+    self.foundationRotationIsProvisional = NO;
+    [self endFoundationTwoFingerSampler:rotate];
+  }
+}
+
+- (void)handleFoundationTwoFingerGesture:(UIPanGestureRecognizer *)pan {
+  if (pan.state == UIGestureRecognizerStateBegan) {
+    [self beginFoundationTwoFingerSampler:pan kind:@"two_finger_classifying"];
+    self.foundationTwoFingerTranslation = [pan translationInView:pan.view];
+    return;
+  }
+  if (pan.state == UIGestureRecognizerStateChanged) {
+    self.foundationTwoFingerTranslation = [pan translationInView:pan.view];
+    [self classifyFoundationTwoFingerSampler:pan];
+    if (self.foundationTwoFingerMode != MLNFoundationTwoFingerModeTilt) return;
+    NSDictionary *before = [self foundationCameraValuesWithPrefix:@"before_"];
+    const double pitch = fmax(0.0, fmin(90.0, self.foundationTiltStartPitch - self.foundationTwoFingerTranslation.y / 4.0));
+    mln::FoundationFlightIntent intent;
+    intent.target = self.mbglMap.getCameraOptions().center.value_or(mln::LatLng{});
+    intent.pitch = pitch;
+    intent.sequence = ++self.foundationFlightSequence;
+    self.mbglMap.submitFoundationFlightIntent(intent);
+    [self recordFoundationGesture:@"two_finger_tilt" recognizer:pan translation:self.foundationTwoFingerTranslation
+                         scale:self.foundationTwoFingerScale rotation:self.foundationTwoFingerRotation before:before demStopReason:nil];
+    return;
+  }
+  if (pan.state == UIGestureRecognizerStateEnded || pan.state == UIGestureRecognizerStateCancelled ||
+      pan.state == UIGestureRecognizerStateFailed) [self endFoundationTwoFingerSampler:pan];
+}
+
 - (MLNMapCamera *)cameraByPanningWithTranslation:(CGPoint)endPoint
                                       panGesture:(UIPanGestureRecognizer *)pan {
   MLNMapCamera *panCamera = [self.camera copy];
@@ -2880,6 +3274,13 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer
     shouldRecognizeSimultaneouslyWithGestureRecognizer:
         (UIGestureRecognizer *)otherGestureRecognizer {
+  if (self.foundationGestureControllerEnabled) {
+    // These three recognize together only to obtain the metrics UIKit omits
+    // from a stationary-centroid movement. They are samplers, not owners: the
+    // shared mode latch above permits one of them to commit camera intents.
+    NSArray *samplers = @[ self.foundationPinch, self.foundationRotate, self.foundationTwoFinger ];
+    return ([samplers containsObject:gestureRecognizer] && [samplers containsObject:otherGestureRecognizer]);
+  }
   NSArray *validSimultaneousGestures = @[ self.pan, self.pinch, self.rotate ];
   return ([validSimultaneousGestures containsObject:gestureRecognizer] &&
           [validSimultaneousGestures containsObject:otherGestureRecognizer]);
@@ -3150,6 +3551,71 @@ static void *windowScreenContext = &windowScreenContext;
   self.twoFingerDrag.enabled = pitchEnabled;
 }
 
+- (void)setFoundationGestureControllerEnabled:(BOOL)enabled {
+  if (_foundationGestureControllerEnabled == enabled) return;
+  _foundationGestureControllerEnabled = enabled;
+
+  if (enabled) {
+    // Disable every stock recognizer that can mutate the camera, including
+    // the quick-zoom long press and taps. Foundation's native two-finger
+    // samplers are the only simultaneous recognizers and share one owner.
+    self.scrollEnabled = NO;
+    self.zoomEnabled = NO;
+    self.rotateEnabled = NO;
+    self.pitchEnabled = NO;
+    self.singleTapGestureRecognizer.enabled = NO;
+    self.decelerationRate = MLNMapViewDecelerationRateImmediate;
+    self.maximumPitch = 90;
+
+    self.foundationPan = [[UIPanGestureRecognizer alloc] initWithTarget:self
+                                                                   action:@selector(handleFoundationPanGesture:)];
+    self.foundationPan.maximumNumberOfTouches = 1;
+    self.foundationPan.delegate = self;
+    [self addGestureRecognizer:self.foundationPan];
+
+    self.foundationPinch = [[UIPinchGestureRecognizer alloc] initWithTarget:self
+                                                                       action:@selector(handleFoundationPinchGesture:)];
+    self.foundationPinch.delegate = self;
+    [self addGestureRecognizer:self.foundationPinch];
+
+    self.foundationRotate = [[UIRotationGestureRecognizer alloc] initWithTarget:self
+                                                                           action:@selector(handleFoundationRotateGesture:)];
+    self.foundationRotate.delegate = self;
+    [self addGestureRecognizer:self.foundationRotate];
+
+    self.foundationTwoFinger = [[UIPanGestureRecognizer alloc] initWithTarget:self
+                                                                         action:@selector(handleFoundationTwoFingerGesture:)];
+    self.foundationTwoFinger.minimumNumberOfTouches = 2;
+    self.foundationTwoFinger.maximumNumberOfTouches = 2;
+    self.foundationTwoFinger.delegate = self;
+    [self addGestureRecognizer:self.foundationTwoFinger];
+  } else {
+    if (self.foundationPan) [self removeGestureRecognizer:self.foundationPan];
+    if (self.foundationPinch) [self removeGestureRecognizer:self.foundationPinch];
+    if (self.foundationRotate) [self removeGestureRecognizer:self.foundationRotate];
+    if (self.foundationTwoFinger) [self removeGestureRecognizer:self.foundationTwoFinger];
+    self.foundationPan = nil;
+    self.foundationPinch = nil;
+    self.foundationRotate = nil;
+    self.foundationTwoFinger = nil;
+    self.foundationTwoFingerMode = MLNFoundationTwoFingerModeUndecided;
+    self.foundationPinchSamplerActive = NO;
+    self.foundationRotateSamplerActive = NO;
+    self.foundationTiltSamplerActive = NO;
+    self.foundationRotationIsProvisional = NO;
+    self.foundationGesturesInProgress = 0;
+    self.scrollEnabled = YES;
+    self.zoomEnabled = YES;
+    self.rotateEnabled = YES;
+    self.pitchEnabled = YES;
+    self.singleTapGestureRecognizer.enabled = YES;
+  }
+}
+
+- (BOOL)foundationGestureControllerEnabled {
+  return _foundationGestureControllerEnabled;
+}
+
 - (void)setShowsScale:(BOOL)showsScale {
   MLNLogDebug(@"Setting showsScale: %@", MLNStringFromBOOL(showsScale));
   _showsScale = showsScale;
@@ -3234,6 +3700,61 @@ static void *windowScreenContext = &windowScreenContext;
 
 - (double)tileLodZoomShift {
   return _mbglMap->getTileLodZoomShift();
+}
+
+- (void)setRenderScale:(CGFloat)renderScale {
+  if (_mbglView) {
+    _mbglView->setRenderScale(renderScale);
+  }
+}
+
+- (CGFloat)renderScale {
+  return _mbglView ? _mbglView->getRenderScale() : 1.0;
+}
+
+- (CGSize)renderDrawableSize {
+  return _mbglView ? _mbglView->getRenderDrawableSize() : CGSizeZero;
+}
+
+- (void)setTerrainFlightControllerEnabled:(BOOL)enabled {
+  _mbglMap->setTerrainFlightControllerEnabled(enabled);
+}
+
+- (BOOL)terrainFlightControllerEnabled {
+  return _mbglMap->getTerrainFlightControllerEnabled();
+}
+
+- (void)setTerrainFlightClearanceMeters:(CGFloat)metres {
+  _mbglMap->setTerrainFlightClearanceMeters(metres);
+}
+
+- (CGFloat)terrainFlightClearanceMeters {
+  return _mbglMap->getTerrainFlightClearanceMeters();
+}
+
+- (CLLocationDistance)terrainFlightEyeAltitudeMSL {
+  return _mbglMap->getTerrainFlightEyeAltitudeMSL();
+}
+
+- (BOOL)terrainFlightDEMAvailable {
+  return _mbglMap->getTerrainFlightDEMAvailable();
+}
+
+- (NSDictionary<NSString *, id> *)foundationFlightTelemetry {
+  const mln::FoundationFlightTelemetry telemetry = _mbglMap->getFoundationFlightTelemetry();
+  return @{
+      @"requested_m": @(telemetry.requestedDistanceMeters),
+      @"accepted_m": @(telemetry.acceptedDistanceMeters),
+      @"speed_mps": @(telemetry.speedMetersPerSecond),
+      @"lookahead_m": @(telemetry.lookaheadMeters),
+      @"obstruction_m": @(telemetry.obstructionDistanceMeters),
+      @"safe_m": @(telemetry.safeDistanceMeters),
+      @"ascent_m": @(telemetry.ascentMeters),
+      @"dem_available": @(telemetry.demAvailable),
+      @"blocked": @(telemetry.blocked),
+      @"pinch": @(telemetry.pinch),
+      @"stop_reason": @(telemetry.stopReason.c_str()),
+  };
 }
 
 // MARK: Terrain

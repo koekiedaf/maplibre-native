@@ -16,13 +16,245 @@
 #include <mln/util/action_journal_options.hpp>
 
 #include <cstdint>
+#include <array>
+#include <cstddef>
 #include <string>
 #include <functional>
 #include <vector>
 #include <memory>
 #include <optional>
+#include <algorithm>
+#include <cmath>
+#include <numbers>
 
 namespace mln {
+
+/// A single Foundation gesture sample. UIKit only submits an intent; the map
+/// waits for the renderer's decoded terrain envelope before it changes camera
+/// position or altitude. This keeps gesture input and terrain avoidance out of
+/// competing UI-side jumpTo paths.
+struct FoundationFlightIntent {
+    LatLng target;
+    double requestedDistanceMeters = 0.0;
+    double speedMetersPerSecond = 0.0;
+    bool pinch = false;
+    /// Map pitch measured from top-down. Pinch uses this to project an actual
+    /// view ray without changing the camera's pitch or zoom.
+    double rayPitchDegrees = 90.0;
+    /// Signed change in eye height requested by a pinch travelling along the
+    /// same 3D ray as `target`. Positive is up; positive forward ray travel
+    /// at a top-down pitch is therefore negative (down).
+    double verticalEyeMSLDeltaMeters = 0.0;
+    /// The contact's eye altitude, so a coalesced callback can replace an
+    /// older pending target without losing the distance already travelled by
+    /// the fingers.
+    std::optional<double> gestureStartEyeMSL;
+    /// Resets contact-scoped safety latches. UIKit sets this on the first
+    /// translation sample, not on every recognizer callback.
+    bool beginsContact = false;
+    std::optional<double> bearing;
+    std::optional<double> pitch;
+    uint64_t sequence = 0;
+};
+
+struct FoundationFlightTelemetry {
+    double requestedDistanceMeters = 0.0;
+    double acceptedDistanceMeters = 0.0;
+    double speedMetersPerSecond = 0.0;
+    double lookaheadMeters = 0.0;
+    double obstructionDistanceMeters = 0.0;
+    double safeDistanceMeters = 0.0;
+    double ascentMeters = 0.0;
+    bool demAvailable = false;
+    bool blocked = false;
+    bool pinch = false;
+    std::string stopReason;
+};
+
+enum class FoundationFlightStopReason : uint8_t {
+    None,
+    UnknownDEM,
+    AscentLimited,
+    PinchDeceleration,
+    PinchStandOff,
+};
+
+struct FoundationFlightPolicyResult {
+    double acceptedFraction = 0.0;
+    double ascentMeters = 0.0;
+    double nextVerticalVelocity = 0.0;
+    FoundationFlightStopReason reason = FoundationFlightStopReason::None;
+};
+
+struct FoundationFlightTerrainSample {
+    /// Fraction of the current eye-to-target horizontal path. Values above
+    /// one are optional lookahead and are never committed by this assessment.
+    double pathFraction = 0.0;
+    /// Highest decoded DEM elevation across the swept corridor at this
+    /// longitudinal station.
+    double elevationMeters = 0.0;
+};
+
+struct FoundationFlightTrajectoryResult {
+    double acceptedFraction = 0.0;
+    double targetEyeMSL = 0.0;
+    double automaticAscentMeters = 0.0;
+    double nextVerticalVelocity = 0.0;
+    double obstructionFraction = 1.0;
+    FoundationFlightStopReason reason = FoundationFlightStopReason::None;
+};
+
+/// Chooses a safe prefix from the actual ordered terrain profile. Climb budget
+/// is applied before translation, so every accepted station is checked against
+/// the same reachable eye altitude. User ray descent remains signed and is
+/// clamped by decoded terrain rather than by the contact's previous altitude.
+inline FoundationFlightTrajectoryResult foundationFlightSafeTrajectory(
+    bool demAvailable,
+    double currentEyeMSL,
+    double requestedTargetEyeMSL,
+    double clearanceMeters,
+    double committableFraction,
+    const std::vector<FoundationFlightTerrainSample>& samples,
+    double previousVerticalVelocity,
+    double elapsedSeconds) {
+    if (!demAvailable || samples.empty()) {
+        return {0.0, currentEyeMSL, 0.0, 0.0, 0.0, FoundationFlightStopReason::UnknownDEM};
+    }
+    const double limit = std::clamp(committableFraction, 0.0, 1.0);
+    const double velocity = std::min(30.0, std::max(0.0, previousVerticalVelocity) +
+                                             12.0 * std::clamp(elapsedSeconds, 0.0, 0.10));
+    const double climbBudget = velocity * std::clamp(elapsedSeconds, 0.0, 0.10);
+    double accepted = 0.0;
+    double requiredBoost = 0.0;
+    double appliedBoost = 0.0;
+    double obstruction = limit;
+    for (const auto& sample : samples) {
+        if (!std::isfinite(sample.pathFraction) || !std::isfinite(sample.elevationMeters)) {
+            return {0.0, currentEyeMSL, 0.0, 0.0, 0.0, FoundationFlightStopReason::UnknownDEM};
+        }
+        if (sample.pathFraction < -1e-9 || sample.pathFraction > limit + 1e-9) continue;
+        const double fraction = std::clamp(sample.pathFraction, 0.0, limit);
+        const double rayEye = currentEyeMSL + (requestedTargetEyeMSL - currentEyeMSL) * fraction;
+        const double candidateBoost = std::max(requiredBoost,
+            sample.elevationMeters + clearanceMeters - rayEye);
+        if (candidateBoost > climbBudget + 1e-9) {
+            obstruction = fraction;
+            // Hold position at the last proven station but spend this frame's
+            // bounded climb budget toward the obstruction. Without this, a
+            // camera starting centimetres below its corridor floor can never
+            // recover enough clearance to make later progress.
+            appliedBoost = std::max(requiredBoost, climbBudget);
+            break;
+        }
+        requiredBoost = std::max(0.0, candidateBoost);
+        appliedBoost = requiredBoost;
+        accepted = fraction;
+    }
+    // The renderer always includes a station at the commit boundary. If it
+    // did not survive the loop, never extrapolate beyond the last proven one.
+    const double targetEye = currentEyeMSL + (requestedTargetEyeMSL - currentEyeMSL) * accepted + appliedBoost;
+    return {accepted,
+            targetEye,
+            appliedBoost,
+            appliedBoost > 0.0 ? velocity : 0.0,
+            obstruction,
+            accepted + 1e-9 < limit ? FoundationFlightStopReason::AscentLimited
+                                    : FoundationFlightStopReason::None};
+}
+
+/// Deterministic bounded-climb and pinch stand-off policy. Terrain-profile
+/// prefix selection is deliberately separate; no distance is inferred from a
+/// maximum-height climb ratio.
+inline FoundationFlightPolicyResult foundationFlightPolicy(bool demAvailable,
+                                                           bool pinch,
+                                                           double requiredAscentMeters,
+                                                           double previousVerticalVelocity,
+                                                           double elapsedSeconds,
+                                                           double rayClearanceMeters) {
+    if (!demAvailable) return {0.0, 0.0, 0.0, FoundationFlightStopReason::UnknownDEM};
+    const double velocity = std::min(30.0, previousVerticalVelocity + 12.0 * elapsedSeconds);
+    const double ascent = std::min(std::max(0.0, requiredAscentMeters), velocity * elapsedSeconds);
+    double fraction = 1.0;
+    auto reason = FoundationFlightStopReason::None;
+    if (pinch) {
+        if (rayClearanceMeters <= 50.0) {
+            fraction = 0.0;
+            reason = FoundationFlightStopReason::PinchStandOff;
+        } else if (rayClearanceMeters < 150.0) {
+            fraction *= (rayClearanceMeters - 50.0) / 100.0;
+            reason = FoundationFlightStopReason::PinchDeceleration;
+        }
+    }
+    return {fraction, ascent, velocity, reason};
+}
+
+inline bool foundationFlightAssessmentMatches(const std::optional<FoundationFlightIntent>& intent,
+                                              uint64_t assessedSequence) {
+    // Sequence zero is a settled-camera assessment. It must not be applied to
+    // an intent that arrived after the renderer snapshot was taken.
+    return assessedSequence == 0 ? !intent : (intent && intent->sequence == assessedSequence);
+}
+
+constexpr double foundationFlightMaximumCommittableMeters = 50.0;
+constexpr double foundationFlightMaximumLookaheadMeters = 150.0;
+
+inline double foundationFlightLookahead(double speedMetersPerSecond) {
+    if (!std::isfinite(speedMetersPerSecond)) return 150.0;
+    return std::clamp(std::abs(speedMetersPerSecond) * 4.0,
+                      150.0,
+                      foundationFlightMaximumLookaheadMeters);
+}
+
+inline double foundationFlightRayHorizontalDistance(double rayDistanceMeters, double pitchDegrees) {
+    const double pitchRadians = std::clamp(pitchDegrees, 0.0, 90.0) * std::numbers::pi / 180.0;
+    return rayDistanceMeters * std::sin(pitchRadians);
+}
+
+inline double foundationFlightRayVerticalDisplacement(double rayDistanceMeters, double pitchDegrees) {
+    const double pitchRadians = std::clamp(pitchDegrees, 0.0, 90.0) * std::numbers::pi / 180.0;
+    return -rayDistanceMeters * std::cos(pitchRadians);
+}
+
+inline double foundationFlightCumulativePinchRayDistance(double scale, double startScale) {
+    return std::clamp(std::log(std::max(scale, 0.001) / std::max(startScale, 0.001)) * 250.0,
+                      -250.0,
+                      250.0);
+}
+
+constexpr double foundationFlightMaximumLongitudinalSampleSpacingMeters = 5.0;
+constexpr double foundationFlightCorridorHalfWidthMeters = 15.0;
+
+/// Number of equal longitudinal intervals required for the bounded per-frame
+/// commit prefix plus lookahead. Clamp distance rather than widening the 5m
+/// sampling gap, keeping work at no more than 41 stations x three tracks.
+inline std::size_t foundationFlightLongitudinalIntervals(double pathMeters, double lookaheadMeters) {
+    return std::max<std::size_t>(1, static_cast<std::size_t>(std::ceil(
+        (std::clamp(pathMeters, 0.0, foundationFlightMaximumCommittableMeters) +
+         std::clamp(lookaheadMeters, 0.0, foundationFlightMaximumLookaheadMeters)) /
+        foundationFlightMaximumLongitudinalSampleSpacingMeters)));
+}
+
+inline constexpr std::array<double, 3> foundationFlightCorridorCrossTrackOffsets() {
+    return {-foundationFlightCorridorHalfWidthMeters, 0.0, foundationFlightCorridorHalfWidthMeters};
+}
+
+inline bool foundationFlightSampleRequiresDEM(double distanceMeters, double committableMeters) {
+    return distanceMeters <= committableMeters + 1e-9;
+}
+
+struct FoundationFlightCrossTrackOffset {
+    double northMeters = 0.0;
+    double eastMeters = 0.0;
+};
+
+inline FoundationFlightCrossTrackOffset foundationFlightCrossTrackOffset(double travelNorthMeters,
+                                                                          double travelEastMeters,
+                                                                          double crossTrackMeters) {
+    const double distance = std::hypot(travelNorthMeters, travelEastMeters);
+    if (distance <= 1e-6) return {};
+    return {-travelEastMeters * crossTrackMeters / distance,
+            travelNorthMeters * crossTrackMeters / distance};
+}
 
 class RendererFrontend;
 class TransformState;
@@ -229,6 +461,22 @@ public:
     /// instead of sinking in. Inert when terrain is not enabled.
     void setCenterClampedToGround(bool clamped);
     bool getCenterClampedToGround() const;
+
+    /// Opt in to the Foundation eye/MSL controller. It is intentionally
+    /// independent of centre clamping: one controller owns correction.
+    void setTerrainFlightControllerEnabled(bool enabled);
+    bool getTerrainFlightControllerEnabled() const;
+    void setTerrainFlightClearanceMeters(double metres);
+    double getTerrainFlightClearanceMeters() const;
+    double getTerrainFlightEyeAltitudeMSL() const;
+    /// Whether the renderer has a decoded DEM sample for the current flight
+    /// corridor.  This is deliberately separate from the last trusted floor:
+    /// a missing tile must stop Foundation translation rather than invent a
+    /// surface at sea level.
+    bool getTerrainFlightDEMAvailable() const;
+    void submitFoundationFlightIntent(const FoundationFlightIntent&);
+    void cancelFoundationFlightIntent();
+    FoundationFlightTelemetry getFoundationFlightTelemetry() const;
 
     /// Debug: when enabled, RenderTerrain logs the camera eye's clearance over the terrain
     /// ("ABOVE-GROUND ...") each frame it is near/below the surface. Off by default; the

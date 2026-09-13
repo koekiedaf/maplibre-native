@@ -15,6 +15,7 @@
 #include <mln/tile/tile_operation.hpp>
 
 #include <numbers>
+#include <limits>
 
 namespace mln {
 
@@ -64,6 +65,8 @@ public:
     void onWillStartRenderingMap() final;
     void onDidFinishRenderingMap() final;
     void onTerrainCenterElevationChanged(double elevationMeters) final;
+    void onTerrainFlightElevationChanged(std::optional<double> elevationMeters) final;
+    void onTerrainFlightAssessment(const TerrainFlightAssessment&) final;
     void onStyleImageMissing(const std::string&, const std::function<void()>&) final;
     void onRemoveUnusedStyleImages(const std::vector<std::string>&) final;
     void onRegisterShaders(gfx::ShaderRegistry&) final;
@@ -123,6 +126,27 @@ public:
     /// pans. Opt in with Map::setCenterClampedToGround until it is applied during render
     /// setup instead, the way GL JS's recalculateZoomAndCenter is.
     bool centerClampedToGround = false;
+    bool terrainFlightControllerEnabled = false;
+    bool terrainFlightDEMAvailable = false;
+    // A missing sample is a contact-scoped stop, not a transient invitation to
+    // creep when a later frame happens to decode a neighbouring DEM tile.
+    bool foundationFlightUnknownDEMLatched = false;
+    // Keep exactly one renderer-owned intent and coalesce newer touch samples
+    // here. Replacing the active sequence every frame can starve commits when
+    // touch delivery outruns terrain assessment.
+    std::optional<FoundationFlightIntent> foundationFlightQueuedIntent;
+    // Highest automatic climb reached during a plane-pan contact. Signed
+    // pinch descent is evaluated against the new terrain profile instead of
+    // this historical floor.
+    std::optional<double> foundationFlightHeldEyeMSL;
+    FoundationFlightTelemetry foundationFlightTelemetry;
+    double foundationFlightMinimumRayClearance = std::numeric_limits<double>::infinity();
+    double foundationFlightPathMeters = 0.0;
+    double foundationFlightCommittableFraction = 0.0;
+    std::vector<FoundationFlightTerrainSample> foundationFlightTerrainProfile;
+    bool foundationFlightTruncatedByUnknownDEM = false;
+    double foundationFlightVerticalVelocity = 0.0;
+    TimePoint foundationFlightLastCommit = Clock::now();
     bool debugAboveGroundLog = false;
 };
 

@@ -6,10 +6,20 @@
 #import <mln/mtl/renderable_resource.hpp>
 
 #import <Metal/Metal.h>
+#import <Metal/MTLDrawable.h>
 #import <MetalKit/MetalKit.h>
 #import <QuartzCore/CAMetalLayer.h>
 
 #import <Metal/Metal.hpp>
+
+// The Bazel Apple toolchain's Metal module only forward-declares these newer
+// MTLDrawable members even when building against an SDK that provides them.
+// Keep the Objective-C surface local and typed; every CAMetalDrawable on the
+// Foundation deployment target implements this protocol at runtime.
+@protocol MLNDrawablePresentation <NSObject>
+@property(nonatomic, readonly) CFTimeInterval presentedTime;
+- (void)addPresentedHandler:(void (^)(id<MLNDrawablePresentation> drawable))block;
+@end
 
 @interface MLNMapViewImplDelegate : NSObject <MTKViewDelegate>
 @end
@@ -72,6 +82,30 @@ public:
   void swap() override {
     id<CAMetalDrawable> currentDrawable = [mtlView currentDrawable];
     if (currentDrawable) {
+      // This registration must precede presentation. `presentedTime` is zero
+      // for a dropped/unpresented drawable and is deliberately not sampled.
+      // Take a copied handler before scheduling Metal work so replacement or
+      // teardown on the main thread cannot race a callback lifetime.
+      MLNPresentedFrameHandler handler = backend.getPresentedFrameHandler();
+      if (handler) {
+        id<MLNDrawablePresentation> presentedDrawable = (id)currentDrawable;
+        if ([presentedDrawable respondsToSelector:@selector(addPresentedHandler:)]) {
+          [presentedDrawable addPresentedHandler:^(id<MLNDrawablePresentation> drawable) {
+            const CFTimeInterval presented = drawable.presentedTime;
+            if (presented > 0) {
+              handler(presented);
+            }
+          }];
+        } else {
+          // CoreSimulator's CAMetalDrawable currently lacks the presentation
+          // callback even though the device SDK declares it. A completed
+          // command buffer is the closest simulator-only frame boundary; the
+          // device path above remains true presentation timing.
+          [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer>) {
+            handler(CACurrentMediaTime());
+          }];
+        }
+      }
       if (presentsWithTransaction) {
         [commandBuffer commit];
         [commandBuffer waitUntilCompleted];
@@ -110,6 +144,7 @@ public:
   // through UIKit and can defeat the no-op guard under non-integer scale factors.
   CGFloat lastAppliedScaleFactor = 0;
   CGSize lastAppliedDrawableSize = CGSizeZero;
+  CGFloat renderScale = 1.0;
 
   // We count how often the context was activated/deactivated so that we can truly deactivate it
   // after the activation count drops to 0.
@@ -225,8 +260,9 @@ void MLNMapViewMetalImpl::layoutChanged() {
   }
 
   const auto scaleFactor = MLNEffectiveScaleFactorForView(mapView);
-  const CGSize target = CGSizeMake(std::round(viewSize.width * scaleFactor),
-                                   std::round(viewSize.height * scaleFactor));
+  const CGSize target = CGSizeMake(
+      std::max<CGFloat>(1, std::round(viewSize.width * scaleFactor * resource.renderScale)),
+      std::max<CGFloat>(1, std::round(viewSize.height * scaleFactor * resource.renderScale)));
 
   if (scaleFactor != resource.lastAppliedScaleFactor) {
     resource.mtlView.contentScaleFactor = resource.lastAppliedScaleFactor = scaleFactor;
@@ -236,6 +272,33 @@ void MLNMapViewMetalImpl::layoutChanged() {
   }
 
   setRenderableSize({static_cast<uint32_t>(target.width), static_cast<uint32_t>(target.height)});
+}
+
+void MLNMapViewMetalImpl::setRenderScale(CGFloat scale) {
+  auto& resource = getResource<MLNMapViewMetalRenderableResource>();
+  const CGFloat clamped = std::min<CGFloat>(1.0, std::max<CGFloat>(0.25, scale));
+  if (resource.renderScale == clamped) {
+    return;
+  }
+  resource.renderScale = clamped;
+  resource.lastAppliedDrawableSize = CGSizeZero;
+  layoutChanged();
+  display();
+}
+
+CGFloat MLNMapViewMetalImpl::getRenderScale() const {
+  return getResource<MLNMapViewMetalRenderableResource>().renderScale;
+}
+
+CGSize MLNMapViewMetalImpl::getRenderDrawableSize() const {
+  const auto& resource = getResource<MLNMapViewMetalRenderableResource>();
+  return resource.mtlView ? resource.mtlView.drawableSize : CGSizeZero;
+}
+
+MLNPresentedFrameHandler MLNMapViewMetalImpl::getPresentedFrameHandler() const {
+  // Atomic Objective-C property access provides a retained local block while
+  // a renderer-owned thread is scheduling its drawable callback.
+  return mapView.presentedFrameHandler;
 }
 
 MLNBackendResource* MLNMapViewMetalImpl::getObject() {

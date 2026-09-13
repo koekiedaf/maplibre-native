@@ -1268,3 +1268,193 @@ TEST(Camera, SetOrientationWithRollNoPitch) {
     EXPECT_NEAR(pitch, pitch_, 1.0e-9);
     EXPECT_NEAR(0.0, roll_, 1.0e-9);
 }
+
+TEST(Transform, TerrainFlightControllerRaisesAndHoldsEyeWithoutChangingOrientation) {
+    Transform transform;
+    transform.resize({390, 844});
+    transform.jumpTo(CameraOptions()
+                         .withCenter(LatLng{42.696, -0.004})
+                         .withCenterAltitude(1800.0)
+                         .withZoom(14.2)
+                         .withPitch(60.0)
+                         .withBearing(200.0));
+
+    auto& state = transform.getState();
+    const double beforeEye = state.getEyeAltitudeMSL();
+    const double beforePitch = state.getPitch();
+    const double beforeBearing = state.getBearing();
+    const LatLng beforeCenter = state.getLatLng();
+
+    state.setTerrainFlightClearanceMeters(100.0);
+    state.setTerrainFlightMinimumEyeMSL(beforeEye + 250.0);
+    EXPECT_TRUE(state.constrainEyeToTerrainFlightMinimum());
+    EXPECT_NEAR(beforeEye + 350.0, state.getEyeAltitudeMSL(), 1e-6);
+    EXPECT_DOUBLE_EQ(beforePitch, state.getPitch());
+    EXPECT_DOUBLE_EQ(beforeBearing, state.getBearing());
+    EXPECT_DOUBLE_EQ(beforeCenter.latitude(), state.getLatLng().latitude());
+    EXPECT_DOUBLE_EQ(beforeCenter.longitude(), state.getLatLng().longitude());
+
+    // Missing DEM is represented by nullopt, never sea level, and cannot lower
+    // the MSL eye that a preceding ridge already required.
+    state.setTerrainFlightMinimumEyeMSL(std::nullopt);
+    EXPECT_FALSE(state.constrainEyeToTerrainFlightMinimum());
+    EXPECT_NEAR(beforeEye + 350.0, state.getEyeAltitudeMSL(), 1e-6);
+}
+
+TEST(Transform, FoundationFlightFloorDoesNotBypassBoundedArbiterDuringJump) {
+    Transform transform;
+    transform.resize({390, 844});
+    transform.jumpTo(CameraOptions()
+                         .withCenter(LatLng{42.696, -0.004})
+                         .withCenterAltitude(1800.0)
+                         .withZoom(14.2)
+                         .withPitch(60.0));
+    const double beforeEye = transform.getState().getEyeAltitudeMSL();
+    transform.getState().setTerrainFlightClearanceMeters(100.0);
+    transform.getState().setTerrainFlightMinimumEyeMSL(beforeEye + 1000.0);
+
+    transform.jumpTo(CameraOptions().withCenter(LatLng{42.6961, -0.0039}));
+
+    EXPECT_NEAR(beforeEye, transform.getState().getEyeAltitudeMSL(), 1.0);
+}
+
+TEST(Transform, FoundationFlightIntentStagesOneTargetWithoutCameraMutation) {
+    Transform transform;
+    transform.resize({390, 844});
+    transform.jumpTo(CameraOptions().withCenter(LatLng{42.696, -0.004}).withZoom(14.2));
+    const LatLng before = transform.getState().getLatLng();
+
+    FoundationFlightIntent intent;
+    intent.target = LatLng{42.697, -0.003};
+    intent.requestedDistanceMeters = 150.0;
+    intent.speedMetersPerSecond = 75.0;
+    intent.sequence = 7;
+    transform.getState().setFoundationFlightIntent(intent);
+
+    ASSERT_TRUE(transform.getState().getFoundationFlightIntent());
+    EXPECT_EQ(7u, transform.getState().getFoundationFlightIntent()->sequence);
+    EXPECT_DOUBLE_EQ(75.0, transform.getState().getFoundationFlightIntent()->speedMetersPerSecond);
+    // Staging is intentionally not a second camera writer.
+    EXPECT_DOUBLE_EQ(before.latitude(), transform.getState().getLatLng().latitude());
+    EXPECT_DOUBLE_EQ(before.longitude(), transform.getState().getLatLng().longitude());
+    transform.getState().setFoundationFlightIntent(std::nullopt);
+    EXPECT_FALSE(transform.getState().getFoundationFlightIntent());
+}
+
+TEST(Transform, FoundationFlightPolicyRejectsStaleUnknownAndPostEndIntent) {
+    FoundationFlightIntent first;
+    first.sequence = 10;
+    FoundationFlightIntent newer;
+    newer.sequence = 11;
+    EXPECT_FALSE(foundationFlightAssessmentMatches(first, newer.sequence));
+    EXPECT_TRUE(foundationFlightAssessmentMatches(newer, newer.sequence));
+    EXPECT_FALSE(foundationFlightAssessmentMatches(newer, 0));
+    EXPECT_TRUE(foundationFlightAssessmentMatches(std::nullopt, 0));
+
+    const auto unknown = foundationFlightPolicy(false, false, 0.0, 0.0, 0.1, 1000.0);
+    EXPECT_DOUBLE_EQ(0.0, unknown.acceptedFraction);
+    EXPECT_EQ(FoundationFlightStopReason::UnknownDEM, unknown.reason);
+
+    Transform transform;
+    transform.resize({390, 844});
+    FoundationFlightIntent intent;
+    intent.sequence = 12;
+    transform.getState().setFoundationFlightIntent(intent);
+    transform.getState().setFoundationFlightIntent(std::nullopt); // finger ended
+    EXPECT_FALSE(transform.getState().getFoundationFlightIntent());
+}
+
+TEST(Transform, FoundationFlightLookaheadAndClimbAreDirectionIndependentAndBounded) {
+    EXPECT_DOUBLE_EQ(150.0, foundationFlightLookahead(0.0));
+    EXPECT_DOUBLE_EQ(250.0, foundationFlightLookahead(80.0));
+    // A renderer uses target direction, not the sign or cardinal direction, to
+    // choose this envelope. Forward/reverse/lateral/diagonal all retain the
+    // same speed-derived lookahead contract.
+    for (const LatLng target : {LatLng{1, 0}, LatLng{-1, 0}, LatLng{0, 1}, LatLng{1, 1}}) {
+        FoundationFlightIntent intent;
+        intent.target = target;
+        intent.speedMetersPerSecond = 50.0;
+        EXPECT_DOUBLE_EQ(200.0, foundationFlightLookahead(intent.speedMetersPerSecond));
+    }
+
+    const auto first = foundationFlightPolicy(true, false, 100.0, 0.0, 0.1, 1000.0);
+    EXPECT_NEAR(0.12, first.ascentMeters, 1e-12);
+    EXPECT_DOUBLE_EQ(1.0, first.acceptedFraction);
+    const auto second = foundationFlightPolicy(true, false, 100.0, first.nextVerticalVelocity, 0.1, 1000.0);
+    EXPECT_GT(second.ascentMeters, first.ascentMeters);
+    const auto noDescent = foundationFlightPolicy(true, false, 0.0, second.nextVerticalVelocity, 0.1, 1000.0);
+    EXPECT_DOUBLE_EQ(0.0, noDescent.ascentMeters);
+}
+
+TEST(Transform, FoundationFlightSweptCorridorKeepsFiveMetreSpacingWithinBoundedWork) {
+    // The terrain renderer applies this identical longitudinal/cross-track
+    // grid to forward, reverse, lateral and diagonal targets. A long
+    // coalesced callback must not revive the old 512-sample gap.
+    for (const LatLng target : {LatLng{1, 0}, LatLng{-1, 0}, LatLng{0, 1}, LatLng{1, 1}}) {
+        const double path = std::min(std::hypot(target.latitude(), target.longitude()) * 10000.0,
+                                     foundationFlightMaximumCommittableMeters);
+        const auto intervals = foundationFlightLongitudinalIntervals(path, 150.0);
+        EXPECT_LE((path + 150.0) / static_cast<double>(intervals),
+                  foundationFlightMaximumLongitudinalSampleSpacingMeters);
+    }
+    const auto longIntervals = foundationFlightLongitudinalIntervals(10000.0, 150.0);
+    EXPECT_EQ(40u, longIntervals);
+    EXPECT_EQ(40u, foundationFlightLongitudinalIntervals(
+                       foundationFlightMaximumCommittableMeters,
+                       foundationFlightMaximumLookaheadMeters));
+    EXPECT_DOUBLE_EQ(150.0, foundationFlightLookahead(std::numeric_limits<double>::infinity()));
+    const auto offsets = foundationFlightCorridorCrossTrackOffsets();
+    EXPECT_DOUBLE_EQ(-15.0, offsets[0]);
+    EXPECT_DOUBLE_EQ(0.0, offsets[1]);
+    EXPECT_DOUBLE_EQ(15.0, offsets[2]);
+    // Forward, reverse, lateral and diagonal paths all sweep both shoulders.
+    // Thus a narrow ridge off the centre line is sampled rather than treated
+    // as safe merely because the nominal path missed it.
+    for (const auto& direction : {std::array<double, 2>{100.0, 0.0},
+                                  std::array<double, 2>{-100.0, 0.0},
+                                  std::array<double, 2>{0.0, 100.0},
+                                  std::array<double, 2>{100.0, 100.0}}) {
+        const auto left = foundationFlightCrossTrackOffset(direction[0], direction[1], offsets[0]);
+        const auto right = foundationFlightCrossTrackOffset(direction[0], direction[1], offsets[2]);
+        EXPECT_NEAR(30.0, std::hypot(left.northMeters - right.northMeters,
+                                     left.eastMeters - right.eastMeters), 1e-12);
+    }
+}
+
+TEST(Transform, FoundationFlightPinchDeceleratesAt150AndStopsAt50) {
+    const auto free = foundationFlightPolicy(true, true, 0.0, 0.0, 0.1, 150.0);
+    EXPECT_DOUBLE_EQ(1.0, free.acceptedFraction);
+    const auto slowing = foundationFlightPolicy(true, true, 0.0, 0.0, 0.1, 100.0);
+    EXPECT_NEAR(0.5, slowing.acceptedFraction, 1e-12);
+    EXPECT_EQ(FoundationFlightStopReason::PinchDeceleration, slowing.reason);
+    const auto stopped = foundationFlightPolicy(true, true, 0.0, 0.0, 0.1, 50.0);
+    EXPECT_DOUBLE_EQ(0.0, stopped.acceptedFraction);
+    EXPECT_EQ(FoundationFlightStopReason::PinchStandOff, stopped.reason);
+}
+
+TEST(Transform, FoundationFlightPinchUsesViewRayAcrossPitchRange) {
+    EXPECT_NEAR(0.0, foundationFlightRayHorizontalDistance(200.0, 0.0), 1e-12);
+    EXPECT_NEAR(200.0 * std::sqrt(0.5), foundationFlightRayHorizontalDistance(200.0, 45.0), 1e-12);
+    EXPECT_NEAR(200.0, foundationFlightRayHorizontalDistance(200.0, 90.0), 1e-12);
+    EXPECT_NEAR(200.0, foundationFlightRayHorizontalDistance(200.0, 120.0), 1e-12);
+    EXPECT_NEAR(-200.0, foundationFlightRayVerticalDisplacement(200.0, 0.0), 1e-12);
+    EXPECT_NEAR(-200.0 * std::sqrt(0.5), foundationFlightRayVerticalDisplacement(200.0, 45.0), 1e-12);
+    EXPECT_NEAR(0.0, foundationFlightRayVerticalDisplacement(200.0, 90.0), 1e-12);
+    // Reverse ray travel climbs by the same signed amount.
+    EXPECT_NEAR(200.0 * std::sqrt(0.5), foundationFlightRayVerticalDisplacement(-200.0, 45.0), 1e-12);
+}
+
+TEST(Transform, FoundationFlightCumulativePinchTargetDoesNotDropPendingCallbacks) {
+    const double first = foundationFlightCumulativePinchRayDistance(1.10, 1.0);
+    const double latest = foundationFlightCumulativePinchRayDistance(1.40, 1.0);
+    EXPECT_GT(latest, first);
+    EXPECT_NEAR(std::log(1.40) * 250.0, latest, 1e-12);
+    // A later renderer assessment is allowed to reject the old sequence, but
+    // the newest intent retains the full contact-baseline target.
+    FoundationFlightIntent latestIntent;
+    latestIntent.sequence = 2;
+    latestIntent.requestedDistanceMeters = latest;
+    EXPECT_TRUE(foundationFlightAssessmentMatches(latestIntent, 2));
+    EXPECT_FALSE(foundationFlightAssessmentMatches(latestIntent, 1));
+}
+}

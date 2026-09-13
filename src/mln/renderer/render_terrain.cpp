@@ -440,8 +440,19 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     //
     // Per-mode cap (TerrainLoadBudget::maxMeshTiles): Quality keeps a generous cap so terrain
     // render distance stays long; Balanced and Performance trade distance for frame time.
-    const size_t maxMeshTiles = updateParameters ? terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles
-                                                 : 0;
+    //
+    // DuckMaps fork only, measurement task "drape target cap cost": DUCKMAPS_MESH_CAP, read
+    // once (getenv, cached, same idiom as meshCoverTraceEnabled() above), overrides the mode's
+    // own cap when set to a positive integer. This is a harness parameter for a bench sweep
+    // across cap values (64/128/256/512), not a product feature - unset (every non-bench run)
+    // this block is a no-op and behaviour is byte-identical to before it existed.
+    static const long meshCapOverride = [] {
+        const char* v = std::getenv("DUCKMAPS_MESH_CAP");
+        return (v && *v) ? std::strtol(v, nullptr, 10) : -1L;
+    }();
+    const size_t maxMeshTiles = meshCapOverride > 0
+        ? static_cast<size_t>(meshCapOverride)
+        : (updateParameters ? terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles : 0);
     if (maxMeshTiles > 0 && out.size() > maxMeshTiles) {
         // Map centre in normalised web-mercator [0,1] (standard projection)
         const LatLng centre = state.getLatLng();

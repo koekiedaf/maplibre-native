@@ -75,12 +75,31 @@ RendererObserver& nullObserver() {
     return observer;
 }
 
+// DuckMaps fork only, measurement task "drape texel size cost": DUCKMAPS_DRAPE_TEXEL, read once
+// (getenv, cached), overrides the drape render target's texel size (drapeTileSize *
+// drapeQualityFactor, normally 512*3=1536) when set to a positive integer - a harness parameter
+// for a bench sweep across texel sizes (1024/1536), not a product feature. Unset (every non-bench
+// run) this returns the compiled-in default and behaviour is byte-identical to before it existed.
+uint32_t drapeTargetTexelSize() {
+    // Compiled-in default, kept in sync by hand with Renderer::Impl's own (private)
+    // drapeTileSize (512) * drapeQualityFactor (3) = 1536 - not referenced directly because
+    // this free function sits outside the class and those constants are private.
+    constexpr uint32_t compiledInDefault = 512u * 3u;
+    static const uint32_t size = [] {
+        const char* v = std::getenv("DUCKMAPS_DRAPE_TEXEL");
+        const long override_ = (v && *v) ? std::strtol(v, nullptr, 10) : -1L;
+        return override_ > 0 ? static_cast<uint32_t>(override_) : compiledInDefault;
+    }();
+    return size;
+}
+
 } // namespace
 
 Renderer::Impl::Impl(gfx::RendererBackend& backend_,
                      float pixelRatio_,
                      const std::optional<std::string>& localFontFamily_)
     : orchestrator(!backend_.contextIsShared(), backend_.getThreadPool(), localFontFamily_),
+      texturePool(drapeTargetTexelSize()),
       backend(backend_),
       observer(&nullObserver()),
       pixelRatio(pixelRatio_) {}

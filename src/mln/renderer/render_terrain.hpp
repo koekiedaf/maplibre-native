@@ -298,9 +298,19 @@ public:
      * ran the backfill (see RasterDEMTile::backfillBorder / DEMData::backfillBorder). Each
      * array entry carries the tile's canonical "z/x/y" id, its `neighboringTiles` bitmask (see
      * DEMTileNeighbors), a 64-bit FNV-1a hash of the whole DEMData image buffer (padding
-     * included), and a separate 64-bit FNV-1a hash of only the padding ring outside the tile's
-     * own dim x dim interior. Sorted by tile id so ordering cannot itself vary between runs.
-     * Debug-only; not called unless the elevation trace (`DUCKMAPS_ELEVATION_TRACE`) is on.
+     * included), a separate 64-bit FNV-1a hash of only the padding ring outside the tile's own
+     * dim x dim interior, and `flat` (DEMData::getMinElevation() == getMaxElevation()): true
+     * when the tile carries no relief at all. Two tiles legitimately hash the same without any
+     * caching fault when both are flat - a real lake, a request that landed outside every
+     * built terrain archive and was answered with the server's one shared sea-level tile
+     * (terrain.py's SEA_LEVEL_TILE), or this engine's own placeholder DEM texture - so `flat`
+     * lets a duplicate hash be told apart from two DIFFERENT tiles wrongly sharing one raster
+     * (a genuine fault) at a glance, without re-deriving it by hand each time (see the task
+     * that added this field: Cortina z10/545/360 and 10/546/360 hashed identically and were
+     * first read as a DEM identity bug; both were min==max flat, out-of-region sea-level
+     * tiles, confirmed against the server's own terrain.tile()). Sorted by tile id so ordering
+     * cannot itself vary between runs. Debug-only; not called unless the elevation trace
+     * (`DUCKMAPS_ELEVATION_TRACE`) is on.
      */
     std::string debugDemTileContentJSON() const;
 

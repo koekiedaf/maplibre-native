@@ -1225,6 +1225,7 @@ std::string RenderTerrain::debugDemTileContentJSON() const {
         int neighbors = 0;
         uint64_t full = 0;
         uint64_t border = 0;
+        bool flat = false;
     };
     std::vector<Entry> entries;
     if (demSource) {
@@ -1274,7 +1275,24 @@ std::string RenderTerrain::debugDemTileContentJSON() const {
                 }
             }
 
-            entries.push_back(Entry{idOs.str(), static_cast<int>(demTile.neighboringTiles), full, border});
+            // Two tiles' hashes can coincide for a legitimate reason - not just a
+            // caching fault - when both are uniform elevation: a lake, or (task
+            // investigating the Cortina z10/545+546/360 hash coincidence) a request
+            // that landed outside every built terrain archive and was answered with
+            // the server's shared static sea-level tile (terrain.py's
+            // SEA_LEVEL_TILE, one fixed 512x512 WebP, byte-identical by construction
+            // for any two such requests). getMinElevation()/getMaxElevation() were
+            // already computed by DEMData's constructor for every tile; a min==max
+            // interior means this tile carries no relief at all, which explains a
+            // hash coincidence on sight without needing to know which of the several
+            // "flat by design" paths (out of region, a real lake, the engine's own
+            // 1x1 placeholder texture) produced it. Without this field a duplicate
+            // hash looked identical whether it was two flat tiles (harmless) or two
+            // tiles with real, different relief sharing one raster (a genuine
+            // fault) - this is what made the earlier finding look like a caching
+            // bug when it was not one.
+            const bool flat = dem.getMinElevation() == dem.getMaxElevation();
+            entries.push_back(Entry{idOs.str(), static_cast<int>(demTile.neighboringTiles), full, border, flat});
         }
     }
     std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return a.id < b.id; });
@@ -1288,7 +1306,7 @@ std::string RenderTerrain::debugDemTileContentJSON() const {
         }
         first = false;
         os << "{\"id\":\"" << e.id << "\",\"neighbors\":" << e.neighbors << ",\"full\":" << e.full
-           << ",\"border\":" << e.border << "}";
+           << ",\"border\":" << e.border << ",\"flat\":" << (e.flat ? "true" : "false") << "}";
     }
     os << "]";
     return os.str();

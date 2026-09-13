@@ -28,6 +28,16 @@ public:
 
     void upload(gfx::UploadPass&) override;
 
+    // Bookkeeping fix (task: terrain-line hit testing, 13 Sept 2026): LineBucket's own
+    // getQueryRadius() is what tells FeatureIndex::query how far around the tap point in tile
+    // units to widen its spatial-grid search before the precise per-feature test
+    // (RenderTerrainLineLayer::queryIntersectsFeature) runs at all - a candidate outside this
+    // radius is never even offered to that test. The base Bucket class defaults this to 0, which
+    // meant every terrain-line tile was searched with no width tolerance whatsoever. Mirrors
+    // LineBucket::getQueryRadius(): half the wider of the line and its halo, plus the offset this
+    // layer's ladder-rail trick applies (see RenderTerrainLineLayer::queryIntersectsFeature).
+    float getQueryRadius(const RenderLayer&) const override;
+
     static TerrainLineLayoutVertex layoutVertex(
         Point<int16_t> pos, Point<int16_t> other, int16_t flagDirection, int16_t flagSide, float dist) {
         return TerrainLineLayoutVertex{{{pos.x, pos.y}}, {{other.x, other.y}}, {{flagDirection, flagSide}}, {{dist}}};

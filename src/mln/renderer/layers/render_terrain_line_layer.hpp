@@ -33,7 +33,9 @@ private:
     bool hasTransition() const override;
     bool hasCrossfade() const override;
 
-    // Not implemented in this first cut: query/hit-testing against the ribbon geometry.
+    // Hit-testing against the ribbon geometry, mirroring RenderLineLayer::queryIntersectsFeature -
+    // see the .cpp for what is and is not carried over (no line-translate on this layer type, and
+    // no data-driven per-feature width/offset since terrain-line paint cannot be data-driven).
     bool queryIntersectsFeature(const GeometryCoordinates&,
                                 const GeometryTileFeature&,
                                 float,

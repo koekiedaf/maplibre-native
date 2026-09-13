@@ -15,6 +15,9 @@
 #include <mln/style/layers/terrain_line_layer_impl.hpp>
 #include <mln/tile/tile.hpp>
 #include <mln/util/containers.hpp>
+#include <mln/util/convert.hpp>
+#include <mln/util/intersection_tests.hpp>
+#include <mln/util/math.hpp>
 
 namespace mln {
 
@@ -28,6 +31,42 @@ inline const style::TerrainLineLayer::Impl& impl_cast(const Immutable<style::Lay
 }
 
 constexpr auto TerrainLineShaderGroupName = "TerrainLineShader";
+
+// Ported verbatim from RenderLineLayer.cpp's own anonymous-namespace `offsetLine` (not shared
+// because that one is private to its translation unit) - pure tile-local geometry math with no
+// dependency on anything LineLayer-specific, needed here for the same reason: terrain-line's own
+// `terrain-line-offset` (the ladder-rail trick, native_lines.py's `_offset_from_gap`) shifts what
+// a tap should actually be tested against, same as line-offset does for `line`.
+GeometryCollection offsetTerrainLine(const GeometryCollection& rings, double offset) {
+    assert(offset != 0.0f);
+    assert(!rings.empty());
+
+    GeometryCollection newRings;
+    newRings.reserve(rings.size());
+
+    const Point<double> zero(0, 0);
+    for (const auto& ring : rings) {
+        newRings.emplace_back();
+        auto& newRing = newRings.back();
+        newRing.reserve(ring.size());
+
+        for (auto i = ring.begin(); i != ring.end(); ++i) {
+            auto& p = *i;
+
+            Point<double> aToB = i == ring.begin() ? zero : util::perp(util::unit(convertPoint<double>(p - *(i - 1))));
+            Point<double> bToC = i + 1 == ring.end() ? zero
+                                                     : util::perp(util::unit(convertPoint<double>(*(i + 1) - p)));
+            Point<double> extrude = util::unit(aToB + bToC);
+
+            const double cosHalfAngle = extrude.x * bToC.x + extrude.y * bToC.y;
+            extrude *= (cosHalfAngle != 0) ? (1.0 / cosHalfAngle) : 0;
+
+            newRing.emplace_back(convertPoint<int16_t>(extrude * offset) + p);
+        }
+    }
+
+    return newRings;
+}
 
 } // namespace
 
@@ -70,15 +109,37 @@ bool RenderTerrainLineLayer::hasCrossfade() const {
     return false;
 }
 
-bool RenderTerrainLineLayer::queryIntersectsFeature(const GeometryCoordinates&,
-                                                    const GeometryTileFeature&,
+bool RenderTerrainLineLayer::queryIntersectsFeature(const GeometryCoordinates& queryGeometry,
+                                                    const GeometryTileFeature& feature,
                                                     float,
                                                     const TransformState&,
-                                                    float,
+                                                    const float pixelsToTileUnits,
                                                     const mat4&,
                                                     const FeatureState&) const {
-    // Not implemented in this first cut - see the class comment.
-    return false;
+    // Mirrors RenderLineLayer::queryIntersectsFeature. Two things it does that this does not:
+    // - `line-translate`: terrain-line has no translate paint property at all (see
+    //   TerrainLinePaintProperties's property list), so there is nothing to call
+    //   FeatureIndex::translateQueryGeometry for; `queryGeometry` is used as given.
+    // - a per-feature data-driven width/offset evaluate: terrain-line paint cannot be data-driven
+    //   (see this class's own header and native_lines.py's comment on the same rule), so
+    //   `evaluated.get<T>()` below is already the concrete value for this frame - no
+    //   `feature`/`zoom`/`featureState` needed to read it, unlike LineWidth/LineOffset's
+    //   `.evaluate(feature, zoom, featureState, default)`.
+    const auto& evaluated = static_cast<const TerrainLineLayerProperties&>(*evaluatedProperties).evaluated;
+
+    // The wider of the line itself and its halo (native_lines.py draws the halo as a second,
+    // wider casing under the line - see TerrainLineBucket::getQueryRadius's own comment), so a
+    // tap that lands on visible halo but outside the thinner line still hits.
+    const float widthPx = std::max(evaluated.get<style::TerrainLineWidth>(), evaluated.get<style::TerrainLineHaloWidth>());
+    const float halfWidth = widthPx / 2.0f * pixelsToTileUnits;
+    const float offset = evaluated.get<style::TerrainLineOffset>() * pixelsToTileUnits;
+
+    if (offset != 0.0f && !feature.getGeometries().empty()) {
+        return util::polygonIntersectsBufferedMultiLine(
+            queryGeometry, offsetTerrainLine(feature.getGeometries(), offset), halfWidth);
+    }
+
+    return util::polygonIntersectsBufferedMultiLine(queryGeometry, feature.getGeometries(), halfWidth);
 }
 
 void RenderTerrainLineLayer::update(gfx::ShaderRegistry& shaders,

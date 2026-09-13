@@ -3329,6 +3329,19 @@ static NSDictionary<NSString *, NSNumber *> *MLNFrameTimingStatsToDictionary(
   return MLNFrameTimingStatsToDictionary(_mbglMap->getFrameTimingReport().gpu);
 }
 
+// Task "break the frame down by section".
+- (NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *)frameSectionTimingStats {
+  const auto report = _mbglMap->getFrameTimingReport();
+  return @{
+    @"tileCover" : MLNFrameTimingStatsToDictionary(report.tileCover),
+    @"terrainMesh" : MLNFrameTimingStatsToDictionary(report.terrainMesh),
+    @"drapeTargets" : MLNFrameTimingStatsToDictionary(report.drapeTargets),
+    @"layerPrepare" : MLNFrameTimingStatsToDictionary(report.layerPrepare),
+    @"upload" : MLNFrameTimingStatsToDictionary(report.upload),
+    @"placement" : MLNFrameTimingStatsToDictionary(report.placement),
+  };
+}
+
 - (void)resetFrameTimingStats {
   _mbglMap->resetFrameTiming();
 }

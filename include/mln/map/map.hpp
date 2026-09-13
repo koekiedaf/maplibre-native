@@ -292,9 +292,10 @@ public:
     void recordFrameCPUMs(double milliseconds);
     void recordFrameGPUMs(double milliseconds);
 
-    /// Discards every sample recorded so far in both timing recorders, so a caller (bench.py's
-    /// sustained-motion mode) can start a clean window right before driving a gesture and read
-    /// back a distribution that describes only that interval.
+    /// Discards every sample recorded so far in every timing recorder (CPU, GPU and the six
+    /// per-section recorders below), so a caller (bench.py's sustained-motion mode) can start a
+    /// clean window right before driving a gesture and read back a distribution that describes
+    /// only that interval.
     void resetFrameTiming();
 
     struct FrameTimingStats {
@@ -308,11 +309,26 @@ public:
     struct FrameTimingReport {
         FrameTimingStats cpu;
         FrameTimingStats gpu;
+
+        // Task "break the frame down by section": where a frame's CPU time (the `cpu` stats
+        // above) actually goes, sourced from the same per-frame gfx::RenderingStats the render
+        // side already produces (see rendering_stats.hpp) - not a second, independently-timed
+        // mechanism. These six do not have to sum exactly to `cpu`: they cover the phases that
+        // could plausibly scale with camera tilt (the brief's own list), not literally every
+        // instruction the frame executes (matrix math, GC/allocation, the parts of
+        // RendererFrontend::render() outside RenderOrchestrator::createRenderTree and
+        // Renderer::Impl::render's own named blocks).
+        FrameTimingStats tileCover;    ///< computing the tile cover (per-source, incl. util::tileCover)
+        FrameTimingStats terrainMesh;  ///< building/updating the terrain mesh (mesh cover + RenderTerrain::update)
+        FrameTimingStats drapeTargets; ///< preparing each drape target and rendering to it
+        FrameTimingStats layerPrepare; ///< per-layer per-tile preparation (RenderLayer::prepare)
+        FrameTimingStats upload;       ///< uploads to the GPU (both UploadPass blocks)
+        FrameTimingStats placement;    ///< symbol placement and collision (Placement::placeLayers)
     };
-    /// Read-only measurement, not a request: the current rolling-window distribution of both
-    /// timing recorders above. `count` on either side says exactly how many samples the
-    /// percentiles were computed from, so a number can never again be quoted from two or three
-    /// frames without that being visible right beside it.
+    /// Read-only measurement, not a request: the current rolling-window distribution of every
+    /// timing recorder above, CPU/GPU and the six-section breakdown alike. `count` on each says
+    /// exactly how many samples the percentiles were computed from, so a number can never again
+    /// be quoted from two or three frames without that being visible right beside it.
     FrameTimingReport getFrameTimingReport() const;
 
 protected:

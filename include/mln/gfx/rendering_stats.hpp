@@ -100,9 +100,22 @@ struct RenderingStats {
 
     /// Per-phase CPU time of the terrain path this frame (seconds), for profiling
     /// where the terrain overhead goes when nothing re-renders
-    double terrainUpdateTime = 0.0;  ///< RenderTerrain::update (tile/DEM/drawable management)
+    double terrainUpdateTime = 0.0;  ///< computeMeshCover + RenderTerrain::update (mesh cover, tile/DEM/drawable management)
     double terrainTweakerTime = 0.0; ///< terrain layer tweaker (surface + depth groups)
-    double terrainDepthTime = 0.0;   ///< terrain depth pass render
+    double terrainDepthTime = 0.0;   ///< terrain depth pass render (RenderTerrain::renderDepth)
+
+    // Task "break the frame down by section": the rest of a frame's named phases, alongside the
+    // terrain-specific three above (which predate this task but were never populated - wired
+    // here for the first time, same fields, same unit). Each is measured once per frame with
+    // mln::util::MonotonicTimer around the phase's own call site (RenderOrchestrator::
+    // createRenderTree for the first three, Renderer::Impl::render for the other two) and
+    // assigned here directly (like encodingTime/renderingTime above), not accumulated - a frame
+    // reports its own phases, not a running total. Seconds.
+    double tileCoverTime = 0.0;    ///< computing the tile cover (RenderSource::update, incl. util::tileCover)
+    double drapeTargetsTime = 0.0; ///< preparing each drape target and rendering to it (drawableTargetsPass)
+    double layerPrepareTime = 0.0; ///< per-layer per-tile preparation (RenderLayer::prepare loop)
+    double uploadTime = 0.0;       ///< uploads to the GPU (both UploadPass blocks)
+    double placementTime = 0.0;    ///< symbol placement and collision (Placement::placeLayers)
 
     RenderingStats& operator+=(const RenderingStats&);
 

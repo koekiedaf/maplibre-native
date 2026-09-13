@@ -67,6 +67,11 @@ RenderingStats& RenderingStats::operator+=(const RenderingStats& r) {
     terrainUpdateTime += r.terrainUpdateTime;
     terrainTweakerTime += r.terrainTweakerTime;
     terrainDepthTime += r.terrainDepthTime;
+    tileCoverTime += r.tileCoverTime;
+    drapeTargetsTime += r.drapeTargetsTime;
+    layerPrepareTime += r.layerPrepareTime;
+    uploadTime += r.uploadTime;
+    placementTime += r.placementTime;
     return *this;
 }
 
@@ -118,6 +123,11 @@ std::string RenderingStats::toString(std::string_view sep) const {
     optionalStatLine(ss, terrainUpdateTime, "terrainUpdateTime", sep);
     optionalStatLine(ss, terrainTweakerTime, "terrainTweakerTime", sep);
     optionalStatLine(ss, terrainDepthTime, "terrainDepthTime", sep);
+    optionalStatLine(ss, tileCoverTime, "tileCoverTime", sep);
+    optionalStatLine(ss, drapeTargetsTime, "drapeTargetsTime", sep);
+    optionalStatLine(ss, layerPrepareTime, "layerPrepareTime", sep);
+    optionalStatLine(ss, uploadTime, "uploadTime", sep);
+    optionalStatLine(ss, placementTime, "placementTime", sep);
     return ss.str();
 }
 #endif

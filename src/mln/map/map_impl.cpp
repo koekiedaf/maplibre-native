@@ -272,6 +272,18 @@ void Map::Impl::onDidFinishRenderingFrame(RenderMode renderMode,
         renderingStatsView->update(*style, stats);
     }
 
+    // Task "break the frame down by section": record this frame's six section times,
+    // unconditionally like the CPU/GPU recorders (not gated on MapMode::Continuous below),
+    // since a still-image render's frame breakdown is just as real as a continuous one's.
+    // gfx::RenderingStats reports seconds; FrameTimingRecorder::record wants milliseconds,
+    // matching recordFrameCPUMs/recordFrameGPUMs's own convention.
+    tileCoverTiming.record(stats.tileCoverTime * 1000.0);
+    terrainMeshTiming.record(stats.terrainUpdateTime * 1000.0);
+    drapeTargetsTiming.record(stats.drapeTargetsTime * 1000.0);
+    layerPrepareTiming.record(stats.layerPrepareTime * 1000.0);
+    uploadTiming.record(stats.uploadTime * 1000.0);
+    placementTiming.record(stats.placementTime * 1000.0);
+
     if (mode == MapMode::Continuous) {
         const MapObserver::RenderFrameStatus frameStatus{.mode = static_cast<MapObserver::RenderMode>(renderMode),
                                                          .needsRepaint = needsRepaint,

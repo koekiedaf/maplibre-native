@@ -83,6 +83,18 @@ public:
     bool needsRepaint = false;
     bool loaded = false;
     bool placementChanged = false;
+
+    // Task "break the frame down by section": three phases of RenderOrchestrator::createRenderTree
+    // that happen before the RenderTree even reaches Renderer::Impl::render, so they cannot be
+    // timed there - measured with the same mln::util::MonotonicTimer the tree's own startTime/
+    // getElapsedTime() already use, and carried on RenderTreeParameters (built once per frame,
+    // always at hand where these phases run) rather than adding a second timing mechanism.
+    // Renderer::Impl::render copies these into gfx::RenderingStats right after fetching
+    // renderTree.getParameters(), the same object the platform layer already reads its own
+    // encodingTime/renderingTime off. Seconds, matching RenderingStats' own unit.
+    double tileCoverTime = 0.0;    ///< per-source tile cover (RenderSource::update, incl. util::tileCover)
+    double layerPrepareTime = 0.0; ///< per-layer per-tile prepare (RenderLayer::prepare loop)
+    double placementTime = 0.0;    ///< symbol placement and collision (Placement::placeLayers)
 };
 
 class RenderTree {

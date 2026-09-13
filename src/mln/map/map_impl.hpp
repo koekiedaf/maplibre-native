@@ -134,6 +134,21 @@ public:
     /// `Map::getFrameTimingReport`. See `mln::util::FrameTimingRecorder`'s own comment.
     util::FrameTimingRecorder cpuFrameTiming;
     util::FrameTimingRecorder gpuFrameTiming;
+
+    /// Task "break the frame down by section": six more windows of the same recorder, one per
+    /// named section, fed from `Map::Impl::onDidFinishRenderingFrame` - unlike the CPU/GPU pair
+    /// above these are never called into from platform code; the per-frame `gfx::RenderingStats`
+    /// this method already receives every frame carries the section times straight from the
+    /// renderer, so this class just records them. Same units (record() takes milliseconds; the
+    /// stats fields are seconds, converted on the way in), same reset story
+    /// (`Map::resetFrameTiming`), same read API (`Map::getFrameTimingReport`, which grew six more
+    /// named members rather than a second call).
+    util::FrameTimingRecorder tileCoverTiming;
+    util::FrameTimingRecorder terrainMeshTiming;
+    util::FrameTimingRecorder drapeTargetsTiming;
+    util::FrameTimingRecorder layerPrepareTiming;
+    util::FrameTimingRecorder uploadTiming;
+    util::FrameTimingRecorder placementTiming;
 };
 
 // Forward declaration of this method is required for the MapProjection class

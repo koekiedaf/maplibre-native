@@ -641,9 +641,25 @@ MLN_EXPORT
 - (NSDictionary<NSString *, NSNumber *> *)gpuFrameTimingStats;
 
 /**
- Discards every CPU and GPU frame timing sample recorded so far, so a caller can start a clean
- window immediately before driving a sustained gesture and read back a distribution
- (`cpuFrameTimingStats`/`gpuFrameTimingStats`) that describes only that interval.
+ Task "break the frame down by section": where a frame's CPU time actually goes, not just its
+ total (`cpuFrameTimingStats` above). A dictionary of six rolling-window distributions, one per
+ named section, each shaped exactly like `cpuFrameTimingStats`'s own dictionary (`count`,
+ `medianMs`, `p95Ms`, `meanMs`, `minMs`, `maxMs`) - so the same "check `count` first" caution
+ applies to each of them independently. Keys: `tileCover` (computing the tile cover),
+ `terrainMesh` (building/updating the terrain mesh), `drapeTargets` (preparing each drape
+ target and rendering to it), `layerPrepare` (per-layer per-tile preparation), `upload`
+ (uploads to the GPU) and `placement` (symbol placement and collision). Sourced from the same
+ per-frame `mln::gfx::RenderingStats` the render side already produces for every frame, not a
+ second, independently-timed mechanism - see `mln::Map::FrameTimingReport`'s own comment for
+ why these six do not have to sum exactly to `cpuFrameTimingStats`'s total.
+ */
+- (NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *)frameSectionTimingStats;
+
+/**
+ Discards every CPU, GPU and per-section frame timing sample recorded so far, so a caller can
+ start a clean window immediately before driving a sustained gesture and read back a
+ distribution (`cpuFrameTimingStats`/`gpuFrameTimingStats`/`frameSectionTimingStats`) that
+ describes only that interval.
  */
 - (void)resetFrameTimingStats;
 

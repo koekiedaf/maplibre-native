@@ -679,12 +679,24 @@ void Map::recordFrameGPUMs(double milliseconds) {
 void Map::resetFrameTiming() {
     impl->cpuFrameTiming.reset();
     impl->gpuFrameTiming.reset();
+    impl->tileCoverTiming.reset();
+    impl->terrainMeshTiming.reset();
+    impl->drapeTargetsTiming.reset();
+    impl->layerPrepareTiming.reset();
+    impl->uploadTiming.reset();
+    impl->placementTiming.reset();
 }
 
 Map::FrameTimingReport Map::getFrameTimingReport() const {
     return FrameTimingReport{
         .cpu = toFrameTimingStats(impl->cpuFrameTiming.report()),
         .gpu = toFrameTimingStats(impl->gpuFrameTiming.report()),
+        .tileCover = toFrameTimingStats(impl->tileCoverTiming.report()),
+        .terrainMesh = toFrameTimingStats(impl->terrainMeshTiming.report()),
+        .drapeTargets = toFrameTimingStats(impl->drapeTargetsTiming.report()),
+        .layerPrepare = toFrameTimingStats(impl->layerPrepareTiming.report()),
+        .upload = toFrameTimingStats(impl->uploadTiming.report()),
+        .placement = toFrameTimingStats(impl->placementTiming.report()),
     };
 }
 

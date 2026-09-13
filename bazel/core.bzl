@@ -889,6 +889,7 @@ MLN_CORE_HEADERS = [
     "include/mln/util/expected.hpp",
     "include/mln/util/feature.hpp",
     "include/mln/util/font_stack.hpp",
+    "include/mln/util/frame_timing.hpp",
     "include/mln/util/geo.hpp",
     "include/mln/util/geojson.hpp",
     "include/mln/util/geometry.hpp",

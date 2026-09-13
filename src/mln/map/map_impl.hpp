@@ -13,6 +13,7 @@
 #include <mln/style/style.hpp>
 #include <mln/util/size.hpp>
 #include <mln/tile/tile_operation.hpp>
+#include <mln/util/frame_timing.hpp>
 
 #include <numbers>
 
@@ -127,6 +128,12 @@ public:
     /// `onSettleBoundGivenUp`'s own comment and `Map::getSettleBoundGivenUp`. nullopt is the
     /// common, healthy case.
     std::optional<std::string> lastSettleBoundGivenUp;
+
+    /// Task "make it measurable": real per-frame CPU/GPU timing, fed by the platform layer
+    /// (`Map::recordFrameCPUMs`/`recordFrameGPUMs`) and read back by
+    /// `Map::getFrameTimingReport`. See `mln::util::FrameTimingRecorder`'s own comment.
+    util::FrameTimingRecorder cpuFrameTiming;
+    util::FrameTimingRecorder gpuFrameTiming;
 };
 
 // Forward declaration of this method is required for the MapProjection class

@@ -621,6 +621,33 @@ MLN_EXPORT
 @property (nonatomic, readonly) CGFloat terrainCentreAltitudeMeters;
 
 /**
+ Task "make it measurable": a rolling-window distribution of real per-frame CPU preparation
+ time, in milliseconds - the wall time `RendererFrontend::render()` itself took, timed
+ synchronously around that call on the same thread it runs on. This is the CPU half of a
+ frame; `gpuFrameTimingStats` below is the other. Keys: `count` (how many samples the
+ percentiles below were computed from - never trust `medianMs`/`p95Ms` without checking this
+ first), `medianMs`, `p95Ms`, `meanMs`, `minMs`, `maxMs`. An empty report (`count` 0) means no
+ frame has rendered since the last reset.
+ */
+- (NSDictionary<NSString *, NSNumber *> *)cpuFrameTimingStats;
+
+/**
+ Task "make it measurable": the GPU counterpart of `cpuFrameTimingStats`, a rolling-window
+ distribution of real per-frame GPU execution time in milliseconds, read off each Metal
+ command buffer's own `GPUEndTime - GPUStartTime` once the GPU has actually finished that
+ frame - not estimated from a delegate callback's arrival rate. Same keys and the same
+ caution about `count`.
+ */
+- (NSDictionary<NSString *, NSNumber *> *)gpuFrameTimingStats;
+
+/**
+ Discards every CPU and GPU frame timing sample recorded so far, so a caller can start a clean
+ window immediately before driving a sustained gesture and read back a distribution
+ (`cpuFrameTimingStats`/`gpuFrameTimingStats`) that describes only that interval.
+ */
+- (void)resetFrameTimingStats;
+
+/**
  Frustum offset used to disable rendering of elements at the edge of the screen
 
  Offset applied to camera frustum and scissor rectangle. The camrea frustum is modified

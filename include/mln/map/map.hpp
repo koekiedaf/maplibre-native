@@ -281,6 +281,40 @@ public:
 
     const std::unique_ptr<util::ActionJournal>& getActionJournal();
 
+    /// Task "make it measurable": a per-frame timing sample in milliseconds, pushed by the
+    /// platform layer. `recordFrameCPUMs` is the wall time `RendererFrontend::render()` itself
+    /// took to prepare a frame (build the command buffer), timed synchronously around that call
+    /// - see `MLNMapView.renderSync` on iOS. `recordFrameGPUMs` is a Metal command buffer's own
+    /// `GPUEndTime - GPUStartTime`, delivered asynchronously by a completion handler once the
+    /// GPU has actually finished the frame - see `MLNMapViewMetalRenderableResource::swap()`.
+    /// These are two different clocks measuring two different things on two different threads;
+    /// neither implies the other.
+    void recordFrameCPUMs(double milliseconds);
+    void recordFrameGPUMs(double milliseconds);
+
+    /// Discards every sample recorded so far in both timing recorders, so a caller (bench.py's
+    /// sustained-motion mode) can start a clean window right before driving a gesture and read
+    /// back a distribution that describes only that interval.
+    void resetFrameTiming();
+
+    struct FrameTimingStats {
+        std::size_t count = 0;
+        double medianMs = 0.0;
+        double p95Ms = 0.0;
+        double meanMs = 0.0;
+        double minMs = 0.0;
+        double maxMs = 0.0;
+    };
+    struct FrameTimingReport {
+        FrameTimingStats cpu;
+        FrameTimingStats gpu;
+    };
+    /// Read-only measurement, not a request: the current rolling-window distribution of both
+    /// timing recorders above. `count` on either side says exactly how many samples the
+    /// percentiles were computed from, so a number can never again be quoted from two or three
+    /// frames without that being visible right beside it.
+    FrameTimingReport getFrameTimingReport() const;
+
 protected:
     class Impl;
     const std::unique_ptr<Impl> impl;

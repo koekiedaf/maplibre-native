@@ -655,6 +655,39 @@ double Map::getTerrainCentreAltitudeMeters() const {
     return impl->transform.getState().getCenterAltitude();
 }
 
+namespace {
+Map::FrameTimingStats toFrameTimingStats(const util::FrameTimingRecorder::Report& report) {
+    return Map::FrameTimingStats{
+        .count = report.count,
+        .medianMs = report.medianMs,
+        .p95Ms = report.p95Ms,
+        .meanMs = report.meanMs,
+        .minMs = report.minMs,
+        .maxMs = report.maxMs,
+    };
+}
+} // namespace
+
+void Map::recordFrameCPUMs(double milliseconds) {
+    impl->cpuFrameTiming.record(milliseconds);
+}
+
+void Map::recordFrameGPUMs(double milliseconds) {
+    impl->gpuFrameTiming.record(milliseconds);
+}
+
+void Map::resetFrameTiming() {
+    impl->cpuFrameTiming.reset();
+    impl->gpuFrameTiming.reset();
+}
+
+Map::FrameTimingReport Map::getFrameTimingReport() const {
+    return FrameTimingReport{
+        .cpu = toFrameTimingStats(impl->cpuFrameTiming.report()),
+        .gpu = toFrameTimingStats(impl->gpuFrameTiming.report()),
+    };
+}
+
 void Map::setDebugAboveGroundLog(bool enabled) {
     impl->debugAboveGroundLog = enabled;
 }

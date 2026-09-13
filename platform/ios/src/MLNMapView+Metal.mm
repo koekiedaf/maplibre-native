@@ -2,7 +2,9 @@
 #import "MLNFoundation_Private.h"
 #import "MLNLoggingConfiguration_Private.h"
 #import "MLNMapView+Metal.h"
+#import "MLNMapView_Private.h"
 
+#import <mln/map/map.hpp>
 #import <mln/mtl/renderable_resource.hpp>
 
 #import <Metal/Metal.h>
@@ -72,6 +74,34 @@ public:
   void swap() override {
     id<CAMetalDrawable> currentDrawable = [mtlView currentDrawable];
     if (currentDrawable) {
+      // Task "make it measurable": a real, always-on GPU timing sample for this frame. Metal
+      // fills in `GPUStartTime`/`GPUEndTime` on the command buffer itself once the GPU has
+      // actually finished it - not an estimate from how often a delegate callback fires, which
+      // is all the harness had before this (`HarnessRuntime.fpsLast2s`, a CPU-side count of
+      // `didFinishRenderingFrame` arrivals). The handler must be added before `commit`, and
+      // fires asynchronously, potentially well after this function returns and on a queue of
+      // Metal's own choosing - so the map view is captured weakly (matching the `mapView` field
+      // itself) and the whole handler is a no-op once it, or the command buffer's timing, is
+      // gone. Left unconditional (see this file's header note on cost) rather than gated behind
+      // a flag: the two GPU timestamp reads and one dictionary-free struct field write this
+      // performs cost nothing next to the drawable present it already always does.
+      MLNMapView* mapViewForTiming = backend.getMapViewForTiming();
+      __weak MLNMapView* weakMapViewForTiming = mapViewForTiming;
+      [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer> completedBuffer) {
+        if (completedBuffer.status != MTLCommandBufferStatusCompleted) {
+          return;  // error/cancelled: GPUStartTime/GPUEndTime are meaningless here
+        }
+        const CFTimeInterval gpuMs = (completedBuffer.GPUEndTime - completedBuffer.GPUStartTime) * 1000.0;
+        if (gpuMs < 0) {
+          return;  // seen on the simulator, which has no real GPU timeline of its own
+        }
+        MLNMapView* strongMapView = weakMapViewForTiming;
+        if (!strongMapView) {
+          return;
+        }
+        strongMapView.mbglMap.recordFrameGPUMs(gpuMs);
+      }];
+
       if (presentsWithTransaction) {
         [commandBuffer commit];
         [commandBuffer waitUntilCompleted];

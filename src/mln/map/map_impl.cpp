@@ -396,8 +396,10 @@ void Map::Impl::onTerrainFlightElevationChanged(std::optional<double> elevationM
         double requestedEyeMSL = gestureEyeMSL + intent->verticalEyeMSLDeltaMeters;
         if (!intent->pinch) requestedEyeMSL = std::max(requestedEyeMSL, heldFloor);
         const TimePoint now = Clock::now();
+        const double rawElapsed = std::chrono::duration<double>(now - foundationFlightLastCommit).count();
         const double elapsed = std::clamp(
-            std::chrono::duration<double>(now - foundationFlightLastCommit).count(), 1.0 / 120.0, 0.10);
+            rawElapsed, 1.0 / 120.0, 0.10);
+        const double horizontalElapsed = std::clamp(rawElapsed, 1.0 / 120.0, 0.50);
         foundationFlightLastCommit = now;
         // Stand-off can shorten the prefix, but terrain/climb safety is then
         // evaluated against every station in that actual prefix. It never
@@ -406,9 +408,12 @@ void Map::Impl::onTerrainFlightElevationChanged(std::optional<double> elevationM
                                                              intent->pinch,
                                                              intent->requestedDistanceMeters,
                                                              foundationFlightPinchObstacleDistance);
-        const double speedLimit = foundationFlightSpeedLimitedFraction(foundationFlightPathMeters,
+        const double speedLimitedPathMeters = intent->pinch
+            ? std::abs(intent->requestedDistanceMeters)
+            : foundationFlightPathMeters;
+        const double speedLimit = foundationFlightSpeedLimitedFraction(speedLimitedPathMeters,
                                                                        intent->speedMetersPerSecond,
-                                                                       elapsed);
+                                                                       horizontalElapsed);
         const double requestedLimit = std::min({foundationFlightCommittableFraction,
                                                 pinchPolicy.acceptedFraction,
                                                 speedLimit});

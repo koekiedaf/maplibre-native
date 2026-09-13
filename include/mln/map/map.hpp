@@ -249,7 +249,7 @@ inline double foundationFlightSpeedLimitedFraction(double pathMeters,
     if (!std::isfinite(pathMeters) || !std::isfinite(speedMetersPerSecond) || pathMeters <= 1e-9) return 0.0;
     if (std::abs(speedMetersPerSecond) <= foundationFlightMaximumHorizontalSpeedMetersPerSecond) return 1.0;
     const double allowed = foundationFlightMaximumHorizontalSpeedMetersPerSecond *
-                           std::clamp(elapsedSeconds, 0.0, 0.10);
+                           std::clamp(elapsedSeconds, 0.0, 0.50);
     return std::clamp(allowed / pathMeters, 0.0, 1.0);
 }
 

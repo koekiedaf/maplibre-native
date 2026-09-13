@@ -58,9 +58,11 @@ void RasterDEMTile::setError(std::exception_ptr err) {
     observer->onTileError(*this, std::move(err));
 }
 
-void RasterDEMTile::setMetadata(std::optional<Timestamp> modified_, std::optional<Timestamp> expires_) {
+void RasterDEMTile::setMetadata(std::optional<Timestamp> modified_, std::optional<Timestamp> expires_,
+                                bool unbuiltGround_) {
     modified = std::move(modified_);
     expires = std::move(expires_);
+    unbuiltGround = unbuiltGround_;
 }
 
 void RasterDEMTile::setData(const std::shared_ptr<const std::string>& data) {

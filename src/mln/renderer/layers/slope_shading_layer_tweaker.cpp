@@ -238,6 +238,10 @@ void SlopeShadingLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPa
         const float demDim = terrainData ? terrainData->demDim : 0.0f;
         const float demExaggeration = parameters.terrain ? parameters.terrain->getExaggeration() : 0.0f;
         const float demEnabled = terrainData ? 1.0f : 0.0f;
+        // DuckMaps fork only, unbuilt-ground fix: terrainData->unbuilt is only meaningful when
+        // there IS a terrainData - see SlopeShadingTilePropsUBO's own comment on why this is a
+        // second field rather than a third value folded into demEnabled.
+        const float demUnbuilt = (terrainData && terrainData->unbuilt) ? 1.0f : 0.0f;
         const float mPerExtent = metersPerTile(tileID) / static_cast<float>(util::EXTENT);
 
 #if MLN_UBO_CONSOLIDATION
@@ -264,6 +268,8 @@ void SlopeShadingLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintPa
             .dem_exaggeration = demExaggeration,
             .dem_enabled = demEnabled,
             .m_per_extent = mPerExtent,
+            .dem_unbuilt = demUnbuilt,
+            .pad0 = {},
         };
 
 #if MLN_UBO_CONSOLIDATION

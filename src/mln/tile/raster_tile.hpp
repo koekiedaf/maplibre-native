@@ -26,7 +26,11 @@ public:
     void setUpdateParameters(const TileUpdateParameters&) override;
 
     void setError(std::exception_ptr);
-    void setMetadata(std::optional<Timestamp> modified, std::optional<Timestamp> expires);
+    // The third parameter exists only so this shares tile_loader_impl.hpp's templated
+    // TileLoader<T>::loadedData call site with RasterDEMTile (DuckMaps fork only - see that
+    // class's own setMetadata comment); a plain raster tile has no use for it.
+    void setMetadata(std::optional<Timestamp> modified, std::optional<Timestamp> expires,
+                     bool unbuiltGround = false);
     void setData(const std::shared_ptr<const std::string>& data);
 
     bool layerPropertiesUpdated(const Immutable<style::LayerProperties>& layerProperties) override;

@@ -174,12 +174,12 @@ void TileLoader<T>::loadedData(const Response& res, Resource::LoadingMethod meth
         resource.priorExpires = res.expires;
         // Do not notify the tile; when we get this message, it already has the
         // current version of the data.
-        tile.setMetadata(res.modified, res.expires);
+        tile.setMetadata(res.modified, res.expires, res.unbuiltGround);
     } else {
         resource.priorModified = res.modified;
         resource.priorExpires = res.expires;
         resource.priorEtag = res.etag;
-        tile.setMetadata(res.modified, res.expires);
+        tile.setMetadata(res.modified, res.expires, res.unbuiltGround);
         tile.setData(res.noContent ? nullptr : res.data);
     }
 }

@@ -46,9 +46,17 @@ struct alignas(16) SlopeShadingTilePropsUBO {
     /* 36 */ float dem_exaggeration;
     /* 40 */ float dem_enabled;
     /* 44 */ float m_per_extent;
-    /* 48 */
+    // DuckMaps fork only, unbuilt-ground fix: 1.0 when the DEM this tile bound (own tile or
+    // ancestor - see RenderTerrain::TerrainData::unbuilt) is our terrain endpoint's flat
+    // sea-level filler rather than real archive relief, 0.0 otherwise. Kept as its own float next
+    // to dem_enabled rather than folded into it (e.g. a third dem_enabled value) - two independent
+    // questions ("is there a DEM at all" and "is it honest relief") read more plainly as two
+    // fields than as one field's range.
+    /* 48 */ float dem_unbuilt;
+    /* 52 */ std::array<float, 3> pad0;
+    /* 64 */
 };
-static_assert(sizeof(SlopeShadingTilePropsUBO) == 3 * 16);
+static_assert(sizeof(SlopeShadingTilePropsUBO) == 4 * 16);
 
 /// Evaluated (per-layer, zoom-evaluated) properties that do not depend on the tile. Both paint
 /// properties (opacity and preset) are non-data-driven (PropertyValue<float>), matching

@@ -576,9 +576,12 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
             demDim = demData->dim;
             if (auto existing = demTextures.find(renderTile.id); existing != demTextures.end()) {
                 existing->second.lastUsed = demUpdateCounter;
+                // DuckMaps fork only: refresh in case this tile re-resolved (e.g. after a cache
+                // revalidation) - see DEMTextureEntry::unbuilt's own comment.
+                existing->second.unbuilt = demTile->isUnbuiltGround();
             } else if (auto texture = createDEMTexture(context, *demData)) {
                 // Keep the texture available for elevation sampling by non-draped layers
-                demTextures[renderTile.id] = {texture, demData->dim, demUpdateCounter};
+                demTextures[renderTile.id] = {texture, demData->dim, demUpdateCounter, demTile->isUnbuiltGround()};
 #if MLN_RENDER_BACKEND_OPENGL
                 // Also pack this tile's DEM into the array for the (upcoming) instanced
                 // depth pass. Additive: the per-tile texture above is still the fallback.
@@ -1226,6 +1229,13 @@ std::string RenderTerrain::debugDemTileContentJSON() const {
         uint64_t full = 0;
         uint64_t border = 0;
         bool flat = false;
+        // DuckMaps fork only, unbuilt-ground fix verification: is this tile our terrain
+        // endpoint's flat sea-level filler (see RasterDEMTile::isUnbuiltGround)? Added
+        // alongside `flat` for the identical reason that field was added - `flat` alone
+        // cannot tell "flat because unbuilt" from "flat because it is a real, built lake
+        // or plain", which is exactly the distinction this fix's slope-shading behaviour
+        // depends on. Debug-only, no runtime behaviour change.
+        bool unbuilt = false;
     };
     std::vector<Entry> entries;
     if (demSource) {
@@ -1292,7 +1302,8 @@ std::string RenderTerrain::debugDemTileContentJSON() const {
             // fault) - this is what made the earlier finding look like a caching
             // bug when it was not one.
             const bool flat = dem.getMinElevation() == dem.getMaxElevation();
-            entries.push_back(Entry{idOs.str(), static_cast<int>(demTile.neighboringTiles), full, border, flat});
+            entries.push_back(Entry{idOs.str(), static_cast<int>(demTile.neighboringTiles), full, border, flat,
+                                    demTile.isUnbuiltGround()});
         }
     }
     std::sort(entries.begin(), entries.end(), [](const Entry& a, const Entry& b) { return a.id < b.id; });
@@ -1306,7 +1317,8 @@ std::string RenderTerrain::debugDemTileContentJSON() const {
         }
         first = false;
         os << "{\"id\":\"" << e.id << "\",\"neighbors\":" << e.neighbors << ",\"full\":" << e.full
-           << ",\"border\":" << e.border << ",\"flat\":" << (e.flat ? "true" : "false") << "}";
+           << ",\"border\":" << e.border << ",\"flat\":" << (e.flat ? "true" : "false")
+           << ",\"unbuilt\":" << (e.unbuilt ? "true" : "false") << "}";
     }
     os << "]";
     return os.str();
@@ -1358,6 +1370,7 @@ std::vector<std::pair<UnwrappedTileID, RenderTerrain::TerrainData>> RenderTerrai
                      .demTexture = entry->texture,
                      .demCoords = {{1.0f / (util::EXTENT * off.scale), off.dx / off.scale, off.dy / off.scale, 0.0f}},
                      .demDim = static_cast<float>(entry->dim),
+                     .unbuilt = entry->unbuilt,
                  }}};
     }
 
@@ -1391,6 +1404,7 @@ std::vector<std::pair<UnwrappedTileID, RenderTerrain::TerrainData>> RenderTerrai
                                          .demTexture = candidateEntry.texture,
                                          .demCoords = {{off.scale / util::EXTENT, off.dx, off.dy, 0.0f}},
                                          .demDim = static_cast<float>(candidateEntry.dim),
+                                         .unbuilt = candidateEntry.unbuilt,
                                      });
         }
     }

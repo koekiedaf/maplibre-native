@@ -417,6 +417,12 @@ public:
         /// requested tile into normalized coordinates (0..1) of the DEM tile
         std::array<float, 4> demCoords;
         float demDim;
+        // DuckMaps fork only: true when the DEM tile this binding resolved to (own or ancestor)
+        // is our terrain endpoint's flat sea-level filler rather than real archive relief - see
+        // RasterDEMTile::isUnbuiltGround() and DEMTextureEntry::unbuilt below. Consulted by
+        // SlopeShadingLayerTweaker so that layer draws nothing on ground that isn't built yet,
+        // instead of painting it the same green as genuinely flat built terrain.
+        bool unbuilt = false;
     };
 
     /**
@@ -689,6 +695,8 @@ private:
         std::shared_ptr<gfx::Texture2D> texture;
         int32_t dim;
         uint64_t lastUsed = 0;
+        // DuckMaps fork only - see TerrainData::unbuilt above.
+        bool unbuilt = false;
     };
     std::map<UnwrappedTileID, DEMTextureEntry> demTextures;
     // Retention cap for demTextures (~1MB per 514x514 DEM texture); entries not

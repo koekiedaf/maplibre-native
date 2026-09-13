@@ -37,6 +37,17 @@ public:
     std::optional<Timestamp> expires;
     std::optional<std::string> etag;
 
+    // DuckMaps fork only. Set from the "X-Terrain-Cache" response header on our own terrain
+    // endpoint (container/server/app/map/terrain.py): true for "sea-level" and "above-maxzoom",
+    // the two reasons that endpoint answers with the flat sea-level filler tile rather than real
+    // archive data. False for "archive"/"archive-ancestor" (real relief, even where it happens to
+    // be flat) and false when the header is absent (any other resource, or an offline pack with
+    // no header to read) - the safe default for everything that isn't this one endpoint's tiles.
+    // This is the one honest, cheap signal for "this ground is not built yet": the server already
+    // computes it for exactly this reason, it costs one more header parse alongside the existing
+    // ETag/Cache-Control ones, and it never requires the app to know the sea-level tile's bytes.
+    bool unbuiltGround = false;
+
     bool isFresh() const { return expires ? *expires > util::now() : !error; }
 
     // Indicates whether we are allowed to use this response according to HTTP

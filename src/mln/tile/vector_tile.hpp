@@ -19,7 +19,11 @@ public:
 
     void setNecessity(TileNecessity) final;
     void setUpdateParameters(const TileUpdateParameters&) final;
-    void setMetadata(std::optional<Timestamp> modified, std::optional<Timestamp> expires);
+    // The third parameter exists only so this shares tile_loader_impl.hpp's templated
+    // TileLoader<T>::loadedData call site with RasterDEMTile (DuckMaps fork only - see that
+    // class's own setMetadata comment); a vector tile has no use for it.
+    void setMetadata(std::optional<Timestamp> modified, std::optional<Timestamp> expires,
+                     bool unbuiltGround = false);
 
     virtual void setData(const std::shared_ptr<const std::string>&) = 0;
 

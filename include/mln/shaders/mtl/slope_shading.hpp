@@ -58,9 +58,11 @@ struct alignas(16) SlopeShadingTilePropsUBO {
     /* 36 */ float dem_exaggeration;
     /* 40 */ float dem_enabled;
     /* 44 */ float m_per_extent;
-    /* 48 */
+    /* 48 */ float dem_unbuilt;
+    /* 52 */ float3 pad0;
+    /* 64 */
 };
-static_assert(sizeof(SlopeShadingTilePropsUBO) == 3 * 16, "wrong size");
+static_assert(sizeof(SlopeShadingTilePropsUBO) == 4 * 16, "wrong size");
 
 struct alignas(16) SlopeShadingEvaluatedPropsUBO {
     /*  0 */ float opacity;
@@ -169,7 +171,13 @@ FragmentOut fragment fragmentMain(FragmentStage in [[stage_in]],
     // No DEM texture for this tile means no honest angle to report. Showing nothing is the only
     // safe answer for a layer people read to judge avalanche terrain; a guess drawn in avalanche
     // colours is not (matches the brief and contours3d.js's own u_has_tex < 0.5 guard).
-    if (tileProps.dem_enabled < 0.5 || tileProps.m_per_extent <= 0.0) {
+    //
+    // dem_unbuilt is the same rule applied one level deeper: a tile CAN have a real DEM texture
+    // here and still carry no honest angle, when that texture is our terrain endpoint's flat
+    // sea-level filler for ground outside every built region (or past the Map quality cap) rather
+    // than real archive relief - see RenderTerrain::TerrainData::unbuilt. Undrawn, not a "no data"
+    // colour and not a grey wash: exactly the same discard as the line above, for the same reason.
+    if (tileProps.dem_enabled < 0.5 || tileProps.dem_unbuilt > 0.5 || tileProps.m_per_extent <= 0.0) {
         discard_fragment();
         out.color = half4(0.0);
         return out;

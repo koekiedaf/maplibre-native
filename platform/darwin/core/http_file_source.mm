@@ -377,6 +377,16 @@ std::unique_ptr<AsyncRequest> HTTPFileSource::request(const Resource &resource,
                 response.etag = std::string([etag UTF8String]);
               }
 
+              // DuckMaps fork only: our own terrain endpoint's honest signal for "this tile is
+              // the flat sea-level filler, not real relief" - see response.hpp's own comment on
+              // Response::unbuiltGround for why this is the header this fork reads rather than
+              // guessing from the tile bytes.
+              NSString *terrainCache = [headers objectForKey:@"X-Terrain-Cache"];
+              if (terrainCache) {
+                response.unbuiltGround = [terrainCache isEqualToString:@"sea-level"] ||
+                                          [terrainCache isEqualToString:@"above-maxzoom"];
+              }
+
               if (responseCode == 200 || responseCode == 206) {
                 response.data =
                     std::make_shared<std::string>((const char *)[data bytes], [data length]);

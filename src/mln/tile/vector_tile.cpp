@@ -25,7 +25,8 @@ void VectorTile::setUpdateParameters(const TileUpdateParameters& params) {
     loader->setUpdateParameters(params);
 }
 
-void VectorTile::setMetadata(std::optional<Timestamp> modified_, std::optional<Timestamp> expires_) {
+void VectorTile::setMetadata(std::optional<Timestamp> modified_, std::optional<Timestamp> expires_,
+                             bool /* unbuiltGround, unused - see header comment */) {
     modified = std::move(modified_);
     expires = std::move(expires_);
 }

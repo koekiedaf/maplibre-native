@@ -70,8 +70,19 @@ public:
     void setUpdateParameters(const TileUpdateParameters&) override;
 
     void setError(std::exception_ptr);
-    void setMetadata(std::optional<Timestamp> modified, std::optional<Timestamp> expires);
+    // DuckMaps fork only: `unbuiltGround` carries Response::unbuiltGround (see that header's own
+    // comment) - true when our terrain endpoint answered this exact tile with the flat sea-level
+    // filler rather than real archive relief. Defaulted so RasterTile/VectorTile, which share this
+    // call site in tile_loader_impl.hpp's templated TileLoader<T>::loadedData, need not know about
+    // a parameter only this tile kind acts on.
+    void setMetadata(std::optional<Timestamp> modified, std::optional<Timestamp> expires,
+                     bool unbuiltGround = false);
     void setData(const std::shared_ptr<const std::string>& data);
+
+    // DuckMaps fork only: read by RenderTerrain when it caches this tile's decoded DEM texture, so
+    // the slope-shading layer can tell "no honest relief here" (unbuilt) apart from "real relief
+    // that happens to measure flat" - see render_terrain.hpp's DEMTextureEntry/TerrainData.
+    bool isUnbuiltGround() const { return unbuiltGround; }
 
     bool layerPropertiesUpdated(const Immutable<style::LayerProperties>& layerProperties) override;
 
@@ -106,6 +117,9 @@ private:
     std::shared_ptr<HillshadeBucket> bucket;
 
     bool obsolete = false;
+
+    // DuckMaps fork only - see isUnbuiltGround() above.
+    bool unbuiltGround = false;
 };
 
 } // namespace mln

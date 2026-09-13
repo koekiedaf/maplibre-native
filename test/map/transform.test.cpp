@@ -1380,6 +1380,7 @@ TEST(Transform, FoundationFlightLookaheadAndClimbAreDirectionIndependentAndBound
     EXPECT_NEAR(3.75 / 200.0,
                 foundationFlightSpeedLimitedFraction(200.0, 80.0, 0.1),
                 1e-12);
+    EXPECT_DOUBLE_EQ(1.0, foundationFlightSpeedLimitedFraction(0.0, 80.0, 0.1));
 
     const std::vector<FoundationFlightTerrainSample> flatGrid{
         {0.0, 900.0}, {0.01, 900.0}, {1.0, 900.0}};

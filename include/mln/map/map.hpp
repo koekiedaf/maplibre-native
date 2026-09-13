@@ -246,7 +246,8 @@ inline double foundationFlightLookahead(double speedMetersPerSecond) {
 inline double foundationFlightSpeedLimitedFraction(double pathMeters,
                                                    double speedMetersPerSecond,
                                                    double elapsedSeconds) {
-    if (!std::isfinite(pathMeters) || !std::isfinite(speedMetersPerSecond) || pathMeters <= 1e-9) return 0.0;
+    if (!std::isfinite(pathMeters) || !std::isfinite(speedMetersPerSecond)) return 0.0;
+    if (pathMeters <= 1e-9) return 1.0;
     if (std::abs(speedMetersPerSecond) <= foundationFlightMaximumHorizontalSpeedMetersPerSecond) return 1.0;
     const double allowed = foundationFlightMaximumHorizontalSpeedMetersPerSecond *
                            std::clamp(elapsedSeconds, 0.0, 0.50);

@@ -409,7 +409,8 @@ void Map::Impl::onTerrainFlightElevationChanged(std::optional<double> elevationM
                                                              intent->requestedDistanceMeters,
                                                              foundationFlightPinchObstacleDistance);
         const double speedLimitedPathMeters = intent->pinch
-            ? std::abs(intent->requestedDistanceMeters)
+            ? std::abs(foundationFlightRayHorizontalDistance(intent->requestedDistanceMeters,
+                                                             intent->rayPitchDegrees))
             : foundationFlightPathMeters;
         const double speedLimit = foundationFlightSpeedLimitedFraction(speedLimitedPathMeters,
                                                                        intent->speedMetersPerSecond,

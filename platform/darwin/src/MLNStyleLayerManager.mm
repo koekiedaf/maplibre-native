@@ -17,6 +17,7 @@
 
 #include <mln/layermanager/terrain_line_layer_factory.hpp>
 #include <mln/layermanager/terrain_contour_layer_factory.hpp>
+#include <mln/layermanager/slope_shading_layer_factory.hpp>
 
 #include <vector>
 
@@ -95,6 +96,17 @@ LayerManagerDarwin::LayerManagerDarwin() {
   // peer class yet, style JSON parses and renders terrain-contour but Swift/ObjC cannot find or
   // mutate the layer through MLNStyle yet.
   addLayerTypeCoreOnly(std::make_unique<TerrainContourLayerFactory>());
+
+  // DuckMaps fork only, task 2.6: same reasoning as terrain-contour immediately above - no
+  // Objective-C/Swift peer class, core-only registration. This (platform/darwin's
+  // MLNStyleLayerManager, not platform/default's LayerManagerDefault - see
+  // platform/default/BUILD.bazel's own select(), Linux-only) is the ACTUAL layer-type registry
+  // every Darwin build (iOS, macOS, the iOS Simulator) uses; registering only in
+  // platform/default/src/mln/layermanager/layer_manager.cpp (as this task first did) compiles
+  // clean but never runs on Darwin - the symptom was "Unsupported layer type! Null factory for
+  // type: slope-shading" from a real device log despite the engine linking without error,
+  // which is how this was found (development/app-bench/journal.md, task 2.6).
+  addLayerTypeCoreOnly(std::make_unique<SlopeShadingLayerFactory>());
 }
 
 LayerManagerDarwin::~LayerManagerDarwin() = default;

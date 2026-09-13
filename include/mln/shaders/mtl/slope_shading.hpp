@@ -201,10 +201,12 @@ FragmentOut fragment fragmentMain(FragmentStage in [[stage_in]],
     const float dzdE = (eR - eL) * unexaggerate / span;
     const float dzdN = (eN - eS) * unexaggerate / span;
     const float g = sqrt(dzdE * dzdE + dzdN * dzdN);
-    const float slopeDeg = degrees(atan(g));
+    // MSL has no degrees()/radians() (GLSL-only builtins) - converted by hand.
+    const float RAD_TO_DEG = 57.29577951308232;
+    const float slopeDeg = atan(g) * RAD_TO_DEG;
     // Compass bearing of the DOWNHILL direction, 0 at north, clockwise - contours3d.js's own
     // aspectDeg.
-    float aspectDeg = g > 1e-6 ? degrees(atan2(-dzdE, -dzdN)) : 0.0;
+    float aspectDeg = g > 1e-6 ? atan2(-dzdE, -dzdN) * RAD_TO_DEG : 0.0;
     if (aspectDeg < 0.0) {
         aspectDeg += 360.0;
     }

@@ -14,8 +14,9 @@ bool SlopeShadingLayer::Impl::hasLayoutDifference(const Layer::Impl&) const {
     return false;
 }
 
-void SlopeShadingLayer::Impl::stringifyLayout(rapidjson::Writer<rapidjson::StringBuffer>&) const {
-}
+// stringifyLayout is deliberately NOT defined here - see this class's own header comment for
+// why: slope_shading_layer.cpp (generated) already defines it, and a second definition here
+// would be an ODR violation.
 
 } // namespace style
 } // namespace mln

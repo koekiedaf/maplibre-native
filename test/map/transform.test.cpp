@@ -1381,6 +1381,12 @@ TEST(Transform, FoundationFlightLookaheadAndClimbAreDirectionIndependentAndBound
                 foundationFlightSpeedLimitedFraction(200.0, 80.0, 0.1),
                 1e-12);
 
+    const std::vector<FoundationFlightTerrainSample> flatGrid{
+        {0.0, 900.0}, {0.01, 900.0}, {1.0, 900.0}};
+    const auto subGridCommit = foundationFlightSafeTrajectory(
+        true, 1000.0, 1000.0, 50.0, 0.005, flatGrid, 0.0, 0.1);
+    EXPECT_DOUBLE_EQ(0.005, subGridCommit.acceptedFraction);
+
     const std::vector<FoundationFlightTerrainSample> farHill{
         {0.0, 900.0}, {0.25, 900.0}, {0.75, 1100.0}, {1.0, 1100.0}};
     const auto earlyClimb = foundationFlightSafeTrajectory(

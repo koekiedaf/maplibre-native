@@ -446,6 +446,10 @@
 
   XCTAssertEqualWithAccuracy(mln::foundationFlightSpeedLimitedFraction(200.0, 80.0, 0.1),
                              3.75 / 200.0, 1e-12);
+  const std::vector<Sample> flatGrid{{0.0, 900.0}, {0.01, 900.0}, {1.0, 900.0}};
+  const auto subGridCommit = mln::foundationFlightSafeTrajectory(
+      true, 1000.0, 1000.0, 50.0, 0.005, flatGrid, 0.0, 0.1);
+  XCTAssertEqualWithAccuracy(subGridCommit.acceptedFraction, 0.005, 1e-12);
 }
 
 - (void)testFoundationCommitAppliesSignedEyeAltitudeAndPreservesOrientation {

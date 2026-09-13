@@ -166,8 +166,13 @@ inline FoundationFlightTrajectoryResult foundationFlightSafeTrajectory(
         if (!std::isfinite(sample.pathFraction) || !std::isfinite(sample.elevationMeters)) {
             return {0.0, currentEyeMSL, 0.0, 0.0, 0.0, FoundationFlightStopReason::UnknownDEM};
         }
-        if (sample.pathFraction < -1e-9 || sample.pathFraction > limit + 1e-9) continue;
-        const double fraction = std::clamp(sample.pathFraction, 0.0, limit);
+        if (sample.pathFraction < -1e-9) continue;
+        // A velocity-limited endpoint can fall between the fixed 5m stations.
+        // Validate it conservatively with the first decoded station beyond
+        // the endpoint, then stop before consuming farther lookahead.
+        const bool bracketsLimit = sample.pathFraction > limit + 1e-9;
+        if (bracketsLimit && accepted + 1e-9 >= limit) break;
+        const double fraction = bracketsLimit ? limit : std::clamp(sample.pathFraction, 0.0, limit);
         const double rayEye = currentEyeMSL + (requestedTargetEyeMSL - currentEyeMSL) * fraction;
         const double candidateBoost = std::max(requiredBoost,
             sample.elevationMeters + clearanceMeters - rayEye);
@@ -183,6 +188,7 @@ inline FoundationFlightTrajectoryResult foundationFlightSafeTrajectory(
         requiredBoost = std::max(0.0, candidateBoost);
         appliedBoost = std::max(appliedBoost, requiredBoost);
         accepted = fraction;
+        if (bracketsLimit) break;
     }
     // The renderer always includes a station at the commit boundary. If it
     // did not survive the loop, never extrapolate beyond the last proven one.

@@ -236,7 +236,7 @@ TEST(OfflineDatabase, TEST_REQUIRES_WRITE(SchemaVersion)) {
         OfflineDatabase db(filename, fixture::tileServerOptions);
     }
 
-    EXPECT_EQ(6, databaseUserVersion(filename));
+    EXPECT_EQ(7, databaseUserVersion(filename));
 
     OfflineDatabase db(filename, fixture::tileServerOptions);
     // Now try inserting and reading back to make sure we have a valid database.
@@ -1481,7 +1481,7 @@ TEST(OfflineDatabase, MigrateFromV2Schema) {
         }
     }
 
-    EXPECT_EQ(6, databaseUserVersion(filename));
+    EXPECT_EQ(7, databaseUserVersion(filename));
     EXPECT_LT(databasePageCount(filename), databasePageCount("test/fixtures/offline_database/v2.db"));
 
     EXPECT_EQ(0u, log.uncheckedCount());
@@ -1503,7 +1503,7 @@ TEST(OfflineDatabase, MigrateFromV3Schema) {
         }
     }
 
-    EXPECT_EQ(6, databaseUserVersion(filename));
+    EXPECT_EQ(7, databaseUserVersion(filename));
 
     EXPECT_EQ(0u, log.uncheckedCount());
 }
@@ -1525,7 +1525,7 @@ TEST(OfflineDatabase, MigrateFromV4Schema) {
         }
     }
 
-    EXPECT_EQ(6, databaseUserVersion(filename));
+    EXPECT_EQ(7, databaseUserVersion(filename));
 
     // Journal mode should be DELETE after migration to v5.
     EXPECT_EQ("delete", databaseJournalMode(filename));
@@ -1552,7 +1552,7 @@ TEST(OfflineDatabase, MigrateFromV5Schema) {
         }
     }
 
-    EXPECT_EQ(6, databaseUserVersion(filename));
+    EXPECT_EQ(7, databaseUserVersion(filename));
 
     EXPECT_EQ((std::vector<std::string>{"id",
                                         "url_template",
@@ -1566,11 +1566,21 @@ TEST(OfflineDatabase, MigrateFromV5Schema) {
                                         "data",
                                         "compressed",
                                         "accessed",
-                                        "must_revalidate"}),
+                                        "must_revalidate",
+                                        "unbuilt_ground"}),
               databaseTableColumns(filename, "tiles"));
     EXPECT_EQ(
-        (std::vector<std::string>{
-            "id", "url", "kind", "expires", "modified", "etag", "data", "compressed", "accessed", "must_revalidate"}),
+        (std::vector<std::string>{"id",
+                                  "url",
+                                  "kind",
+                                  "expires",
+                                  "modified",
+                                  "etag",
+                                  "data",
+                                  "compressed",
+                                  "accessed",
+                                  "must_revalidate",
+                                  "unbuilt_ground"}),
         databaseTableColumns(filename, "resources"));
 
     EXPECT_EQ(0u, log.uncheckedCount());
@@ -1609,7 +1619,7 @@ TEST(OfflineDatabase, DowngradeSchema) {
         db.setMaximumAmbientCacheSize(0);
     }
 
-    EXPECT_EQ(6, databaseUserVersion(filename));
+    EXPECT_EQ(7, databaseUserVersion(filename));
 
     EXPECT_EQ((std::vector<std::string>{"id",
                                         "url_template",
@@ -1623,11 +1633,21 @@ TEST(OfflineDatabase, DowngradeSchema) {
                                         "data",
                                         "compressed",
                                         "accessed",
-                                        "must_revalidate"}),
+                                        "must_revalidate",
+                                        "unbuilt_ground"}),
               databaseTableColumns(filename, "tiles"));
     EXPECT_EQ(
-        (std::vector<std::string>{
-            "id", "url", "kind", "expires", "modified", "etag", "data", "compressed", "accessed", "must_revalidate"}),
+        (std::vector<std::string>{"id",
+                                  "url",
+                                  "kind",
+                                  "expires",
+                                  "modified",
+                                  "etag",
+                                  "data",
+                                  "compressed",
+                                  "accessed",
+                                  "must_revalidate",
+                                  "unbuilt_ground"}),
         databaseTableColumns(filename, "resources"));
 
     EXPECT_EQ(

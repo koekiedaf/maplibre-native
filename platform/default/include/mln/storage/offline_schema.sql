@@ -39,6 +39,14 @@ CREATE TABLE resources (
 
   must_revalidate INTEGER NOT NULL DEFAULT 0,      -- When set to true, the resource will not be used unless it gets
                                                    -- first revalidated by the server.
+
+  unbuilt_ground INTEGER NOT NULL DEFAULT 0,       -- DuckMaps fork only. Response::unbuiltGround persisted: true
+                                                   -- when this resource was served from our terrain endpoint's flat
+                                                   -- sea-level filler rather than real archive data (X-Terrain-Cache:
+                                                   -- sea-level/above-maxzoom). Not meaningful for a non-tile
+                                                   -- resource, which is always stored 0 here and ignored on read,
+                                                   -- same as every other tile-only field would be if this table
+                                                   -- carried one.
   UNIQUE (url)
 );
 
@@ -84,6 +92,16 @@ CREATE TABLE tiles (
 
   must_revalidate INTEGER NOT NULL DEFAULT 0,      -- When set to true, the tile will not be used unless it gets
                                                    -- first revalidated by the server.
+
+  unbuilt_ground INTEGER NOT NULL DEFAULT 0,       -- DuckMaps fork only. Response::unbuiltGround persisted: true
+                                                   -- when this tile was served from our terrain endpoint's flat
+                                                   -- sea-level filler rather than real archive data
+                                                   -- (X-Terrain-Cache: sea-level/above-maxzoom), false for real
+                                                   -- relief and for every other server's tiles. Without this column
+                                                   -- a raster-DEM tile cached before this column existed, or by a
+                                                   -- build predating it, defaulted to 0 (unbuilt:false) and kept
+                                                   -- answering "this is real ground" for up to the tile's own
+                                                   -- Cache-Control max-age - see migrateToVersion7's own comment.
   UNIQUE (url_template, pixel_ratio, z, x, y)
 );
 

@@ -78,6 +78,9 @@ void OfflineDatabase::initialize() {
             migrateToVersion6();
             // fall through
         case 6:
+            migrateToVersion7();
+            // fall through
+        case 7:
             // Happy path; we're done
             return;
         default:
@@ -184,7 +187,7 @@ void OfflineDatabase::createSchema() {
     db->exec("PRAGMA synchronous = FULL");
     mapbox::sqlite::Transaction transaction(*db);
     db->exec(offlineDatabaseSchema);
-    db->exec("PRAGMA user_version = 6");
+    db->exec("PRAGMA user_version = 7");
     transaction.commit();
 }
 
@@ -223,6 +226,61 @@ void OfflineDatabase::migrateToVersion6() {
         "ALTER TABLE tiles ADD COLUMN must_revalidate INTEGER NOT NULL DEFAULT "
         "0");
     db->exec("PRAGMA user_version = 6");
+    transaction.commit();
+}
+
+// DuckMaps fork only. Response::unbuiltGround (X-Terrain-Cache: sea-level/above-maxzoom on our own
+// terrain endpoint, see response.hpp) was carried through the fetch and render path in engine
+// dc27b9ba3788 but never given anywhere to live in the ambient/offline cache, so a raster-DEM tile
+// cached before that fix - or by any build predating this migration - kept answering
+// unbuilt_ground = 0 (the column's own DEFAULT, and getTile()/getResource()'s reading of an absent
+// column before this migration ran) from that cache entry, silently, until its Cache-Control
+// max-age expired or the whole database was wiped. That is wrong in the dangerous direction for a
+// layer that exists to say which ground is too steep to trust: unbuilt (no real relief data) must
+// never be reported as flat and safe just because the cache is old.
+//
+// TWO THINGS, not one, because a column alone does not close the gap: adding unbuilt_ground with
+// DEFAULT 0 gives every ROW THAT ALREADY EXISTS the same wrong answer the bug always gave it
+// (0 = "not unbuilt"), forever, until that row's own Cache-Control expiry (24h, terrain.py's own
+// max-age) happens to pass - a tile cached the day before this ships would still read wrong for
+// nearly a full day after. So this migration ALSO invalidates (expires = 0, must_revalidate = 1,
+// the exact mechanism invalidateAmbientCache() below already uses) every pre-existing AMBIENT
+// terrain tile - url_template LIKE '%/terrain/%', matching dem.js's DemSource URL and excluding
+// anything in region_tiles - forcing the next read to revalidate rather than trust a value that
+// predates the column that carries it. Scoped three ways, deliberately: (1) terrain tiles only,
+// not every cached resource - vector tiles, styles, sprites, imagery are untouched by this column
+// and re-fetching them would be pure cost for zero correctness gain; (2) AMBIENT tiles only, not
+// pack tiles under region_tiles - an offline pack is the one thing this app promises still works
+// with no network at all, and forcing its terrain tiles to revalidate would break that promise for
+// exactly the tiles a person downloaded a pack to avoid re-fetching; (3) revalidation, not
+// deletion - terrain.py sends no ETag/Last-Modified (confirmed by reading it), so "revalidate" for
+// this endpoint always means a full re-fetch on next use, but the row and its old bytes stay
+// usable meanwhile if `isUsable()` is still willing (mustRevalidate forces it unusable here, same
+// as invalidateAmbientCache's own effect), so a launch with no network is never left with literally
+// no tile to draw. A pack tile that WAS built before this fix ships with the same latent gap; that
+// is real ground truth for offline packs, tracked as its own follow-up (packs are a
+// separately-shipped, separately-verified feature - see the workbench skill's own Offline planning
+// section) rather than folded into this task's ambient-cache fix.
+void OfflineDatabase::migrateToVersion7() {
+    assert(db);
+    checkFlags();
+
+    mapbox::sqlite::Transaction transaction(*db);
+    db->exec(
+        "ALTER TABLE resources ADD COLUMN unbuilt_ground INTEGER NOT NULL "
+        "DEFAULT 0");
+    db->exec(
+        "ALTER TABLE tiles ADD COLUMN unbuilt_ground INTEGER NOT NULL DEFAULT "
+        "0");
+    // clang-format off
+    db->exec(
+        "UPDATE tiles "
+        "SET expires = 0, must_revalidate = 1 "
+        "WHERE url_template LIKE '%/terrain/%' "
+        "  AND id NOT IN (SELECT tile_id FROM region_tiles)"
+    );
+    // clang-format on
+    db->exec("PRAGMA user_version = 7");
     transaction.commit();
 }
 
@@ -380,8 +438,8 @@ std::optional<std::pair<Response, uint64_t>> OfflineDatabase::getResource(const 
 
     // clang-format off
     mapbox::sqlite::Query query{ getStatement(
-        //        0      1            2            3       4      5
-        "SELECT etag, expires, must_revalidate, modified, data, compressed "
+        //        0      1            2            3       4      5           6
+        "SELECT etag, expires, must_revalidate, modified, data, compressed, unbuilt_ground "
         "FROM resources "
         "WHERE url = ?") };
     // clang-format on
@@ -399,6 +457,8 @@ std::optional<std::pair<Response, uint64_t>> OfflineDatabase::getResource(const 
     response.expires = query.get<std::optional<Timestamp>>(1);
     response.mustRevalidate = query.get<bool>(2);
     response.modified = query.get<std::optional<Timestamp>>(3);
+    // DuckMaps fork only, see offline_schema.sql's own comment on this column.
+    response.unbuiltGround = query.get<bool>(6);
 
     auto data = query.get<std::optional<std::string>>(4);
     if (!data) {
@@ -459,7 +519,8 @@ bool OfflineDatabase::putResource(const Resource& resource,
         "    modified        = ?5, "
         "    accessed        = ?6, "
         "    data            = ?7, "
-        "    compressed      = ?8 "
+        "    compressed      = ?8, "
+        "    unbuilt_ground  = ?10 "
         "WHERE url           = ?9 ") };
     // clang-format on
 
@@ -470,6 +531,8 @@ bool OfflineDatabase::putResource(const Resource& resource,
     updateQuery.bind(5, response.modified);
     updateQuery.bind(6, util::now());
     updateQuery.bind(9, cacheKey(resource));
+    // DuckMaps fork only, see offline_schema.sql's own comment on this column.
+    updateQuery.bind(10, response.unbuiltGround);
 
     if (response.noContent) {
         updateQuery.bind(7, nullptr);
@@ -486,8 +549,8 @@ bool OfflineDatabase::putResource(const Resource& resource,
 
     // clang-format off
     mapbox::sqlite::Query insertQuery{ getStatement(
-        "INSERT INTO resources (url, kind, etag, expires, must_revalidate, modified, accessed, data, compressed) "
-        "VALUES                (?1,  ?2,   ?3,   ?4,      ?5,              ?6,       ?7,       ?8,   ?9) ") };
+        "INSERT INTO resources (url, kind, etag, expires, must_revalidate, modified, accessed, data, compressed, unbuilt_ground) "
+        "VALUES                (?1,  ?2,   ?3,   ?4,      ?5,              ?6,       ?7,       ?8,   ?9,         ?10) ") };
     // clang-format on
 
     insertQuery.bind(1, cacheKey(resource));
@@ -497,6 +560,8 @@ bool OfflineDatabase::putResource(const Resource& resource,
     insertQuery.bind(5, response.mustRevalidate);
     insertQuery.bind(6, response.modified);
     insertQuery.bind(7, util::now());
+    // DuckMaps fork only, see offline_schema.sql's own comment on this column.
+    insertQuery.bind(10, response.unbuiltGround);
 
     if (response.noContent) {
         insertQuery.bind(8, nullptr);
@@ -546,8 +611,8 @@ std::optional<std::pair<Response, uint64_t>> OfflineDatabase::getTile(const Reso
 
     // clang-format off
     mapbox::sqlite::Query query{ getStatement(
-        //        0      1           2,            3,      4,      5
-        "SELECT etag, expires, must_revalidate, modified, data, compressed "
+        //        0      1           2,            3,      4,      5           6
+        "SELECT etag, expires, must_revalidate, modified, data, compressed, unbuilt_ground "
         "FROM tiles "
         "WHERE url_template = ?1 "
         "  AND pixel_ratio  = ?2 "
@@ -573,6 +638,10 @@ std::optional<std::pair<Response, uint64_t>> OfflineDatabase::getTile(const Reso
     response.expires = query.get<std::optional<Timestamp>>(1);
     response.mustRevalidate = query.get<bool>(2);
     response.modified = query.get<std::optional<Timestamp>>(3);
+    // DuckMaps fork only, see offline_schema.sql's own comment on this column - this is the exact
+    // fix for the gap engine dc27b9ba3788 left open: a raster-DEM tile's unbuilt-ness now survives
+    // being read back out of the ambient/offline cache rather than defaulting to "real ground".
+    response.unbuiltGround = query.get<bool>(6);
 
     std::optional<std::string> data = query.get<std::optional<std::string>>(4);
     if (!data) {
@@ -656,7 +725,8 @@ bool OfflineDatabase::putTile(const Resource::TileData& tile,
         "    must_revalidate = ?4, "
         "    accessed        = ?5, "
         "    data            = ?6, "
-        "    compressed      = ?7 "
+        "    compressed      = ?7, "
+        "    unbuilt_ground  = ?13 "
         "WHERE url_template  = ?8 "
         "  AND pixel_ratio   = ?9 "
         "  AND x             = ?10 "
@@ -674,6 +744,8 @@ bool OfflineDatabase::putTile(const Resource::TileData& tile,
     updateQuery.bind(10, tile.x);
     updateQuery.bind(11, tile.y);
     updateQuery.bind(12, tile.z);
+    // DuckMaps fork only, see offline_schema.sql's own comment on this column.
+    updateQuery.bind(13, response.unbuiltGround);
 
     if (response.noContent) {
         updateQuery.bind(6, nullptr);
@@ -690,8 +762,8 @@ bool OfflineDatabase::putTile(const Resource::TileData& tile,
 
     // clang-format off
     mapbox::sqlite::Query insertQuery{ getStatement(
-        "INSERT INTO tiles (url_template, pixel_ratio, x,  y,  z,  modified, must_revalidate, etag, expires, accessed,  data, compressed) "
-        "VALUES            (?1,           ?2,          ?3, ?4, ?5, ?6,       ?7,              ?8,   ?9,      ?10,       ?11,  ?12)") };
+        "INSERT INTO tiles (url_template, pixel_ratio, x,  y,  z,  modified, must_revalidate, etag, expires, accessed,  data, compressed, unbuilt_ground) "
+        "VALUES            (?1,           ?2,          ?3, ?4, ?5, ?6,       ?7,              ?8,   ?9,      ?10,       ?11,  ?12,        ?13)") };
     // clang-format on
 
     insertQuery.bind(1, tile.urlTemplate);
@@ -704,6 +776,8 @@ bool OfflineDatabase::putTile(const Resource::TileData& tile,
     insertQuery.bind(8, response.etag);
     insertQuery.bind(9, response.expires);
     insertQuery.bind(10, util::now());
+    // DuckMaps fork only, see offline_schema.sql's own comment on this column.
+    insertQuery.bind(13, response.unbuiltGround);
 
     if (response.noContent) {
         insertQuery.bind(11, nullptr);

@@ -107,6 +107,21 @@ enum {
     terrainContourLayerSSBOCount = drawableReservedUBOCount
 };
 
+// slope-shading (DuckMaps fork, task 2.6): slope/aspect area fill computed per-fragment from the
+// terrain DEM, drawn over RenderTerrain's own mesh, BEFORE terrain-contour so the lines sit on
+// top of the fill - ported from the web engine's contours3d.js drawSlope()/FS_SLOPE (see
+// container/server/app/map/assets/contours3d.js ~336-560). Same vertex-only/fragment-only UBO
+// split as terrain-contour and the same reason: the fragment stage needs its own copy of dem_*
+// because idDrawableReservedVertexOnlyUBO is bound to the vertex stage only. Unlike
+// terrain-contour this layer has no screen-space-referenced pixel width (an area fill, not a
+// line), so it carries no reference_w/occlusion machinery - that half of terrain-contour's own
+// plumbing does not apply here.
+enum {
+    idSlopeShadingDrawableUBO = idDrawableReservedVertexOnlyUBO,    // SSBO
+    idSlopeShadingTilePropsUBO = idDrawableReservedFragmentOnlyUBO, // SSBO
+    slopeShadingLayerSSBOCount = drawableReservedUBOCount
+};
+
 // layer UBOs
 static constexpr uint32_t layerUBOStartId = std::max({static_cast<uint32_t>(drawableReservedUBOCount),
                                                       static_cast<uint32_t>(backgroundLayerSSBOCount),
@@ -121,7 +136,8 @@ static constexpr uint32_t layerUBOStartId = std::max({static_cast<uint32_t>(draw
                                                       static_cast<uint32_t>(symbolLayerSSBOCount),
                                                       static_cast<uint32_t>(terrainLayerSSBOCount),
                                                       static_cast<uint32_t>(terrainLineLayerSSBOCount),
-                                                      static_cast<uint32_t>(terrainContourLayerSSBOCount)});
+                                                      static_cast<uint32_t>(terrainContourLayerSSBOCount),
+                                                      static_cast<uint32_t>(slopeShadingLayerSSBOCount)});
 
 #if MLN_RENDER_BACKEND_VULKAN
 #define getEnumValue(packed, unpacked) unpacked
@@ -200,6 +216,11 @@ enum {
     terrainContourLayerUBOCount
 };
 
+enum {
+    idSlopeShadingEvaluatedPropsUBO = getEnumValue(slopeShadingLayerSSBOCount, layerUBOStartId),
+    slopeShadingLayerUBOCount
+};
+
 // drawable SSBOs
 
 static constexpr uint32_t drawableSSBOStartId = std::max({static_cast<uint32_t>(backgroundLayerUBOCount),
@@ -214,7 +235,8 @@ static constexpr uint32_t drawableSSBOStartId = std::max({static_cast<uint32_t>(
                                                           static_cast<uint32_t>(symbolLayerUBOCount),
                                                           static_cast<uint32_t>(terrainLayerUBOCount),
                                                           static_cast<uint32_t>(terrainLineLayerUBOCount),
-                                                          static_cast<uint32_t>(terrainContourLayerUBOCount)});
+                                                          static_cast<uint32_t>(terrainContourLayerUBOCount),
+                                                          static_cast<uint32_t>(slopeShadingLayerUBOCount)});
 
 enum {
 #if MLN_USE_FILL_EXTRUSION_INSTANCING
@@ -335,6 +357,10 @@ enum {
 
 enum {
     terrainContourUBOCount = getEnumValue(terrainContourLayerUBOCount, drawableUBOStartId)
+};
+
+enum {
+    slopeShadingUBOCount = getEnumValue(slopeShadingLayerUBOCount, drawableUBOStartId)
 };
 
 enum {
@@ -483,6 +509,14 @@ enum {
     terrainContourTextureCount
 };
 
+enum {
+    idSlopeShadingDEMTexture,
+    // The 256x256 slope/aspect lookup texture (RGBA8, nearest-sampled) - see
+    // slope_shading_layer_ubo.hpp for how it is built and bound.
+    idSlopeShadingLutTexture,
+    slopeShadingTextureCount
+};
+
 static constexpr uint32_t maxTextureCountPerShader = std::max({static_cast<uint32_t>(backgroundTextureCount),
                                                                static_cast<uint32_t>(circleTextureCount),
                                                                static_cast<uint32_t>(clippingMaskTextureCount),
@@ -501,7 +535,8 @@ static constexpr uint32_t maxTextureCountPerShader = std::max({static_cast<uint3
                                                                static_cast<uint32_t>(symbolTextureCount),
                                                                static_cast<uint32_t>(terrainTextureCount),
                                                                static_cast<uint32_t>(terrainLineTextureCount),
-                                                               static_cast<uint32_t>(terrainContourTextureCount)});
+                                                               static_cast<uint32_t>(terrainContourTextureCount),
+                                                               static_cast<uint32_t>(slopeShadingTextureCount)});
 
 // Vertex attribute defines
 enum {
@@ -693,6 +728,11 @@ enum {
     terrainContourVertexAttributeCount
 };
 
+enum {
+    idSlopeShadingPosVertexAttribute,
+    slopeShadingVertexAttributeCount
+};
+
 // DuckMaps fork only, task T3: the style spec's `sky` root property. SkyShader is a raw,
 // once-per-frame full-screen draw (Context::renderSky, mirroring ClippingMaskProgram's own
 // Context::renderTileClippingMasks - see mtl/sky.hpp's header comment), not a per-tile drawable,
@@ -739,6 +779,7 @@ static constexpr uint32_t maxAttributeCountPerShader = std::max({
     static_cast<uint32_t>(terrainVertexAttributeCount),
     static_cast<uint32_t>(terrainLineVertexAttributeCount),
     static_cast<uint32_t>(terrainContourVertexAttributeCount),
+    static_cast<uint32_t>(slopeShadingVertexAttributeCount),
     static_cast<uint32_t>(wideVectorAttributeCount),
     static_cast<uint32_t>(wideVectorInstanceAttributeCount),
     static_cast<uint32_t>(skyVertexAttributeCount),

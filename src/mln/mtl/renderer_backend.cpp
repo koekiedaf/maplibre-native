@@ -33,6 +33,7 @@
 #include <mln/shaders/mtl/terrain_depth.hpp>
 #include <mln/shaders/mtl/terrain_line.hpp>
 #include <mln/shaders/mtl/terrain_contour.hpp>
+#include <mln/shaders/mtl/slope_shading.hpp>
 #include <mln/shaders/mtl/widevector.hpp>
 #include <mln/shaders/mtl/sky.hpp>
 
@@ -128,6 +129,7 @@ void RendererBackend::initShaders(gfx::ShaderRegistry& shaders, const ProgramPar
                   shaders::BuiltIn::TerrainDepthShader,
                   shaders::BuiltIn::TerrainLineShader,
                   shaders::BuiltIn::TerrainContourShader,
+                  shaders::BuiltIn::SlopeShadingShader,
                   shaders::BuiltIn::WideVectorShader,
                   shaders::BuiltIn::SkyShader>(shaders, programParameters);
 }

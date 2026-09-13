@@ -41,5 +41,7 @@
 #include <mln/shaders/gl/terrain_depth.hpp>
 #include <mln/shaders/gl/terrain_line.hpp>
 #include <mln/shaders/gl/terrain_contour.hpp>
+#include <mln/shaders/gl/slope_shading.hpp>
 #include <mln/shaders/gl/wide_vector.hpp>
+#include <mln/shaders/gl/sky.hpp>
 #endif

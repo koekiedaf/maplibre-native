@@ -46,6 +46,7 @@ MBGL_DEFINE_ENUM(BuiltIn, {
 {BuiltIn::TerrainDepthShader, "TerrainDepthShader"},
 {BuiltIn::TerrainLineShader, "TerrainLineShader"},
 {BuiltIn::TerrainContourShader, "TerrainContourShader"},
+{BuiltIn::SlopeShadingShader, "SlopeShadingShader"},
 {BuiltIn::WideVectorShader, "WideVectorShader"},
 {BuiltIn::SkyShader, "SkyShader"}
 });

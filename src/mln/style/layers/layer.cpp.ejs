@@ -100,6 +100,9 @@ layerCapabilities['terrain-line']   = layerCapabilities['line'];
 // DuckMaps fork only, task 2.4a: terrain-contour has no source and no bucket/geometry of its
 // own (it reuses RenderTerrain's own mesh) - same capability shape as background.
 layerCapabilities['terrain-contour'] = defaults.finalize();
+// DuckMaps fork only, task 2.6: slope-shading is the same shape as terrain-contour - no source,
+// no bucket/geometry of its own, it also reuses RenderTerrain's own mesh.
+layerCapabilities['slope-shading'] = defaults.finalize();
 layerCapabilities['heatmap']        = defaults.require('Source')
                                               .require('Pass3D')
                                               .set('TileKind', 'Geometry')
@@ -127,7 +130,7 @@ const LayerTypeInfo* <%- camelize(type) %>Layer::Impl::staticTypeInfo() noexcept
     return &typeInfo;
 }
 
-<% if ((type === 'background') || (type === 'location-indicator') || (type === 'terrain-contour')) { -%>
+<% if ((type === 'background') || (type === 'location-indicator') || (type === 'terrain-contour') || (type === 'slope-shading')) { -%>
 <%- camelize(type) %>Layer::<%- camelize(type) %>Layer(const std::string& layerID)
     : Layer(makeMutable<Impl>(layerID, std::string())) {
 }

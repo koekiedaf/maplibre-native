@@ -14,6 +14,7 @@
 #include <mln/layermanager/symbol_layer_factory.hpp>
 #include <mln/layermanager/terrain_line_layer_factory.hpp>
 #include <mln/layermanager/terrain_contour_layer_factory.hpp>
+#include <mln/layermanager/slope_shading_layer_factory.hpp>
 #include <mln/util/logging.hpp>
 #include <mln/layermanager/custom_drawable_layer_factory.hpp>
 
@@ -99,6 +100,10 @@ LayerManagerDefault::LayerManagerDefault() {
 #if !defined(MBGL_LAYER_TERRAIN_CONTOUR_DISABLE_ALL)
     // DuckMaps fork only, task 2.4a - see docs/plans/2026-09-11-engine-layer-plumbing.md.
     addLayerType(std::make_unique<TerrainContourLayerFactory>());
+#endif
+#if !defined(MBGL_LAYER_SLOPE_SHADING_DISABLE_ALL)
+    // DuckMaps fork only, task 2.6 - slope/aspect area fill, same shape as terrain-contour.
+    addLayerType(std::make_unique<SlopeShadingLayerFactory>());
 #endif
 }
 

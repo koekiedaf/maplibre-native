@@ -259,6 +259,7 @@ list(APPEND INCLUDE_FILES
     ${PROJECT_SOURCE_DIR}/include/mln/layermanager/color_relief_layer_factory.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/layermanager/terrain_line_layer_factory.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/layermanager/terrain_contour_layer_factory.hpp
+    ${PROJECT_SOURCE_DIR}/include/mln/layermanager/slope_shading_layer_factory.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/layermanager/layer_factory.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/layermanager/layer_manager.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/layermanager/line_layer_factory.hpp
@@ -376,6 +377,7 @@ list(APPEND INCLUDE_FILES
     ${PROJECT_SOURCE_DIR}/include/mln/style/layers/color_relief_layer.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/style/layers/terrain_line_layer.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/style/layers/terrain_contour_layer.hpp
+    ${PROJECT_SOURCE_DIR}/include/mln/style/layers/slope_shading_layer.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/style/layers/line_layer.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/style/layers/location_indicator_layer.hpp
     ${PROJECT_SOURCE_DIR}/include/mln/style/layers/raster_layer.hpp
@@ -522,6 +524,7 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/layermanager/color_relief_layer_factory.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/layermanager/terrain_line_layer_factory.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/layermanager/terrain_contour_layer_factory.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/layermanager/slope_shading_layer_factory.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/layermanager/layer_factory.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/layermanager/layer_manager.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/layermanager/line_layer_factory.cpp
@@ -618,6 +621,10 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/render_terrain_contour_layer.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/terrain_contour_layer_tweaker.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/terrain_contour_layer_tweaker.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/render_slope_shading_layer.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/render_slope_shading_layer.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/slope_shading_layer_tweaker.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/slope_shading_layer_tweaker.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/render_line_layer.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/render_line_layer.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/renderer/layers/render_raster_layer.cpp
@@ -826,6 +833,11 @@ list(APPEND SRC_FILES
     ${PROJECT_SOURCE_DIR}/src/mln/style/layers/terrain_contour_layer_impl.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/style/layers/terrain_contour_layer_properties.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/style/layers/terrain_contour_layer_properties.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/style/layers/slope_shading_layer.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/style/layers/slope_shading_layer_impl.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/style/layers/slope_shading_layer_impl.hpp
+    ${PROJECT_SOURCE_DIR}/src/mln/style/layers/slope_shading_layer_properties.cpp
+    ${PROJECT_SOURCE_DIR}/src/mln/style/layers/slope_shading_layer_properties.hpp
     ${PROJECT_SOURCE_DIR}/src/mln/style/layers/line_layer.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/style/layers/line_layer_impl.cpp
     ${PROJECT_SOURCE_DIR}/src/mln/style/layers/line_layer_impl.hpp

@@ -623,4 +623,80 @@ modifiedReferenceSpec["paint_terrain-contour"] = {
   }
 };
 
+// DuckMaps fork only, task 2.6: slope/aspect area fill, computed per-fragment from the same
+// terrain DEM terrain-contour reads, drawn over RenderTerrain's own mesh BEFORE terrain-contour
+// so the contour lines sit on top of the fill - ported from the web engine's contours3d.js
+// drawSlope()/FS_SLOPE (see container/server/app/map/assets/contours3d.js ~336-560 and
+// docs/plans/2026-09-11-engine-layer-plumbing.md for the plumbing this reuses). Like
+// terrain-contour, this layer has NO source and NO bucket/geometry of its own: it reuses
+// RenderTerrain::getMesh()'s shared vertex/index buffers directly.
+//
+// David chose three built-in band configurations and no editor, 9 September 2026 (contours3d.js's
+// own SLOPE_PRESETS comment): "avalanche" (the seven standard avalanche bands), "aspect" (a
+// sixteen-sector compass wheel) and "flat" (0-1 degree ground only). Which one is selected and
+// how transparent the fill is are the only two live dials - the band boundaries and colours
+// belong to the preset ITSELF, not to a tunable value, so they are ported engine-side exactly
+// like terrain-contour's own coverage()/density() formulas are, not read from style.py. Both
+// dials are still read from ONE definition, David's account tuning document (server key
+// map_tuning.slope, read into style_tokens() and emitted by native_lines.py) - see that module's
+// own comment for how "preset" (a string there) becomes this property's small integer id here.
+modifiedReferenceSpec.layer.type.values["slope-shading"] = {
+  "doc": "Slope/aspect area fill computed per-fragment from the terrain DEM, drawn in real 3D world space on the terrain surface, DuckMaps fork only."
+};
+
+modifiedReferenceSpec["layout_slope-shading"] = {
+  "visibility": {
+      "type": "enum",
+      "values": {
+        "visible": { "doc": "The layer is shown." },
+        "none": { "doc": "The layer is not shown." }
+      },
+      "default": "visible",
+      "doc": "Whether this layer is displayed.",
+      "property-type": "constant"
+  }
+};
+
+modifiedReferenceSpec["paint_slope-shading"] = {
+  "slope-shading-preset": {
+      "type": "number",
+      // 0 = avalanche, 1 = aspect, 2 = flat - SlopeShadingLayerTweaker::presetIndexToId(). A
+      // plain small-integer id rather than a style-spec "enum" (a string keyed to a real C++ enum
+      // type): the style-spec/engine plumbing for a first-class string enum PropertyValue reaches
+      // into several engine-wide conversion registries (types.hpp, conversion/constant.cpp,
+      // conversion/function.cpp, conversion/property_value.cpp) that no other DuckMaps-fork paint
+      // property has ever needed to touch, and is out of scope for making this layer draw - see
+      // development/app-bench/journal.md, task 2.6, for the record of that decision.
+      "default": 0,
+      "minimum": 0,
+      "maximum": 2,
+      "transition": false,
+      "doc": "Which built-in slope band configuration to draw: 0 avalanche, 1 aspect, 2 flat.",
+      "expression": {
+          "interpolated": false,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  },
+  "slope-shading-opacity": {
+      "type": "number",
+      // DuckMaps: the style spec requires a default, so this number appears here as well as in
+      // the one definition it comes from (DuckMaps' style.py SLOPE_* constants, served at
+      // /style-tokens.json and read by the web engine's contours3d.js and by the native style
+      // alike). It is a FALLBACK, not a second definition - the DuckMaps style always sets this
+      // property explicitly from David's saved tuning (map_tuning.slope.opacity), so this value
+      // is never the one that ships. Keep it equal to style.py's default if you touch either.
+      "default": 0.55,
+      "minimum": 0,
+      "maximum": 1,
+      "transition": true,
+      "doc": "Alpha multiplier for the slope/aspect fill, applied premultiplied like the contour layer.",
+      "expression": {
+          "interpolated": true,
+          "parameters": ["zoom"]
+      },
+      "property-type": "data-constant"
+  }
+};
+
 export default modifiedReferenceSpec;

@@ -356,7 +356,7 @@ void Map::Impl::onTerrainFlightAssessment(const TerrainFlightAssessment& assessm
     }
     if (assessment.intentSequence != 0) {
         foundationFlightTelemetry.lookaheadMeters = assessment.lookaheadMeters;
-        foundationFlightMinimumRayClearance = assessment.minimumRayClearanceMeters;
+        foundationFlightPinchObstacleDistance = assessment.pinchObstacleDistanceMeters;
         foundationFlightPathMeters = assessment.pathMeters;
         foundationFlightCommittableFraction = assessment.committableFraction;
         foundationFlightTerrainProfile = assessment.terrainProfile;
@@ -402,9 +402,16 @@ void Map::Impl::onTerrainFlightElevationChanged(std::optional<double> elevationM
         // Stand-off can shorten the prefix, but terrain/climb safety is then
         // evaluated against every station in that actual prefix. It never
         // derives travel from max-elevation climb ratios.
-        const auto pinchPolicy = foundationFlightPolicy(true, intent->pinch, 0.0, 0.0,
-                                                        elapsed, foundationFlightMinimumRayClearance);
-        const double requestedLimit = foundationFlightCommittableFraction * pinchPolicy.acceptedFraction;
+        const auto pinchPolicy = foundationFlightPinchPolicy(true,
+                                                             intent->pinch,
+                                                             intent->requestedDistanceMeters,
+                                                             foundationFlightPinchObstacleDistance);
+        const double speedLimit = foundationFlightSpeedLimitedFraction(foundationFlightPathMeters,
+                                                                       intent->speedMetersPerSecond,
+                                                                       elapsed);
+        const double requestedLimit = std::min({foundationFlightCommittableFraction,
+                                                pinchPolicy.acceptedFraction,
+                                                speedLimit});
         const auto trajectory = foundationFlightSafeTrajectory(
             true,
             eyeMSL,
@@ -413,7 +420,10 @@ void Map::Impl::onTerrainFlightElevationChanged(std::optional<double> elevationM
             requestedLimit,
             foundationFlightTerrainProfile,
             foundationFlightVerticalVelocity,
-            elapsed);
+            elapsed,
+            foundationFlightPathMeters,
+            intent->speedMetersPerSecond,
+            !intent->pinch);
         foundationFlightVerticalVelocity = trajectory.nextVerticalVelocity;
         const double fraction = trajectory.acceptedFraction;
         const double targetEyeMSL = trajectory.targetEyeMSL;

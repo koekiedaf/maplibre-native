@@ -86,6 +86,11 @@ struct FoundationFlightPolicyResult {
     FoundationFlightStopReason reason = FoundationFlightStopReason::None;
 };
 
+constexpr double foundationFlightMaximumCommittableMeters = 50.0;
+constexpr double foundationFlightMaximumLookaheadMeters = 150.0;
+constexpr double foundationFlightMaximumHorizontalSpeedMetersPerSecond =
+    foundationFlightMaximumLookaheadMeters / 4.0;
+
 struct FoundationFlightTerrainSample {
     /// Fraction of the current eye-to-target horizontal path. Values above
     /// one are optional lookahead and are never committed by this assessment.
@@ -116,7 +121,10 @@ inline FoundationFlightTrajectoryResult foundationFlightSafeTrajectory(
     double committableFraction,
     const std::vector<FoundationFlightTerrainSample>& samples,
     double previousVerticalVelocity,
-    double elapsedSeconds) {
+    double elapsedSeconds,
+    double pathMeters = 0.0,
+    double speedMetersPerSecond = 0.0,
+    bool anticipatoryClimb = false) {
     if (!demAvailable || samples.empty()) {
         return {0.0, currentEyeMSL, 0.0, 0.0, 0.0, FoundationFlightStopReason::UnknownDEM};
     }
@@ -127,7 +135,33 @@ inline FoundationFlightTrajectoryResult foundationFlightSafeTrajectory(
     double accepted = 0.0;
     double requiredBoost = 0.0;
     double appliedBoost = 0.0;
-    double obstruction = limit;
+    double obstruction = 1.0;
+    // Begin a bounded climb while an obstacle is still in the decoded
+    // lookahead. Speed only affects urgency after it has been constrained to
+    // what the 150m horizon can cover in four seconds.
+    if (anticipatoryClimb && std::isfinite(speedMetersPerSecond) && pathMeters > 1e-6) {
+        const double effectiveSpeed = std::clamp(std::abs(speedMetersPerSecond),
+                                                 0.0,
+                                                 foundationFlightMaximumHorizontalSpeedMetersPerSecond);
+        for (const auto& sample : samples) {
+            if (!std::isfinite(sample.pathFraction) || !std::isfinite(sample.elevationMeters)) {
+                return {0.0, currentEyeMSL, 0.0, 0.0, 0.0, FoundationFlightStopReason::UnknownDEM};
+            }
+            if (sample.pathFraction <= limit + 1e-9) continue;
+            const double rayEye = currentEyeMSL +
+                (requestedTargetEyeMSL - currentEyeMSL) * sample.pathFraction;
+            const double needed = sample.elevationMeters + clearanceMeters - rayEye;
+            if (needed <= 0.0 || effectiveSpeed <= 1e-6) continue;
+            const double obstacleDistance = std::max(0.0, pathMeters * sample.pathFraction);
+            const double timeToObstacle = std::max(std::clamp(elapsedSeconds, 0.0, 0.10),
+                                                   obstacleDistance / effectiveSpeed);
+            appliedBoost = std::max(appliedBoost,
+                                    std::min(climbBudget,
+                                             needed * std::clamp(elapsedSeconds, 0.0, 0.10) /
+                                                 timeToObstacle));
+            obstruction = std::min(obstruction, sample.pathFraction);
+        }
+    }
     for (const auto& sample : samples) {
         if (!std::isfinite(sample.pathFraction) || !std::isfinite(sample.elevationMeters)) {
             return {0.0, currentEyeMSL, 0.0, 0.0, 0.0, FoundationFlightStopReason::UnknownDEM};
@@ -147,7 +181,7 @@ inline FoundationFlightTrajectoryResult foundationFlightSafeTrajectory(
             break;
         }
         requiredBoost = std::max(0.0, candidateBoost);
-        appliedBoost = requiredBoost;
+        appliedBoost = std::max(appliedBoost, requiredBoost);
         accepted = fraction;
     }
     // The renderer always includes a station at the commit boundary. If it
@@ -162,30 +196,30 @@ inline FoundationFlightTrajectoryResult foundationFlightSafeTrajectory(
                                     : FoundationFlightStopReason::None};
 }
 
-/// Deterministic bounded-climb and pinch stand-off policy. Terrain-profile
-/// prefix selection is deliberately separate; no distance is inferred from a
-/// maximum-height climb ratio.
-inline FoundationFlightPolicyResult foundationFlightPolicy(bool demAvailable,
-                                                           bool pinch,
-                                                           double requiredAscentMeters,
-                                                           double previousVerticalVelocity,
-                                                           double elapsedSeconds,
-                                                           double rayClearanceMeters) {
+/// Limits forward pinch travel from the first actual surface intersection on
+/// the sampled ray. Reverse travel is always an escape and is never blocked by
+/// terrain that lies in front of the camera.
+inline FoundationFlightPolicyResult foundationFlightPinchPolicy(bool demAvailable,
+                                                                bool pinch,
+                                                                double signedRequestedRayMeters,
+                                                                double obstacleDistanceMeters) {
     if (!demAvailable) return {0.0, 0.0, 0.0, FoundationFlightStopReason::UnknownDEM};
-    const double velocity = std::min(30.0, previousVerticalVelocity + 12.0 * elapsedSeconds);
-    const double ascent = std::min(std::max(0.0, requiredAscentMeters), velocity * elapsedSeconds);
-    double fraction = 1.0;
-    auto reason = FoundationFlightStopReason::None;
-    if (pinch) {
-        if (rayClearanceMeters <= 50.0) {
-            fraction = 0.0;
-            reason = FoundationFlightStopReason::PinchStandOff;
-        } else if (rayClearanceMeters < 150.0) {
-            fraction *= (rayClearanceMeters - 50.0) / 100.0;
-            reason = FoundationFlightStopReason::PinchDeceleration;
-        }
+    if (!pinch || signedRequestedRayMeters <= 0.0 || !std::isfinite(obstacleDistanceMeters)) {
+        return {1.0, 0.0, 0.0, FoundationFlightStopReason::None};
     }
-    return {fraction, ascent, velocity, reason};
+    if (obstacleDistanceMeters <= 50.0) {
+        return {0.0, 0.0, 0.0, FoundationFlightStopReason::PinchStandOff};
+    }
+    if (obstacleDistanceMeters < 150.0) {
+        const double remaining = obstacleDistanceMeters - 50.0;
+        const double stopFraction = remaining / std::max(std::abs(signedRequestedRayMeters), 1e-9);
+        const double decelerationFraction = remaining / 100.0;
+        return {std::clamp(std::min(stopFraction, decelerationFraction), 0.0, 1.0),
+                0.0,
+                0.0,
+                FoundationFlightStopReason::PinchDeceleration};
+    }
+    return {1.0, 0.0, 0.0, FoundationFlightStopReason::None};
 }
 
 inline bool foundationFlightAssessmentMatches(const std::optional<FoundationFlightIntent>& intent,
@@ -195,14 +229,22 @@ inline bool foundationFlightAssessmentMatches(const std::optional<FoundationFlig
     return assessedSequence == 0 ? !intent : (intent && intent->sequence == assessedSequence);
 }
 
-constexpr double foundationFlightMaximumCommittableMeters = 50.0;
-constexpr double foundationFlightMaximumLookaheadMeters = 150.0;
-
 inline double foundationFlightLookahead(double speedMetersPerSecond) {
-    if (!std::isfinite(speedMetersPerSecond)) return 150.0;
-    return std::clamp(std::abs(speedMetersPerSecond) * 4.0,
-                      150.0,
-                      foundationFlightMaximumLookaheadMeters);
+    // The safety baseline and query-budget ceiling are both 150m. Excess
+    // gesture speed is constrained at commit time; it must not outrun this
+    // fixed decoded horizon.
+    (void)speedMetersPerSecond;
+    return foundationFlightMaximumLookaheadMeters;
+}
+
+inline double foundationFlightSpeedLimitedFraction(double pathMeters,
+                                                   double speedMetersPerSecond,
+                                                   double elapsedSeconds) {
+    if (!std::isfinite(pathMeters) || !std::isfinite(speedMetersPerSecond) || pathMeters <= 1e-9) return 0.0;
+    if (std::abs(speedMetersPerSecond) <= foundationFlightMaximumHorizontalSpeedMetersPerSecond) return 1.0;
+    const double allowed = foundationFlightMaximumHorizontalSpeedMetersPerSecond *
+                           std::clamp(elapsedSeconds, 0.0, 0.10);
+    return std::clamp(allowed / pathMeters, 0.0, 1.0);
 }
 
 inline double foundationFlightRayHorizontalDistance(double rayDistanceMeters, double pitchDegrees) {

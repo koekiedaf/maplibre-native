@@ -427,6 +427,27 @@
   XCTAssertEqualWithAccuracy(far.obstructionFraction, 0.8, 1e-12);
 }
 
+- (void)testFoundationLookaheadClimbsEarlyAndPinchUsesActualObstacleDistance {
+  using Sample = mln::FoundationFlightTerrainSample;
+  const std::vector<Sample> farHill{{0.0, 900.0}, {0.25, 900.0}, {0.75, 1100.0}, {1.0, 1100.0}};
+  const auto early = mln::foundationFlightSafeTrajectory(
+      true, 1000.0, 1000.0, 50.0, 0.25, farHill, 0.0, 0.1, 200.0, 25.0, true);
+  XCTAssertEqualWithAccuracy(early.acceptedFraction, 0.25, 1e-12);
+  XCTAssertGreaterThan(early.targetEyeMSL, 1000.0);
+  XCTAssertLessThanOrEqual(early.automaticAscentMeters, 0.12 + 1e-12);
+
+  const auto approaching = mln::foundationFlightPinchPolicy(true, true, 20.0, 100.0);
+  XCTAssertEqualWithAccuracy(approaching.acceptedFraction, 0.5, 1e-12);
+  const auto nearHold = mln::foundationFlightPinchPolicy(true, true, 20.0, 40.0);
+  XCTAssertEqualWithAccuracy(nearHold.acceptedFraction, 0.0, 1e-12);
+  const auto reverseEscape = mln::foundationFlightPinchPolicy(true, true, -20.0, 10.0);
+  XCTAssertEqualWithAccuracy(reverseEscape.acceptedFraction, 1.0, 1e-12);
+  XCTAssertEqual(mln::FoundationFlightStopReason::None, reverseEscape.reason);
+
+  XCTAssertEqualWithAccuracy(mln::foundationFlightSpeedLimitedFraction(200.0, 80.0, 0.1),
+                             3.75 / 200.0, 1e-12);
+}
+
 - (void)testFoundationCommitAppliesSignedEyeAltitudeAndPreservesOrientation {
   mln::Transform transform;
   transform.resize({390, 844});

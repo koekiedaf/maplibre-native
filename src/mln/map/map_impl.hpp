@@ -140,7 +140,7 @@ public:
     // this historical floor.
     std::optional<double> foundationFlightHeldEyeMSL;
     FoundationFlightTelemetry foundationFlightTelemetry;
-    double foundationFlightMinimumRayClearance = std::numeric_limits<double>::infinity();
+    double foundationFlightPinchObstacleDistance = std::numeric_limits<double>::infinity();
     double foundationFlightPathMeters = 0.0;
     double foundationFlightCommittableFraction = 0.0;
     std::vector<FoundationFlightTerrainSample> foundationFlightTerrainProfile;

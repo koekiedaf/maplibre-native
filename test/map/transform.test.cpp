@@ -1351,7 +1351,7 @@ TEST(Transform, FoundationFlightPolicyRejectsStaleUnknownAndPostEndIntent) {
     EXPECT_FALSE(foundationFlightAssessmentMatches(newer, 0));
     EXPECT_TRUE(foundationFlightAssessmentMatches(std::nullopt, 0));
 
-    const auto unknown = foundationFlightPolicy(false, false, 0.0, 0.0, 0.1, 1000.0);
+    const auto unknown = foundationFlightPinchPolicy(false, false, 0.0, 1000.0);
     EXPECT_DOUBLE_EQ(0.0, unknown.acceptedFraction);
     EXPECT_EQ(FoundationFlightStopReason::UnknownDEM, unknown.reason);
 
@@ -1366,7 +1366,7 @@ TEST(Transform, FoundationFlightPolicyRejectsStaleUnknownAndPostEndIntent) {
 
 TEST(Transform, FoundationFlightLookaheadAndClimbAreDirectionIndependentAndBounded) {
     EXPECT_DOUBLE_EQ(150.0, foundationFlightLookahead(0.0));
-    EXPECT_DOUBLE_EQ(250.0, foundationFlightLookahead(80.0));
+    EXPECT_DOUBLE_EQ(150.0, foundationFlightLookahead(80.0));
     // A renderer uses target direction, not the sign or cardinal direction, to
     // choose this envelope. Forward/reverse/lateral/diagonal all retain the
     // same speed-derived lookahead contract.
@@ -1374,16 +1374,20 @@ TEST(Transform, FoundationFlightLookaheadAndClimbAreDirectionIndependentAndBound
         FoundationFlightIntent intent;
         intent.target = target;
         intent.speedMetersPerSecond = 50.0;
-        EXPECT_DOUBLE_EQ(200.0, foundationFlightLookahead(intent.speedMetersPerSecond));
+        EXPECT_DOUBLE_EQ(150.0, foundationFlightLookahead(intent.speedMetersPerSecond));
     }
+    EXPECT_DOUBLE_EQ(1.0, foundationFlightSpeedLimitedFraction(200.0, 37.5, 0.1));
+    EXPECT_NEAR(3.75 / 200.0,
+                foundationFlightSpeedLimitedFraction(200.0, 80.0, 0.1),
+                1e-12);
 
-    const auto first = foundationFlightPolicy(true, false, 100.0, 0.0, 0.1, 1000.0);
-    EXPECT_NEAR(0.12, first.ascentMeters, 1e-12);
-    EXPECT_DOUBLE_EQ(1.0, first.acceptedFraction);
-    const auto second = foundationFlightPolicy(true, false, 100.0, first.nextVerticalVelocity, 0.1, 1000.0);
-    EXPECT_GT(second.ascentMeters, first.ascentMeters);
-    const auto noDescent = foundationFlightPolicy(true, false, 0.0, second.nextVerticalVelocity, 0.1, 1000.0);
-    EXPECT_DOUBLE_EQ(0.0, noDescent.ascentMeters);
+    const std::vector<FoundationFlightTerrainSample> farHill{
+        {0.0, 900.0}, {0.25, 900.0}, {0.75, 1100.0}, {1.0, 1100.0}};
+    const auto earlyClimb = foundationFlightSafeTrajectory(
+        true, 1000.0, 1000.0, 50.0, 0.25, farHill, 0.0, 0.1, 200.0, 25.0, true);
+    EXPECT_DOUBLE_EQ(0.25, earlyClimb.acceptedFraction);
+    EXPECT_GT(earlyClimb.targetEyeMSL, 1000.0);
+    EXPECT_LE(earlyClimb.automaticAscentMeters, 0.12 + 1e-12);
 }
 
 TEST(Transform, FoundationFlightSweptCorridorKeepsFiveMetreSpacingWithinBoundedWork) {
@@ -1422,14 +1426,17 @@ TEST(Transform, FoundationFlightSweptCorridorKeepsFiveMetreSpacingWithinBoundedW
 }
 
 TEST(Transform, FoundationFlightPinchDeceleratesAt150AndStopsAt50) {
-    const auto free = foundationFlightPolicy(true, true, 0.0, 0.0, 0.1, 150.0);
+    const auto free = foundationFlightPinchPolicy(true, true, 20.0, 150.0);
     EXPECT_DOUBLE_EQ(1.0, free.acceptedFraction);
-    const auto slowing = foundationFlightPolicy(true, true, 0.0, 0.0, 0.1, 100.0);
+    const auto slowing = foundationFlightPinchPolicy(true, true, 20.0, 100.0);
     EXPECT_NEAR(0.5, slowing.acceptedFraction, 1e-12);
     EXPECT_EQ(FoundationFlightStopReason::PinchDeceleration, slowing.reason);
-    const auto stopped = foundationFlightPolicy(true, true, 0.0, 0.0, 0.1, 50.0);
+    const auto stopped = foundationFlightPinchPolicy(true, true, 20.0, 50.0);
     EXPECT_DOUBLE_EQ(0.0, stopped.acceptedFraction);
     EXPECT_EQ(FoundationFlightStopReason::PinchStandOff, stopped.reason);
+    const auto reverseEscape = foundationFlightPinchPolicy(true, true, -20.0, 10.0);
+    EXPECT_DOUBLE_EQ(1.0, reverseEscape.acceptedFraction);
+    EXPECT_EQ(FoundationFlightStopReason::None, reverseEscape.reason);
 }
 
 TEST(Transform, FoundationFlightPinchUsesViewRayAcrossPitchRange) {

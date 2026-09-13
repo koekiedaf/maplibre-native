@@ -867,7 +867,9 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         const std::size_t corridorIntervals =
             foundationFlightLongitudinalIntervals(committableMeters, lookahead);
         std::optional<double> flightElevation;
-        double minimumRayClearance = std::numeric_limits<double>::infinity();
+        double pinchObstacleDistance = std::numeric_limits<double>::infinity();
+        std::optional<double> previousPinchClearance;
+        double previousPinchFraction = 0.0;
         bool unknownDEM = false;
         bool optionalLookaheadEnded = false;
         std::vector<FoundationFlightTerrainSample> terrainProfile;
@@ -892,15 +894,6 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                 if (const auto elevation = terrain->queryElevationForLatLng(sample)) {
                     flightElevation = flightElevation ? std::max(*flightElevation, *elevation) : elevation;
                     stationElevation = stationElevation ? std::max(*stationElevation, *elevation) : elevation;
-                    if (flightIntent && flightIntent->pinch) {
-                        // The input carries the signed vertical component from
-                        // the actual view ray. Continue that slope through the
-                        // lookahead, which is conservative for forward descent.
-                        const double rayEyeMSL = flightIntent->gestureStartEyeMSL.value_or(
-                            updateParameters->transformState.getEyeAltitudeMSL()) +
-                            flightIntent->verticalEyeMSLDeltaMeters * t;
-                        minimumRayClearance = std::min(minimumRayClearance, rayEyeMSL - *elevation);
-                    }
                 } else if (foundationFlightSampleRequiresDEM(distanceMeters, committableMeters)) {
                     // Unknown terrain on the movement actually being committed
                     // is a hard stop. Unknown terrain only beyond that target
@@ -916,6 +909,27 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             if (unknownDEM || optionalLookaheadEnded) break;
             if (stationElevation) {
                 terrainProfile.push_back({t, *stationElevation});
+                if (flightIntent && flightIntent->pinch &&
+                    flightIntent->requestedDistanceMeters > 0.0 &&
+                    !std::isfinite(pinchObstacleDistance)) {
+                    const double rayEyeMSL = flightIntent->gestureStartEyeMSL.value_or(
+                        updateParameters->transformState.getEyeAltitudeMSL()) +
+                        flightIntent->verticalEyeMSLDeltaMeters * t;
+                    const double clearance = rayEyeMSL - *stationElevation;
+                    if (clearance <= 0.0) {
+                        double hitFraction = t;
+                        if (previousPinchClearance && *previousPinchClearance > 0.0 &&
+                            t > previousPinchFraction) {
+                            const double alpha = *previousPinchClearance /
+                                (*previousPinchClearance - clearance);
+                            hitFraction = previousPinchFraction + (t - previousPinchFraction) * alpha;
+                        }
+                        pinchObstacleDistance = std::abs(flightIntent->requestedDistanceMeters) *
+                                                std::max(0.0, hitFraction);
+                    }
+                    previousPinchClearance = clearance;
+                    previousPinchFraction = t;
+                }
             }
         }
         const double decodedPrefixFraction = terrainProfile.empty()
@@ -928,7 +942,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             unknownDEM && terrainProfile.empty() ? std::nullopt : flightElevation,
             flightIntent ? flightIntent->sequence : 0,
             lookahead,
-            minimumRayClearance,
+            pinchObstacleDistance,
             corridorMetres,
             unknownDEM ? std::min(requestedCommittableFraction, decodedPrefixFraction)
                        : requestedCommittableFraction,

@@ -83,9 +83,9 @@ public:
         std::optional<double> elevationMeters;
         uint64_t intentSequence = 0;
         double lookaheadMeters = 0.0;
-        /// Lowest eye-to-terrain clearance along a pinch's actual 3D view
-        /// ray. Infinity means the assessment was not a pinch.
-        double minimumRayClearanceMeters = std::numeric_limits<double>::infinity();
+        /// Distance along a forward pinch ray to its first sampled terrain
+        /// intersection. Infinity means no intersection or reverse travel.
+        double pinchObstacleDistanceMeters = std::numeric_limits<double>::infinity();
         double pathMeters = 0.0;
         double committableFraction = 0.0;
         std::vector<FoundationFlightTerrainSample> terrainProfile;

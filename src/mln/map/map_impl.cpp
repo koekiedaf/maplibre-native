@@ -408,11 +408,10 @@ void Map::Impl::onTerrainFlightElevationChanged(std::optional<double> elevationM
                                                              intent->pinch,
                                                              intent->requestedDistanceMeters,
                                                              foundationFlightPinchObstacleDistance);
-        const double speedLimitedPathMeters = intent->pinch
-            ? std::abs(foundationFlightRayHorizontalDistance(intent->requestedDistanceMeters,
-                                                             intent->rayPitchDegrees))
-            : foundationFlightPathMeters;
-        const double speedLimit = foundationFlightSpeedLimitedFraction(speedLimitedPathMeters,
+        // The renderer's corridor is the actual horizontal camera-eye path
+        // for both pan and pinch. In particular it is zero for a top-down
+        // pinch, even though that gesture can travel a long distance vertically.
+        const double speedLimit = foundationFlightSpeedLimitedFraction(foundationFlightPathMeters,
                                                                        intent->speedMetersPerSecond,
                                                                        horizontalElapsed);
         const double requestedLimit = std::min({foundationFlightCommittableFraction,

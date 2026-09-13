@@ -248,7 +248,9 @@ inline double foundationFlightSpeedLimitedFraction(double pathMeters,
                                                    double elapsedSeconds) {
     if (!std::isfinite(pathMeters) || !std::isfinite(speedMetersPerSecond)) return 0.0;
     if (pathMeters <= 1e-9) return 1.0;
-    if (std::abs(speedMetersPerSecond) <= foundationFlightMaximumHorizontalSpeedMetersPerSecond) return 1.0;
+    // Reported recognizer velocity is diagnostic only. A coalesced absolute
+    // target can stay large after that velocity falls, so actual remaining
+    // horizontal travel must always fit the wall-clock distance budget.
     const double allowed = foundationFlightMaximumHorizontalSpeedMetersPerSecond *
                            std::clamp(elapsedSeconds, 0.0, 0.50);
     return std::clamp(allowed / pathMeters, 0.0, 1.0);

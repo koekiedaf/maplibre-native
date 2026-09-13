@@ -41,6 +41,8 @@
 #include <mln/util/projection.hpp>      // C6: project/unproject the forward sample line
 
 #include <algorithm> // C6: std::max for the forward sample line
+#include <numeric>   // drape-detail diagnostic: std::accumulate
+#include <set>       // drape-detail diagnostic: distinct layers per target
 #include <tuple> // C7: std::tie for the drawableUBOs sort key
 #include <cmath>   // C6: hypot for the forward sample line
 #include <cstdio>  // elevation trace: fopen/fwrite/fflush (task C1)
@@ -1355,6 +1357,92 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                 }
             }
             os << "]";
+            // DuckMaps fork only, task "what inside the drape scales with pitch": per-target
+            // draw counts and cross-target duplication. drapedTileCounts above already gives
+            // the frame-global (layer, tile) -> enabled-drawable-count map; this block reuses
+            // the same enabled-drawable set but asks the per-TARGET question the earlier block
+            // could not: for each drape target, how many of those tiles actually overlap it
+            // (the same test RenderTarget::renderDrapedLayerGroups and computeDrapeCoverage use,
+            // reproduced here rather than exposed, since both are protected), from how many
+            // distinct layers, and how many DIFFERENT targets end up drawing the same tile (the
+            // "is the same ground drawn more than once" question). Read-only: no drawable state
+            // is touched, only inspected after the real render already ran this frame. Same
+            // debug-only, off-by-default guard as the rest of this block - nothing here runs
+            // unless DUCKMAPS_ELEVATION_TRACE names a writable path.
+            os << ",\"drapeDetail\":{";
+            {
+                struct DrapedTile {
+                    std::string layer;
+                    UnwrappedTileID id;
+                };
+                std::vector<DrapedTile> drapedTiles;
+                orchestrator.visitLayerGroups([&](LayerGroupBase& layerGroup) {
+                    if (layerGroup.getType() != LayerGroupBase::Type::TileLayerGroup ||
+                        !layerGroup.shouldRenderToTerrain()) {
+                        return;
+                    }
+                    static_cast<TileLayerGroup&>(layerGroup).visitDrawables([&](const gfx::Drawable& drawable) {
+                        if (!drawable.getEnabled() || !drawable.getTileID()) {
+                            return;
+                        }
+                        drapedTiles.push_back({layerGroup.getName(), drawable.getTileID()->toUnwrapped()});
+                    });
+                });
+
+                std::vector<UnwrappedTileID> targetIds;
+                std::vector<Size> targetSizes;
+                orchestrator.visitRenderTargets([&](RenderTarget& renderTarget) {
+                    if (const auto& id = renderTarget.getDrapeTileID()) {
+                        targetIds.push_back(*id);
+                        targetSizes.push_back(renderTarget.getTexture()->getSize());
+                    }
+                });
+
+                const auto tileOverlapsTarget = [](const UnwrappedTileID& tile, const UnwrappedTileID& target) {
+                    return tile == target || tile.isChildOf(target) || target.isChildOf(tile);
+                };
+
+                std::vector<int> tilesDrawnPerTarget(targetIds.size(), 0);
+                std::vector<std::set<std::string>> layersPerTarget(targetIds.size());
+                std::vector<int> targetsPerTile(drapedTiles.size(), 0);
+                for (std::size_t t = 0; t < targetIds.size(); ++t) {
+                    for (std::size_t d = 0; d < drapedTiles.size(); ++d) {
+                        if (tileOverlapsTarget(drapedTiles[d].id, targetIds[t])) {
+                            ++tilesDrawnPerTarget[t];
+                            layersPerTarget[t].insert(drapedTiles[d].layer);
+                            ++targetsPerTile[d];
+                        }
+                    }
+                }
+
+                os << "\"targetsTotal\":" << targetIds.size() << ",\"drapedTilesLoaded\":" << drapedTiles.size();
+                if (!targetSizes.empty()) {
+                    os << ",\"targetTexturePx\":{\"w\":" << targetSizes.front().width
+                       << ",\"h\":" << targetSizes.front().height << "}";
+                }
+                os << ",\"perTarget\":[";
+                for (std::size_t t = 0; t < targetIds.size(); ++t) {
+                    if (t) {
+                        os << ",";
+                    }
+                    os << "{\"tile\":\"" << static_cast<int>(targetIds[t].canonical.z) << "/"
+                       << targetIds[t].canonical.x << "/" << targetIds[t].canonical.y
+                       << "\",\"tilesDrawn\":" << tilesDrawnPerTarget[t]
+                       << ",\"layersWithContent\":" << layersPerTarget[t].size() << "}";
+                }
+                os << "]";
+                const int totalTileDraws = std::accumulate(tilesDrawnPerTarget.begin(), tilesDrawnPerTarget.end(), 0);
+                const int maxTilesPerTarget = tilesDrawnPerTarget.empty()
+                                                   ? 0
+                                                   : *std::max_element(tilesDrawnPerTarget.begin(),
+                                                                        tilesDrawnPerTarget.end());
+                const int maxTargetsPerTile = targetsPerTile.empty()
+                                                   ? 0
+                                                   : *std::max_element(targetsPerTile.begin(), targetsPerTile.end());
+                os << ",\"totalTileDraws\":" << totalTileDraws << ",\"maxTilesDrawnByOneTarget\":"
+                   << maxTilesPerTarget << ",\"maxTargetsSharingOneTile\":" << maxTargetsPerTile;
+            }
+            os << "}";
             // DuckMaps fork only, task N3: the renderer's own GPU memory counters, so a
             // memory table can say which part is textures (drape targets, DEM, sprite,
             // glyph) and which is geometry, instead of inferring it from the process total.

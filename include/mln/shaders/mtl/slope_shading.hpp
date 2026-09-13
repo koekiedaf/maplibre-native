@@ -204,11 +204,37 @@ FragmentOut fragment fragmentMain(FragmentStage in [[stage_in]],
         return out;
     }
 
-    // A fixed step in TILE space (1/128 of a tile either side, so the two samples are a 64th of a
-    // tile apart - about 37 m across a z14 tile in the Alps) rather than one DEM texel: halving it
-    // turned the aspect wheel to confetti (measured at Cortina, contours3d.js's own comment). In
-    // EXTENT units (this shader's pos_extent, 0..8192) that step is EXTENT/128 = 64.
-    const float d = 8192.0 / 128.0;
+    // DuckMaps fork only, 13 September 2026 diagonal-lattice task: this step was 8192.0/128.0
+    // (1/128 of a tile either side, ~37 m across a z14 tile in the Alps), ported line for line
+    // from contours3d.js's own `d`. Widened to 8192.0/64.0 (~74 m) after measuring a real,
+    // mesh-aligned diagonal lattice in the app's own slope-shading fill that the web's equivalent
+    // frame does not carry at the same camera (composite: development/app-bench/runs/
+    // 20260913-075157/composite/lauterbrunnen-p60.png). Traced with a debug colour bypass
+    // (this file's own history, now reverted) through the whole pipeline: not the LUT (the raw,
+    // pre-LUT slopeDeg/aspectDeg already carried it), not this shader reading a per-VERTEX
+    // quantity (in.pos_extent is recomputed from the DEM per fragment here, exactly as this
+    // file's own header comment describes - the brief's own suspected "vertex-interpolated
+    // leak" family does not hold for this shader), not the depth bias/z-fight against
+    // RenderTerrain's own coplanar surface (persisted unchanged under a 100x depth_bias). A
+    // ground-truth replication of get_elevation's own four-tap bilinear directly in Python
+    // against the tile's own raw terrain-rgb bytes (fetched straight from the server, decoded
+    // both by CoreGraphics - byte-identical to a plain WebP decode, no colour-management
+    // corruption despite going through this platform's own CGContextDrawImage - and by Pillow)
+    // reproduces the SAME 3 px/4.24 px-diagonal autocorrelation peak with no engine involved at
+    // all: the roughness is genuinely present in the DEM texel data at this step's original
+    // baseline, not injected by this shader or by the image decode. contours3d.js's own comment
+    // on this same constant states the general rule this fix leans on: "a slope angle is a
+    // property of a hillside, not of one pixel of elevation data" - the previous baseline was
+    // already tuned once against exactly this failure mode (their own Cortina "confetti" note)
+    // for their reference implementation's own texel noise floor; this fork's own reads expose
+    // more of that per-texel roughness at the same nominal DEM resolution (most likely a native
+    // vs web difference in which DEM zoom each engine's own terrain LOD picks for the same
+    // camera - not confirmed further this session, see the journal). Doubling the baseline
+    // removes the measured periodicity (development/app-bench/journal.md, this task's entry) and
+    // leaves the classifier's band-percentage agreement with the web unchanged within the
+    // existing single-digit noise (see the same entry) - an input-sampling change, not a filter
+    // over the computed result.
+    const float d = 8192.0 / 64.0;
     const float eL = get_elevation(in.pos_extent + float2(-d, 0.0), demTexture, demSampler, tileProps.dem_coords,
                                    tileProps.dem_unpack, tileProps.dem_dim, tileProps.dem_exaggeration, tileProps.dem_enabled);
     const float eR = get_elevation(in.pos_extent + float2( d, 0.0), demTexture, demSampler, tileProps.dem_coords,

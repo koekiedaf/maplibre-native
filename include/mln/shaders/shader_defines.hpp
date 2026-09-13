@@ -216,6 +216,13 @@ enum {
     clippingMaskUBOCount = getEnumValue(drawableReservedUBOCount, idClippingMaskUBO + 1)
 };
 
+// Sky is a direct full-screen pass, so it shares the reserved fragment UBO
+// slot used by other immediate draws rather than introducing a layer UBO.
+enum {
+    idSkyUBO = getEnumValue(idDrawableReservedFragmentOnlyUBO, drawableUBOStartId),
+    skyUBOCount = getEnumValue(drawableReservedUBOCount, idSkyUBO + 1)
+};
+
 enum {
     colorReliefUBOCount = getEnumValue(colorReliefLayerUBOCount, drawableUBOStartId)
 };
@@ -289,6 +296,7 @@ enum {
 static constexpr uint32_t maxUBOCountPerShader = std::max({static_cast<uint32_t>(backgroundUBOCount),
                                                            static_cast<uint32_t>(circleUBOCount),
                                                            static_cast<uint32_t>(clippingMaskUBOCount),
+                                                           static_cast<uint32_t>(skyUBOCount),
                                                            static_cast<uint32_t>(collisionUBOCount),
                                                            static_cast<uint32_t>(colorReliefUBOCount),
                                                            static_cast<uint32_t>(customGeometryUBOCount),

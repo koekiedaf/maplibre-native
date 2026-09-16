@@ -326,6 +326,45 @@ enum { MLNAnnotationTagNotFound = UINT32_MAX };
 /// The threshold used to consider when a tilt gesture should start.
 const CLLocationDegrees MLNHorizontalTiltToleranceDegrees = 45.0;
 
+// Task C10, 16 September 2026: which of tilt, turn or zoom a two-finger sequence IS.
+//
+// David: "a two-finger twist is often interpreted as a tilt (view goes up and down instead of
+// turning)". Upstream decides by a race: the tilt is a two-finger UIPanGestureRecognizer that is
+// NOT in the simultaneous set with rotate and pinch, so whichever recognizer reaches Began first
+// cancels the other two, and a pan needs only a few points of any movement with the finger line
+// within 45 degrees of horizontal - which is exactly how a person holds two fingers to start a
+// twist. The tilt wins the race, the rotation is cancelled, and the runtime slope check inside
+// the tilt handler then often vetoes the pitch too, so the twist produces nothing or a wobble.
+//
+// MapLibre GL JS, which David says behaves correctly on the web, has no race: every handler runs
+// on every move, and the pitch handler validates itself from the fingers' OWN motion vectors -
+// both moved, both mostly vertical, both the same way - and disqualifies itself for the whole
+// gesture on a twist, whose fingers move opposite ways. This block ports that decision: the
+// three recognizers are allowed to recognise together, and one classification, made once from
+// the fingers' motion since touch-down, decides which handler is allowed to act until every
+// finger lifts.
+typedef NS_ENUM(NSInteger, MLNTwoFingerIntent) {
+  MLNTwoFingerIntentUndecided = 0,
+  MLNTwoFingerIntentTilt,
+  MLNTwoFingerIntentTurn,
+  MLNTwoFingerIntentZoom,
+};
+// Three exclusive intents rather than "tilt or not": with the map anchoring rotate and zoom to
+// the screen centre, upstream's rotate handler zeroes its own rotation accumulator on every call
+// while a pinch is zooming, so a pinch recognizer that merely BEGINS during a twist (it needs
+// only a hair of separation change) silences the rotation for the rest of the sequence. Measured
+// on the first cut of this task: a 175 degree twist produced 0.0 degrees of bearing. Committing
+// the sequence to exactly one of tilt, turn or zoom, and letting only that handler act, removes
+// the race entirely.
+// Both fingers must have moved at least this far before anything is decided (GL JS uses 2 px
+// per finger; a little more here absorbs the simulator's and a thumb's first-sample jitter).
+static const CGFloat MLNTwoFingerDecisionMinimumTravel = 6.0;
+// A change in the angle of the line between the fingers of at least this much is a twist, and
+// a change in their separation of at least this much is a pinch; either commits the sequence
+// to turn-or-zoom. 4 degrees sits between GL JS's 25 px of arc and Mapbox iOS's 3 degrees.
+static const CLLocationDegrees MLNTwoFingerTwistCommitDegrees = 4.0;
+static const CGFloat MLNTwoFingerPinchCommitPoints = 12.0;
+
 /// Mapping from an annotation tag to metadata about that annotation, including
 /// the annotation itself.
 typedef std::unordered_map<MLNAnnotationTag, MLNAnnotationContext> MLNAnnotationTagContextMap;
@@ -439,6 +478,12 @@ public:
 
 /// Tilt gesture recognizer helper
 @property (nonatomic, assign) CGPoint dragGestureMiddlePoint;
+// Task C10: the two-finger classification for the current touch sequence, and the two finger
+// positions it is measured from (recorded on the first two-finger sample after touch-down).
+@property (nonatomic) MLNTwoFingerIntent twoFingerIntent;
+@property (nonatomic) BOOL twoFingerStartRecorded;
+@property (nonatomic) CGPoint twoFingerStartA;
+@property (nonatomic) CGPoint twoFingerStartB;
 
 /// This property is used to keep track of the view's safe edge insets
 /// and calculate the ornament's position
@@ -2154,6 +2199,10 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   };
 
   self.mbglMap.setGestureInProgress(false);
+  // Task C10: a new touch sequence starts undecided. (touchesBegan fires for each finger that
+  // lands; both times the right answer is "not decided yet".)
+  self.twoFingerIntent = MLNTwoFingerIntentUndecided;
+  self.twoFingerStartRecorded = NO;
   if (self.userTrackingState == MLNUserTrackingStateBegan) {
     [self setUserTrackingMode:MLNUserTrackingModeNone animated:NO completionHandler:nil];
   }
@@ -2273,6 +2322,20 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
 - (void)handlePinchGesture:(UIPinchGestureRecognizer *)pinch {
   if (!self.isZoomEnabled) return;
 
+  // Task C10: a sequence that has committed to a tilt does not zoom. See handleRotateGesture.
+  if (pinch.numberOfTouches == 2) {
+    [self classifyTwoFingersA:[pinch locationOfTouch:0 inView:pinch.view]
+                            b:[pinch locationOfTouch:1 inView:pinch.view]];
+  }
+  // Only Changed is gated: Began must run so the handler's own baseline (self.scale, isZooming)
+  // is set for the moment the sequence is classified as a zoom. Measured on the second cut: a
+  // gated Began left self.scale stale and every Changed after it was rejected, so a plain spread
+  // did nothing.
+  if (self.twoFingerIntent != MLNTwoFingerIntentZoom && pinch.state == UIGestureRecognizerStateChanged) {
+    pinch.scale = 1;
+    return;
+  }
+
   [self cancelTransitions];
 
   CGPoint centerPoint = [self anchorPointForGesture:pinch];
@@ -2369,6 +2432,19 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
 - (void)handleRotateGesture:(UIRotationGestureRecognizer *)rotate {
   if (!self.isRotateEnabled) return;
 
+  // Task C10: a sequence that has committed to a tilt does not turn. Began and Changed are
+  // dropped (the rotation is zeroed so nothing accumulates); Ended and Cancelled fall through so
+  // the handler's own bookkeeping (isRotating, the change delimiter) still closes.
+  if (rotate.numberOfTouches == 2) {
+    [self classifyTwoFingersA:[rotate locationOfTouch:0 inView:rotate.view]
+                            b:[rotate locationOfTouch:1 inView:rotate.view]];
+  }
+  // Only Changed is gated, for the same reason as the pinch: Began sets the handler's baseline.
+  if (self.twoFingerIntent != MLNTwoFingerIntentTurn && rotate.state == UIGestureRecognizerStateChanged) {
+    rotate.rotation = 0;
+    return;
+  }
+
   [self cancelTransitions];
 
   CGPoint centerPoint = [self anchorPointForGesture:rotate];
@@ -2385,7 +2461,11 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   }
   // Check whether a zoom triggered by a pinch gesture is occurring and if the rotation threshold
   // has been met.
-  if (MLNDegreesFromRadians(self.rotationBeforeThresholdMet) < self.rotationThresholdWhileZooming &&
+  // Task C10: a sequence classified as a turn is a turn; the pinch recognizer's Began may have
+  // set isZooming, but this deferral (which, with the centre anchor on, resets its own
+  // accumulator every call and so never ends) must not apply to it.
+  if (self.twoFingerIntent != MLNTwoFingerIntentTurn &&
+      MLNDegreesFromRadians(self.rotationBeforeThresholdMet) < self.rotationThresholdWhileZooming &&
       self.isZooming && !self.isRotating) {
     self.rotationBeforeThresholdMet += fabs(rotate.rotation);
     if (self.anchorRotateOrZoomGesturesToCenterCoordinate) {
@@ -2707,6 +2787,13 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
     CLLocationDegrees gestureSlopeAngle = [self angleBetweenPoints:self.dragGestureMiddlePoint
                                                           endPoint:middlePoint];
     self.dragGestureMiddlePoint = middlePoint;
+    // Task C10: only a sequence classified as a tilt may pitch. A twist or a pinch, or a
+    // sequence not yet decided, leaves the pitch alone; the pan recognizer keeps running so its
+    // own state machine ends cleanly, but it acts on nothing.
+    const MLNTwoFingerIntent intent = [self classifyTwoFingersA:leftTouchPoint b:rightTouchPoint];
+    if (intent != MLNTwoFingerIntentTilt) {
+      return;
+    }
     if (fabs(fingerSlopeAngle) < MLNHorizontalTiltToleranceDegrees &&
         fabs(gestureSlopeAngle) > 60.0) {
       CGFloat gestureDistance = middlePoint.y;
@@ -2893,9 +2980,71 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
 - (BOOL)gestureRecognizer:(UIGestureRecognizer *)gestureRecognizer
     shouldRecognizeSimultaneouslyWithGestureRecognizer:
         (UIGestureRecognizer *)otherGestureRecognizer {
-  NSArray *validSimultaneousGestures = @[ self.pan, self.pinch, self.rotate ];
+  // Task C10: the tilt recognises alongside pinch and rotate, so it can no longer cancel them
+  // by reaching Began first. Which of the three ACTS is decided by twoFingerIntent, not by UIKit.
+  NSArray *validSimultaneousGestures = @[ self.pan, self.pinch, self.rotate, self.twoFingerDrag ];
   return ([validSimultaneousGestures containsObject:gestureRecognizer] &&
           [validSimultaneousGestures containsObject:otherGestureRecognizer]);
+}
+
+// Task C10. Given the two current finger positions, records the start positions on the first
+// call of a sequence and, once both fingers have travelled MLNTwoFingerDecisionMinimumTravel,
+// decides the sequence's intent exactly once. Returns the intent (possibly still undecided).
+- (MLNTwoFingerIntent)classifyTwoFingersA:(CGPoint)a b:(CGPoint)b {
+  if (self.twoFingerIntent != MLNTwoFingerIntentUndecided) {
+    return self.twoFingerIntent;
+  }
+  // The three recognizers do not agree on which touch is index 0, and this is called from all
+  // of them. Put the pair in a canonical order (leftmost first, then topmost) so a pair recorded
+  // by one recognizer and compared by another is the same pair, not a swapped one that reads as
+  // a 180 degree twist. Measured on the first cut: a plain spread pinch produced 0.000 zoom,
+  // because the pinch recognizer's swapped pair had "turned" the line and latched the sequence
+  // as a turn before the separation change could be seen.
+  if (b.x < a.x || (b.x == a.x && b.y < a.y)) {
+    CGPoint t = a;
+    a = b;
+    b = t;
+  }
+  if (!self.twoFingerStartRecorded) {
+    self.twoFingerStartA = a;
+    self.twoFingerStartB = b;
+    self.twoFingerStartRecorded = YES;
+    return MLNTwoFingerIntentUndecided;
+  }
+  const CGFloat dax = a.x - self.twoFingerStartA.x, day = a.y - self.twoFingerStartA.y;
+  const CGFloat dbx = b.x - self.twoFingerStartB.x, dby = b.y - self.twoFingerStartB.y;
+  const CGFloat travelA = hypot(dax, day), travelB = hypot(dbx, dby);
+  // A twist or a pinch shows in the finger LINE before either finger has travelled far, so
+  // those are tested first and need only one finger to have moved.
+  const CLLocationDegrees angleStart = atan2(self.twoFingerStartB.y - self.twoFingerStartA.y,
+                                             self.twoFingerStartB.x - self.twoFingerStartA.x) * 180.0 / M_PI;
+  const CLLocationDegrees angleNow = atan2(b.y - a.y, b.x - a.x) * 180.0 / M_PI;
+  CLLocationDegrees angleChange = fabs(angleNow - angleStart);
+  if (angleChange > 180.0) angleChange = 360.0 - angleChange;
+  const CGFloat separationStart = hypot(self.twoFingerStartB.x - self.twoFingerStartA.x,
+                                        self.twoFingerStartB.y - self.twoFingerStartA.y);
+  const CGFloat separationNow = hypot(b.x - a.x, b.y - a.y);
+  if (angleChange >= MLNTwoFingerTwistCommitDegrees) {
+    self.twoFingerIntent = MLNTwoFingerIntentTurn;
+    return self.twoFingerIntent;
+  }
+  if (fabs(separationNow - separationStart) >= MLNTwoFingerPinchCommitPoints) {
+    self.twoFingerIntent = MLNTwoFingerIntentZoom;
+    return self.twoFingerIntent;
+  }
+  if (travelA < MLNTwoFingerDecisionMinimumTravel || travelB < MLNTwoFingerDecisionMinimumTravel) {
+    return MLNTwoFingerIntentUndecided;
+  }
+  // Both fingers have travelled, the line has neither turned nor stretched: a tilt if each
+  // finger moved mostly vertically and both the same way (GL JS's gestureBeginsVertically).
+  const BOOL aVertical = fabs(day) > fabs(dax), bVertical = fabs(dby) > fabs(dbx);
+  const BOOL sameWay = (day > 0) == (dby > 0);
+  if (aVertical && bVertical && sameWay) {
+    self.twoFingerIntent = MLNTwoFingerIntentTilt;
+  }
+  // Otherwise both fingers travelled together some other way (a two-finger pan): stay undecided
+  // and let nothing act until the line turns, stretches, or the fingers lift.
+  return self.twoFingerIntent;
 }
 
 - (CLLocationDegrees)angleBetweenPoints:(CGPoint)originPoint endPoint:(CGPoint)endPoint {

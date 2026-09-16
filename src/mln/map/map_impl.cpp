@@ -1,4 +1,5 @@
 #include <mln/layermanager/layer_manager.hpp>
+#include <algorithm>
 #include <mln/map/map_impl.hpp>
 #include <mln/renderer/update_parameters.hpp>
 #include <mln/storage/file_source.hpp>
@@ -353,10 +354,63 @@ void Map::Impl::onTerrainCenterElevationChanged(double elevationMeters) {
     // rather than by freezing harder ("Fix the camera jumping at the end of a pan or zoom gesture
     // on terrain", #7989, #3982; "gestures are now solved against the elevation of the terrain
     // under the gesture instead of the frozen center elevation", #8067).
-    // Raising the centre onto the terrain moves the orbit plane, not the centre's lng/lat,
-    // so this settles rather than feeding back into the next frame's sample.
-    transform.jumpTo(CameraOptions().withCenterAltitude(elevationMeters));
+    // Task C7, 16 September 2026. This used to be `jumpTo(withCenterAltitude(elevationMeters))`,
+    // which made the camera's own altitude a readout of the DEM under the map centre. David flew
+    // it and reported the consequence exactly: "the camera goes down and up, very jittery, when
+    // moving forward and backward ... even when the camera is above flat ground with no relief
+    // under it". Measured before this change (development/app-bench/traces/diag-utrecht-flat.jsonl):
+    // on dead-flat Utrecht a single drag sawtoothed the camera over 5 m, because the probe
+    // quantises to about a metre and flips between an exact z14 tile and a z13 ancestor while the
+    // centre moves. At the Gavarnie wall (diag-gavarnie-wall.jsonl) the same mechanism swung the
+    // camera 997 m up and then 386 m back down inside one drag.
+    //
+    // The sample is still needed, and still sampled: the gesture solve plane is right to sit on
+    // the ground under the centre, and the terrain clamp reasons about it too. It is simply
+    // stored now instead of being written into the camera. The camera's altitude is held, and is
+    // moved only by the anticipatory climb below and by a pinch.
+    //
+    // The one exception is the very first sample. Before terrain has been reported at all the
+    // camera is placed relative to sea level, so at Gavarnie it would sit 1850 m underground.
+    // Establishing the altitude once, when there is nothing held yet, is placement rather than
+    // following, and the trace shows it as the single 2003 -> 3854 m step when terrain loads.
+    const bool establishing = !transform.getGroundUnderCentre().has_value();
+    transform.setGroundUnderCentre(elevationMeters);
+    if (establishing) {
+        transform.jumpTo(CameraOptions().withCenterAltitude(elevationMeters));
+    }
     onUpdate();
+}
+
+void Map::Impl::onTerrainForwardRequirementChanged(std::optional<double> requirementMsl) {
+    transform.setForwardRequirement(requirementMsl);
+    if (!requirementMsl) {
+        return;
+    }
+    // Task C7, the anticipatory climb, now expressed as altitude rather than as a zoom clamp.
+    //
+    // The requirement arriving here is already the highest ground along the flight line ahead,
+    // discounted by task C6's climb gradient, so it grows continuously as a wall is approached
+    // instead of stepping when the wall crosses a window edge. The camera must clear it by the
+    // same stand-off the clamp uses, measured rather than chosen: 60 m is the largest height the
+    // DEM's 30 m posts can hide between them.
+    //
+    // Raise only, and rate limited. The discount already makes the target smooth, but the target
+    // can still jump when a better DEM level arrives under the line, and a jump in the target
+    // must not become a jump in the camera. The limit is a ceiling on how much altitude one
+    // frame may add, so a genuinely urgent climb is still answered promptly while a resampling
+    // artefact is spread over several frames and is usually overtaken by the next sample.
+    // Nothing here can ever lower the camera: once gained, the altitude is kept, which is the
+    // property David asked for in "once clear it holds the NEW MSL altitude, never sinks back".
+    constexpr double kMaxClimbPerFrameMeters = 12.0;
+    const double target = *requirementMsl + transform.getTerrainCameraMarginMeters();
+    const double current = transform.getCameraAltitudeMeters();
+    if (!(target > current)) {
+        return;
+    }
+    const double step = std::min(target - current, kMaxClimbPerFrameMeters);
+    if (transform.raiseCameraAltitudeTo(current + step)) {
+        onUpdate();
+    }
 }
 
 void Map::Impl::onTerrainCameraGroundRiseChanged(std::optional<double> riseMeters) {

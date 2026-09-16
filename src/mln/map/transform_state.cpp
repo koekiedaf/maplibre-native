@@ -1108,6 +1108,23 @@ void TransformState::setLatLngZoom(const LatLng& latLng, double zoom) {
     setScalePoint(newScale, point);
 }
 
+bool TransformState::raiseCameraAltitudeTo(double mslMeters) {
+    if (!valid() || !std::isfinite(mslMeters)) {
+        return false;
+    }
+    const double current = getCameraAltitudeMeters();
+    if (!(mslMeters > current)) {
+        // Raise only. This is the guarantee David asked for in so many words: once the camera
+        // has climbed for a wall it holds the altitude it gained and never sinks back.
+        return false;
+    }
+    // The camera sits cos(pitch) * D above the orbit anchor `z`, so lifting the camera by dz
+    // means lifting the anchor by exactly the same dz - the offset depends only on zoom, pitch
+    // and latitude, none of which this touches.
+    setCenterAltitude(getCenterAltitude() + (mslMeters - current));
+    return true;
+}
+
 void TransformState::setCenterAltitude(double alt_m) {
     z = alt_m / Projection::getMetersPerPixelAtLatitude(getLatLng().latitude(), getZoom());
     requestMatricesUpdate = true;

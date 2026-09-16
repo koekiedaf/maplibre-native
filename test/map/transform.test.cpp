@@ -1270,3 +1270,64 @@ TEST(Camera, SetOrientationWithRollNoPitch) {
     EXPECT_NEAR(0.0, roll_, 1.0e-9);
 }
 
+
+// Task C7, 16 September 2026. The guard for David's rule: one-finger travel holds the camera's
+// altitude above mean sea level, and rotation and tilt do not change it either.
+//
+// Before this task the camera's altitude WAS the ground under the map centre plus a constant
+// (Map::Impl::onTerrainCenterElevationChanged wrote the DEM sample straight into the orbit
+// anchor), so a pan across any terrain moved the camera vertically, and on flat ground the DEM
+// probe's own quantisation and its flips between an exact tile and a coarse ancestor moved it
+// anyway. Measured on the simulator before the change: 4.83 m of camera altitude with ten
+// direction reversals on dead-flat Utrecht, and 997 m up then 386 m back down at the Gavarnie
+// wall, inside single drags. This test fails if that coupling ever comes back.
+TEST(Transform, CameraAltitudeHeldThroughPanRotateAndTilt) {
+    Transform transform;
+    transform.resize({1000, 1000});
+    transform.jumpTo(CameraOptions().withCenter(LatLng{42.696, -0.004}).withZoom(14.0).withPitch(60.0));
+
+    // Stand the camera on terrain, the way the render side's first report does.
+    transform.setGroundUnderCentre(1850.0);
+    transform.jumpTo(CameraOptions().withCenterAltitude(1850.0));
+    const double startAltitude = transform.getCameraAltitudeMeters();
+    ASSERT_GT(startAltitude, 1850.0);
+
+    // A pure pan. The ground under the new centre is wildly different - this is the Gavarnie
+    // wall - and the camera must not care.
+    transform.setGroundUnderCentre(2900.0);
+    transform.moveBy({0.0, -200.0});
+    EXPECT_NEAR(startAltitude, transform.getCameraAltitudeMeters(), 1.0);
+
+    // And back again, onto much lower ground. Still no vertical movement.
+    transform.setGroundUnderCentre(1600.0);
+    transform.moveBy({0.0, 200.0});
+    EXPECT_NEAR(startAltitude, transform.getCameraAltitudeMeters(), 1.0);
+
+    // Rotation does not change altitude.
+    transform.jumpTo(CameraOptions().withBearing(90.0));
+    EXPECT_NEAR(startAltitude, transform.getCameraAltitudeMeters(), 1.0);
+
+    // Nor does tilt.
+    transform.jumpTo(CameraOptions().withPitch(30.0));
+    EXPECT_NEAR(startAltitude, transform.getCameraAltitudeMeters(), 1.0);
+}
+
+// The other half of the rule: the anticipatory climb may raise the camera and may never lower it.
+TEST(Transform, AnticipatoryClimbRaisesOnlyAndIsKept) {
+    Transform transform;
+    transform.resize({1000, 1000});
+    transform.jumpTo(CameraOptions().withCenter(LatLng{42.696, -0.004}).withZoom(14.0).withPitch(60.0));
+    transform.setGroundUnderCentre(1850.0);
+    transform.jumpTo(CameraOptions().withCenterAltitude(1850.0));
+
+    const double before = transform.getCameraAltitudeMeters();
+    EXPECT_TRUE(transform.raiseCameraAltitudeTo(before + 100.0));
+    EXPECT_NEAR(before + 100.0, transform.getCameraAltitudeMeters(), 1.0);
+
+    // A lower request changes nothing at all: once gained, the altitude is kept.
+    const double raised = transform.getCameraAltitudeMeters();
+    EXPECT_FALSE(transform.raiseCameraAltitudeTo(raised - 500.0));
+    EXPECT_NEAR(raised, transform.getCameraAltitudeMeters(), 1.0e-6);
+    EXPECT_FALSE(transform.raiseCameraAltitudeTo(raised));
+    EXPECT_NEAR(raised, transform.getCameraAltitudeMeters(), 1.0e-6);
+}

@@ -152,6 +152,14 @@ public:
     }
     std::optional<double> getTerrainCameraGroundRise() const { return state.getTerrainCameraGroundRise(); }
 
+    // Task C7: the camera's own altitude, held rather than slaved to the ground under the centre.
+    void setGroundUnderCentre(std::optional<double> metres) { state.setGroundUnderCentre(metres); }
+    std::optional<double> getGroundUnderCentre() const { return state.getGroundUnderCentre(); }
+    void setForwardRequirement(std::optional<double> metres) { state.setForwardRequirement(metres); }
+    std::optional<double> getForwardRequirement() const { return state.getForwardRequirement(); }
+    bool raiseCameraAltitudeTo(double mslMeters) { return state.raiseCameraAltitudeTo(mslMeters); }
+    double getCameraAltitudeMeters() const { return state.getCameraAltitudeMeters(); }
+
 private:
     TransformObserver& observer;
     TransformState state;

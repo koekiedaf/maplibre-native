@@ -990,6 +990,20 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                 ? std::optional<double>(*forwardMaxElevation - *queriedCenterElevation)
                 : std::nullopt;
         traceCameraGroundRise = cameraGroundRise;
+        // Task C7: the same forward requirement, reported ABSOLUTELY as well. The rise above is
+        // kept for the zoom/pitch clamp, which is expressed relative to the centre; the camera's
+        // held altitude needs the number in metres above sea level, because it is no longer
+        // pinned to the centre for a relative figure to be relative to.
+        const bool forwardValidityChanged =
+            forwardMaxElevation.has_value() != lastReportedForwardRequirement.has_value();
+        const bool forwardChanged =
+            forwardValidityChanged ||
+            (forwardMaxElevation && lastReportedForwardRequirement &&
+             std::abs(*forwardMaxElevation - *lastReportedForwardRequirement) > 0.25);
+        if (forwardChanged) {
+            lastReportedForwardRequirement = forwardMaxElevation;
+            observer->onTerrainForwardRequirementChanged(forwardMaxElevation);
+        }
         const bool cameraGroundValidityChanged =
             cameraGroundRise.has_value() != lastReportedCameraGroundRise.has_value();
         const bool cameraGroundChanged =

@@ -68,6 +68,11 @@ public:
     /// it - the DEM lives there - so a map that wants its centre to ride the terrain
     /// (Map::setCenterClampedToGround) learns of it here, one frame behind.
     virtual void onTerrainCenterElevationChanged(double /*elevationMeters*/) {}
+    /// Task C7: the highest ground along the flight line ahead, already discounted by the climb
+    /// gradient, in metres above sea level; nullopt when no DEM along that line could be read.
+    /// Absolute rather than relative to the centre, because the camera's altitude is no longer
+    /// tied to the centre.
+    virtual void onTerrainForwardRequirementChanged(std::optional<double> /*requirementMsl*/) {}
 
     /// The camera-ground RISE changed (task 2.0b): the rendered terrain height under the
     /// camera's own ground point MINUS the rendered terrain height under the map centre, both

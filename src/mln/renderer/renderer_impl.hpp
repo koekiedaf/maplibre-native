@@ -114,6 +114,9 @@ private:
     /// frame so neither side can be stale relative to the other. nullopt means "no render
     /// terrain reported yet", distinct from a reported rise of zero.
     std::optional<double> lastReportedCameraGroundRise;
+    /// Task C7: the last absolute forward requirement reported to the map thread, gated by the
+    /// same 0.25 m step as the rise beside it.
+    std::optional<double> lastReportedForwardRequirement;
     /// Band-aid audit item 6: last value reported via `onSettleBoundGivenUp`, so an
     /// unchanged value (nullopt most of the time - the healthy case) does not post an
     /// observer message every frame. Mirrors `lastReportedCenterElevation`/

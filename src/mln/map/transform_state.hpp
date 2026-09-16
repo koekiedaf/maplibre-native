@@ -294,7 +294,34 @@ public:
     /// every frame. `moveBy` now takes the difference of two rays on the SAME plane, so the
     /// plane's own offset cancels exactly and a frozen plane cannot drift the centre. That is the
     /// rule `moveLatLng` below already followed and the one GL JS's `setLocationAtPoint` states.
-    double getGroundPlaneAltitude() const { return gesturePlaneAltitude.value_or(getCenterAltitude()); }
+    /// Task C7 (16 September 2026): the ground under the map centre as the RENDER side last
+    /// sampled it, stored here instead of being written straight into the camera's own altitude.
+    ///
+    /// Until this task the two were one number: `Map::Impl::onTerrainCenterElevationChanged`
+    /// wrote the DEM sample into `z`, so the camera's altitude WAS the ground under the centre
+    /// plus a constant, and every wobble in the sample moved the camera. Measured on flat
+    /// Utrecht, a one-finger drag made the camera sawtooth over 5 m of altitude on ground with
+    /// no relief in it, because the probe quantises to about a metre and flips between an exact
+    /// z14 tile and a z13 ancestor as tiles come and go; at Gavarnie one such flip was worth
+    /// 190 m mid-drag. That is David's "goes down and up, very jittery, even over flat ground".
+    ///
+    /// The gesture solve plane still needs this number and is still right to want it - solving a
+    /// gesture on any plane but the ground under the centre is the 11 September "jumps around
+    /// like crazy" fault - so it keeps being sampled and kept fresh here. What changed is only
+    /// that it no longer moves the camera.
+    void setGroundUnderCentre(std::optional<double> metres) { groundUnderCentreMsl = metres; }
+    std::optional<double> getGroundUnderCentre() const { return groundUnderCentreMsl; }
+
+    /// The plane a gesture is solved on: the gesture's own grabbed altitude while one is
+    /// running, otherwise the ground under the centre. Falls back to the camera's own centre
+    /// altitude only before the render side has ever reported a sample, which is the same
+    /// behaviour this had before the two numbers were separated.
+    double getGroundPlaneAltitude() const {
+        if (gesturePlaneAltitude) {
+            return *gesturePlaneAltitude;
+        }
+        return groundUnderCentreMsl.value_or(getCenterAltitude());
+    }
     // Implements mapbox-gl-js pointCoordinate() : MercatorCoordinate.
     // `targetZ` is the world z of the plane to intersect, in metres above sea level.
     TileCoordinate screenCoordinateToTileCoordinate(const ScreenCoordinate&,
@@ -322,6 +349,15 @@ public:
     /// terrain at the moment the clamp runs, and comparing that stale number against a fresh
     /// absolute ground height poisons the result. The rise carries no dependency on either
     /// thread's notion of centre altitude, so it cannot be poisoned by it.
+    /// Task C7: see `forwardRequirementMsl`.
+    void setForwardRequirement(std::optional<double> metres) { forwardRequirementMsl = metres; }
+    std::optional<double> getForwardRequirement() const { return forwardRequirementMsl; }
+    /// Task C7: raise the camera to `mslMeters` above sea level by moving its orbit anchor `z`,
+    /// leaving the centre's lng/lat, the zoom, the pitch and the gesture plane alone. Raise
+    /// only: a request below where the camera already is returns false and changes nothing,
+    /// because the anticipatory climb must never be able to push the camera back down. Pinch
+    /// descends by changing zoom, which is a different path entirely.
+    bool raiseCameraAltitudeTo(double mslMeters);
     void setTerrainCameraGroundRise(std::optional<double> metres) { terrainCameraGroundRise = metres; }
     std::optional<double> getTerrainCameraGroundRise() const { return terrainCameraGroundRise; }
 
@@ -484,6 +520,15 @@ private:
     /// `getGroundPlaneAltitude` then reads the centre's own altitude. See that accessor for why
     /// this is not the same number as the camera's orbit altitude.
     std::optional<double> gesturePlaneAltitude;
+    // Task C7: the render side's latest ground-under-centre sample. Feeds the gesture plane and
+    // the terrain clamp; never the camera's altitude.
+    std::optional<double> groundUnderCentreMsl;
+    // Task C7: the highest ground the forward/rearward flight line demands the camera clear,
+    // already discounted by the climb gradient, in metres above sea level. The render side
+    // computes it (Renderer::Impl::render, task C6's sampler); the map thread raises the held
+    // camera altitude towards it. Absolute rather than a rise relative to the centre, because
+    // the camera's altitude is no longer tied to the centre for the rise to be relative to.
+    std::optional<double> forwardRequirementMsl;
     // The zoom/pitch floor: set the moment a gesture begins (the false-to-true edge of
     // setGestureInProgress) and NOT cleared when the gesture ends - it persists so the terrain-
     // rise correction cannot ratchet the camera past where the gesture that provoked it started.

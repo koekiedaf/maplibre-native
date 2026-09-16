@@ -2715,6 +2715,19 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
       CGFloat pitchNew = initialPitch - (gestureDistance / slowdown);
 
       CGPoint centerPoint = [self anchorPointForGesture:twoFingerDrag];
+      // Task C8, 16 September 2026: honour anchorRotateOrZoomGesturesToCenterCoordinate for the
+      // tilt as well. Only the rotate and zoom handlers consulted it, so a tilt still pivoted
+      // about the midpoint between the fingers even when the app had asked for everything to
+      // pivot about the screen centre. That matters far more for a tilt than it looks: holding
+      // the camera's altitude through a tilt changes the zoom (see
+      // TransformState::holdCameraAltitudeAcrossPitch), and re-pinning an off-centre anchor
+      // against the new zoom dragged the centre kilometres - measured at 2493.5 m through a 40
+      // to 80 degree sweep, with the altitude hold fighting the pin the whole way. With the
+      // anchor on the screen centre a pure tilt leaves the centre where it is and only the
+      // distance changes, which is the behaviour David asked for.
+      if (self.anchorRotateOrZoomGesturesToCenterCoordinate) {
+        centerPoint = [self contentCenter];
+      }
 
       MLNMapCamera *oldCamera = self.camera;
       MLNMapCamera *toCamera = [self cameraByTiltingToPitch:pitchNew];

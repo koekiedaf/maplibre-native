@@ -1051,15 +1051,33 @@ std::optional<double> RenderTerrain::queryElevationForLatLng(const LatLng& latLn
         return std::nullopt; // past a pole
     }
 
-    const UnwrappedTileID sampleTile(static_cast<uint8_t>(sampleZoom), tx, ty);
-    const auto localX = static_cast<float>((fx - static_cast<double>(tx)) * util::EXTENT);
-    const auto localY = static_cast<float>((fy - static_cast<double>(ty)) * util::EXTENT);
-    const auto elevation = queryElevation(sampleTile, localX, localY);
-    if (!elevation) {
-        return std::nullopt; // resolved to a tile with no decoded DEM (including the flat
-                              // placeholder rendering would otherwise fall back to)
+    // Task C8 part 3, 16 September 2026. This used to sample at `sampleZoom` and nowhere else,
+    // and `sampleZoom` is the DEEPEST DEM zoom loaded anywhere in view. A point outside that
+    // level's own coverage therefore missed completely and was reported as "no DEM here", even
+    // with perfectly good coarser tiles loaded over it. That is why the camera's own ground
+    // point - which sits behind the visible area at any pitch, so its deep tile is very often
+    // not loaded - read as no-hit on most frames of a travel trace, which left the 60 m terrain
+    // floor with no input exactly while the camera was moving.
+    //
+    // So the walk now falls back level by level to the best DEM actually available, deepest
+    // first, and only gives up when nothing at any level can be read. The level that served the
+    // sample is what `probeElevationForLatLng` reports as `demZ`, so the trace shows it.
+    for (int z = sampleZoom; z >= 0; --z) {
+        const double nz = std::pow(2.0, z);
+        const auto p = Projection::project(latLng, z);
+        const auto zx = static_cast<int64_t>(std::floor(p.x));
+        const auto zy = static_cast<int64_t>(std::floor(p.y));
+        if (zy < 0 || static_cast<double>(zy) >= nz) {
+            continue;
+        }
+        const UnwrappedTileID tile(static_cast<uint8_t>(z), zx, zy);
+        const auto lx = static_cast<float>((p.x - static_cast<double>(zx)) * util::EXTENT);
+        const auto ly = static_cast<float>((p.y - static_cast<double>(zy)) * util::EXTENT);
+        if (const auto elevation = queryElevation(tile, lx, ly)) {
+            return static_cast<double>(*elevation) * static_cast<double>(getExaggeration());
+        }
     }
-    return static_cast<double>(*elevation) * static_cast<double>(getExaggeration());
+    return std::nullopt; // nothing decoded at any level over this point
 }
 
 RenderTerrain::ElevationProbe RenderTerrain::probeElevationForLatLng(const LatLng& latLng) const {
@@ -1090,9 +1108,30 @@ RenderTerrain::ElevationProbe RenderTerrain::probeElevationForLatLng(const LatLn
         return probe; // past a pole
     }
 
-    const UnwrappedTileID sampleTile(static_cast<uint8_t>(sampleZoom), tx, ty);
-    const auto localX = static_cast<float>((fx - static_cast<double>(tx)) * util::EXTENT);
-    const auto localY = static_cast<float>((fy - static_cast<double>(ty)) * util::EXTENT);
+    // Task C8 part 3: the same deepest-first fallback as queryElevationForLatLng above, so the
+    // probe reports the level that actually served the sample rather than reporting a miss at the
+    // deepest level loaded somewhere else in the view.
+    UnwrappedTileID sampleTile(static_cast<uint8_t>(sampleZoom), tx, ty);
+    auto localX = static_cast<float>((fx - static_cast<double>(tx)) * util::EXTENT);
+    auto localY = static_cast<float>((fy - static_cast<double>(ty)) * util::EXTENT);
+    for (int z = sampleZoom; z >= 0; --z) {
+        const double nz = std::pow(2.0, z);
+        const auto p = Projection::project(latLng, z);
+        const auto zx = static_cast<int64_t>(std::floor(p.x));
+        const auto zy = static_cast<int64_t>(std::floor(p.y));
+        if (zy < 0 || static_cast<double>(zy) >= nz) {
+            continue;
+        }
+        const UnwrappedTileID candidate(static_cast<uint8_t>(z), zx, zy);
+        const auto lx = static_cast<float>((p.x - static_cast<double>(zx)) * util::EXTENT);
+        const auto ly = static_cast<float>((p.y - static_cast<double>(zy)) * util::EXTENT);
+        if (findElevationSample(candidate, lx, ly).hit) {
+            sampleTile = candidate;
+            localX = lx;
+            localY = ly;
+            break;
+        }
+    }
 
     const auto sample = findElevationSample(sampleTile, localX, localY);
     probe.hit = sample.hit;

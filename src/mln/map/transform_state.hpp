@@ -379,6 +379,14 @@ public:
     /// is why it does not fight itself the way a zoom-plus-anchor-pin did (task C8 part 2,
     /// measured at 2 to 4 km of pivot drift across three orderings).
     void orbitHeldPivot();
+    /// Task E: the terrain clearance along the centre ray as the render side last measured it.
+    void setCenterRayClearance(std::optional<double> metres) { centerRayClearanceMeters = metres; }
+    void setCenterRayMaxPitch(std::optional<double> radians) { centerRayMaxPitch = radians; }
+    std::optional<double> getCenterRayClearance() const { return centerRayClearanceMeters; }
+    /// Task E: how close the camera may come to the terrain along its own ray while tilting.
+    /// 5 m, David's number. Distinct from the 60 m stand-off, which stays for one-finger travel,
+    /// the anticipatory climb and the pinch.
+    static constexpr double tiltClearanceMeters = 5.0;
     void setTerrainCameraGroundRise(std::optional<double> metres) { terrainCameraGroundRise = metres; }
     std::optional<double> getTerrainCameraGroundRise() const { return terrainCameraGroundRise; }
 
@@ -553,7 +561,22 @@ private:
     // Task C9: the render side's latest centre-ray hit, and the one held for the gesture.
     std::optional<CenterRayHit> centerRayHit;
     std::optional<CenterRayHit> orbitPivot;
-    double orbitAltitudeMsl = 0.0;
+    // Task E (17 September 2026): the orbit radius held for the gesture, in metres from the
+    // camera to the pivot. David flew the altitude-held tilt and corrected it: a tilt keeps the
+    // DISTANCE to the laser target constant and lets the altitude change with pitch by design.
+    double orbitRadiusMeters = 0.0;
+    // Task E: the render side's latest "camera altitude minus the highest terrain along the
+    // centre ray between the camera and the pivot", in metres. A tilt stops where this would
+    // fall below the tilt clearance.
+    std::optional<double> centerRayClearanceMeters;
+    // Task E: the last pitch at which the clearance was still satisfied, the value a tilt is
+    // held at when it would otherwise flatten into the terrain.
+    double lastClearedPitch = 0.0;
+    // Task E: the flattest pitch the render side says this orbit may reach with the clearance
+    // kept. Captured with the pivot at gesture start? No - refreshed every frame, because the
+    // search is for THIS radius and THIS bearing, both of which the gesture holds fixed, so the
+    // answer is stable across the gesture and fresher is better.
+    std::optional<double> centerRayMaxPitch;
     // The zoom/pitch floor: set the moment a gesture begins (the false-to-true edge of
     // setGestureInProgress) and NOT cleared when the gesture ends - it persists so the terrain-
     // rise correction cannot ratchet the camera past where the gesture that provoked it started.

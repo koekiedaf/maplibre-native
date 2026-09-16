@@ -120,6 +120,8 @@ private:
     /// Task C9: the last centre-ray terrain hit reported, gated on a 0.5 m move in altitude or
     /// about a metre on the ground so a still map does not post a message a frame.
     std::optional<RendererObserver::CenterRayHit> lastReportedCenterRayHit;
+    std::optional<double> lastReportedCenterRayClearance;
+    std::optional<double> lastReportedCenterRayMaxPitch;
     /// Band-aid audit item 6: last value reported via `onSettleBoundGivenUp`, so an
     /// unchanged value (nullopt most of the time - the healthy case) does not post an
     /// observer message every frame. Mirrors `lastReportedCenterElevation`/

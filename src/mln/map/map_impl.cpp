@@ -393,6 +393,14 @@ void Map::Impl::onTerrainCenterRayHitChanged(std::optional<RendererObserver::Cen
     }
 }
 
+void Map::Impl::onTerrainCenterRayClearanceChanged(std::optional<double> metres) {
+    transform.setCenterRayClearance(metres);
+}
+
+void Map::Impl::onTerrainCenterRayMaxPitchChanged(std::optional<double> radians) {
+    transform.setCenterRayMaxPitch(radians);
+}
+
 void Map::Impl::onTerrainForwardRequirementChanged(std::optional<double> requirementMsl) {
     transform.setForwardRequirement(requirementMsl);
     if (!requirementMsl) {

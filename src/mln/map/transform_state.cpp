@@ -810,9 +810,12 @@ void TransformState::setGestureInProgress(bool val) {
         // fingers are solved against the face they are looking at rather than the coordinate
         // under the sea-level centre behind it.
         orbitPivot = centerRayHit;
-        orbitAltitudeMsl = getCameraAltitudeMeters();
         if (orbitPivot) {
             gesturePlaneAltitude = orbitPivot->altitudeMeters;
+            // Task E: the radius is fixed for the gesture. It is the true straight-line distance
+            // from the camera to the pivot as the ray march measured it, which is what the pitch
+            // and zoom together must keep reproducing while the fingers move.
+            orbitRadiusMeters = orbitPivot->distanceMeters;
         }
     } else if (!val && gestureInProgress) {
         gesturePlaneAltitude.reset();
@@ -1141,21 +1144,38 @@ void TransformState::orbitHeldPivot() {
         return;
     }
     const double pivotAlt = orbitPivot->altitudeMeters;
-    const double height = orbitAltitudeMsl - pivotAlt;
-    if (!(height > 0.0) || !std::isfinite(height)) {
+    const double radius = orbitRadiusMeters;
+    if (!(radius > 0.0) || !std::isfinite(radius)) {
         return;
+    }
+    // Task E: an orbit at fixed radius about the laser target. David's correction after flying
+    // the altitude-held tilt: "tilt must keep the distance from the camera to the laser target
+    // constant; altitude changes with pitch by design". The camera sits `radius` metres from
+    // the pivot along the view ray at whatever pitch and bearing the gesture has set, so its
+    // altitude is pivot + radius * cos(pitch) and falls towards the pivot's own height as the
+    // view flattens. That is the sphere the brief described, and it is exactly what a rotate
+    // already did (altitude unchanged because pitch is unchanged).
+    //
+    // The horizontal limit is not a pitch number but a clearance: the tilt stops where the
+    // camera would come within tiltClearanceMeters of the terrain along the ray between it and
+    // the pivot. The render side measures that clearance every frame (setCenterRayClearance);
+    // here, when the clearance the last frame reported is already below the floor, the pitch
+    // is held at the value that last satisfied it rather than allowed to flatten further. The
+    // vertical limit is straight down, pitch 0, which the pitch range already enforces.
+    if (centerRayMaxPitch && getPitch() > *centerRayMaxPitch) {
+        pitch = *centerRayMaxPitch;
     }
     const double cosPitch = std::cos(getPitch());
     const double distancePixels = static_cast<double>(getCameraToCenterDistance());
     if (!(cosPitch > 0.0) || !(distancePixels > 0.0)) {
         return;
     }
-    // The centre IS the pivot: the ray through the screen centre meets the terrain there, so that
-    // is where the orbit plane sits and what the camera looks at. The zoom is whatever puts the
-    // camera at the solved distance, at the pivot's own latitude.
+    // The camera-to-centre distance is fixed in pixels, so the radius in metres is that pixel
+    // distance times metres-per-pixel, and metres-per-pixel is the zoom. Keeping the radius
+    // therefore means keeping the zoom that produces it at the pivot's latitude.
     const double lat = orbitPivot->latLng.latitude();
     const double mppNow = Projection::getMetersPerPixelAtLatitude(lat, getZoom());
-    const double mppWanted = height / (cosPitch * distancePixels);
+    const double mppWanted = radius / distancePixels;
     double wantedZoom = getZoom();
     if (mppNow > 0.0 && mppWanted > 0.0 && std::isfinite(mppWanted)) {
         const double z = getZoom() + std::log2(mppNow / mppWanted);

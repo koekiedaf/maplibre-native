@@ -1014,6 +1014,8 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // and the one before it, so a face filling the centre of the screen is met on the face
         // and not behind it at the coordinate under the sea-level centre.
         std::optional<RendererObserver::CenterRayHit> centerRayHit;
+        std::optional<double> centerRayClearance;
+        std::optional<double> centerRayMaxPitch;
         if (terrain) {
             const auto& ts = updateParameters->transformState;
             const LatLng camLL = ts.getCameraLatLng();
@@ -1043,12 +1045,24 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                 bool prevAbove = true;
                 bool found = false;
                 double hitT = 0.0;
+                // Task E: the smallest vertical gap between the ray and the terrain on the way to
+                // the hit, which is what a tilt must not let fall below the tilt clearance. The
+                // ray's own altitude at each sample stands in for the camera's: the camera is the
+                // near end of that ray, and the terrain closest to it is what it would meet first.
+                std::optional<double> minClearance;
                 for (int i = 1; i <= kSteps; ++i) {
                     const double t = kReach * static_cast<double>(i) / static_cast<double>(kSteps);
                     const auto g = groundAt(t);
                     if (!g) {
                         prevT = t;
                         continue;
+                    }
+                    const double gap = rayAltAt(t) - *g;
+                    // The gap goes to zero AT the hit by definition; the clearance that matters is
+                    // over the terrain between the camera and the target, so samples in the last
+                    // tenth of the way to the plane point are not part of it.
+                    if (t < 0.9 && (!minClearance || gap < *minClearance)) {
+                        minClearance = gap;
                     }
                     const bool above = rayAltAt(t) > *g;
                     if (!above && prevAbove) {
@@ -1071,6 +1085,45 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                     prevAbove = above;
                     prevT = t;
                 }
+                centerRayClearance = minClearance;
+                // Task E: the flattest pitch this orbit may reach before the camera or its ray
+                // comes within the tilt clearance of the terrain. Searched here, on the render
+                // thread, because only this side has the DEM: for candidate pitches from the
+                // current one up to the horizon, place the camera at the current radius from the
+                // hit along the current bearing, walk the segment from the hit back to that
+                // camera, and keep the largest pitch whose smallest gap is still at least the
+                // clearance. The map thread clamps a tilt to this number, so the stop is exact
+                // rather than one frame late.
+                if (found) {
+                    const double pivotX = camP.x + dx * hitT;
+                    const double pivotY = camP.y + dy * hitT;
+                    const double pivotAlt = groundAt(hitT).value_or(rayAltAt(hitT));
+                    const double radiusM = std::hypot(groundLen * hitT * mpu, camAlt - rayAltAt(hitT));
+                    const double ux = dx / groundLen;
+                    const double uy = dy / groundLen;
+                    const double currentPitch = ts.getPitch();
+                    constexpr double kClearance = 5.0;
+                    constexpr int kPitchSteps = 60;
+                    constexpr int kSegSteps = 40;
+                    double maxOkPitch = currentPitch;
+                    for (int k = 0; k <= kPitchSteps; ++k) {
+                        const double theta = currentPitch + (M_PI / 2.0 - 0.01 - currentPitch) * k / kPitchSteps;
+                        const double back = radiusM * std::sin(theta) / mpu; // projected units
+                        const double up = radiusM * std::cos(theta);
+                        bool ok = true;
+                        // f runs from the camera (1) towards the pivot (0); the pivot's own
+                        // neighbourhood is excluded for the same reason as above.
+                        for (int j = kSegSteps; j >= 4; --j) {
+                            const double f = static_cast<double>(j) / kSegSteps;
+                            const auto gg = terrain->queryElevationForLatLng(
+                                Projection::unproject({pivotX - ux * back * f, pivotY - uy * back * f}, kScale));
+                            if (!gg) continue;
+                            if (pivotAlt + up * f - *gg < kClearance) { ok = false; break; }
+                        }
+                        if (ok) maxOkPitch = theta; else break;
+                    }
+                    centerRayMaxPitch = maxOkPitch;
+                }
                 if (found) {
                     const LatLng hitLL = Projection::unproject({camP.x + dx * hitT, camP.y + dy * hitT}, kScale);
                     const auto gh = groundAt(hitT);
@@ -1092,6 +1145,22 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         if (rayValidityChanged || rayMoved) {
             lastReportedCenterRayHit = centerRayHit;
             observer->onTerrainCenterRayHitChanged(centerRayHit);
+        }
+        const bool clearanceChanged =
+            centerRayClearance.has_value() != lastReportedCenterRayClearance.has_value() ||
+            (centerRayClearance && lastReportedCenterRayClearance &&
+             std::abs(*centerRayClearance - *lastReportedCenterRayClearance) > 0.25);
+        if (clearanceChanged) {
+            lastReportedCenterRayClearance = centerRayClearance;
+            observer->onTerrainCenterRayClearanceChanged(centerRayClearance);
+        }
+        const bool maxPitchChanged =
+            centerRayMaxPitch.has_value() != lastReportedCenterRayMaxPitch.has_value() ||
+            (centerRayMaxPitch && lastReportedCenterRayMaxPitch &&
+             std::abs(*centerRayMaxPitch - *lastReportedCenterRayMaxPitch) > 0.002);
+        if (maxPitchChanged) {
+            lastReportedCenterRayMaxPitch = centerRayMaxPitch;
+            observer->onTerrainCenterRayMaxPitchChanged(centerRayMaxPitch);
         }
         const bool cameraGroundValidityChanged =
             cameraGroundRise.has_value() != lastReportedCameraGroundRise.has_value();
@@ -1275,6 +1344,10 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             } else {
                 os << "null";
             }
+            os << ",\"rayMaxPitchDeg\":";
+            if (lastReportedCenterRayMaxPitch) { os << (*lastReportedCenterRayMaxPitch * 180.0 / M_PI); } else { os << "null"; }
+            os << ",\"rayClearanceM\":";
+            if (lastReportedCenterRayClearance) { os << *lastReportedCenterRayClearance; } else { os << "null"; }
             os << ",\"cameraAltitudeM\":" << transformState.getCameraAltitudeMeters()
                << ",\"terrain\":" << (traceTerrain ? "true" : "false") << ",\"center\":{\"m\":"
                << centerProbe.meters << ",\"demZ\":" << static_cast<int>(centerProbe.demZ)

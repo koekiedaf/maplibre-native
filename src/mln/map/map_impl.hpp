@@ -66,6 +66,8 @@ public:
     void onTerrainCenterElevationChanged(double elevationMeters) final;
     void onTerrainForwardRequirementChanged(std::optional<double> requirementMsl) final;
     void onTerrainCenterRayHitChanged(std::optional<RendererObserver::CenterRayHit> hit) final;
+    void onTerrainCenterRayClearanceChanged(std::optional<double> metres) final;
+    void onTerrainCenterRayMaxPitchChanged(std::optional<double> radians) final;
     void onTerrainCameraGroundRiseChanged(std::optional<double> riseMeters) final;
     void onSettleBoundGivenUp(const std::optional<std::string>& boundNames) final;
     void onStyleImageMissing(const std::string&, const std::function<void()>&) final;

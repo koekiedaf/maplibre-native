@@ -88,6 +88,13 @@ public:
         double distanceMeters;
     };
     virtual void onTerrainCenterRayHitChanged(std::optional<CenterRayHit> /*hit*/) {}
+    /// Task E (17 September 2026): the camera's altitude minus the highest terrain along the
+    /// centre ray between the camera and its first hit, in metres. A tilt stops where this
+    /// would fall below the tilt clearance. nullopt when nothing along the ray could be read.
+    virtual void onTerrainCenterRayClearanceChanged(std::optional<double> /*metres*/) {}
+    /// Task E: the flattest pitch (radians) at which an orbit at the current radius about the
+    /// centre-ray hit still keeps the tilt clearance along the ray; nullopt when unknown.
+    virtual void onTerrainCenterRayMaxPitchChanged(std::optional<double> /*radians*/) {}
 
     /// The camera-ground RISE changed (task 2.0b): the rendered terrain height under the
     /// camera's own ground point MINUS the rendered terrain height under the map centre, both

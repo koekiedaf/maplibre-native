@@ -644,6 +644,12 @@ void Transform::startTransition(const CameraOptions& camera,
     const bool zoomRequested = camera.zoom.has_value();
     const bool pitchRequested = camera.pitch.has_value();
     const bool centerRequested = camera.center.has_value();
+    const bool bearingRequested = camera.bearing.has_value();
+    // Task C9: a rotate or a tilt, with a pivot held for this gesture, orbits that pivot. Only
+    // when neither zoom nor centre is being asked for: a pinch names the zoom and may change
+    // altitude deliberately, and a centre change is a pan or a programmatic move.
+    const bool orbitsPivot = (pitchRequested || bearingRequested) && !zoomRequested && !centerRequested &&
+                             state.isGestureInProgress() && state.getOrbitPivot().has_value();
 
     // Captured once, here, before this transition's first frame runs - not inside
     // transitionFrameFn, which would re-read a value the previous frame of this same transition
@@ -653,7 +659,7 @@ void Transform::startTransition(const CameraOptions& camera,
     const double previousPitch = state.getPitch();
 
     transitionFrameFn = [isAnimated, animation, frame, anchor, anchorLatLng, zoomRequested, pitchRequested,
-                         centerRequested, previousZoom, previousPitch, this](const TimePoint now) {
+                         centerRequested, previousZoom, previousPitch, orbitsPivot, this](const TimePoint now) {
         float t = isAnimated ? (std::chrono::duration<float>(now - transitionStart) / transitionDuration) : 1.0f;
         if (t >= 1.0) {
             frame(1.0);
@@ -662,7 +668,13 @@ void Transform::startTransition(const CameraOptions& camera,
             frame(ease.solve(t, 0.001));
         }
 
-        if (anchor) state.moveLatLng(anchorLatLng, *anchor);
+        if (orbitsPivot) {
+            // The pivot is the centre by construction, so no anchor pin: the state is written
+            // once from the pivot, the new pitch/bearing and the held altitude.
+            state.orbitHeldPivot();
+        } else if (anchor) {
+            state.moveLatLng(anchorLatLng, *anchor);
+        }
 
         // Every camera path funnels through here (jumpTo, easeTo, flyTo, moveBy, rotateBy and
         // every gesture), so this is the one place the camera's own altitude is tested against

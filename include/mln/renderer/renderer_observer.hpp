@@ -73,6 +73,21 @@ public:
     /// Absolute rather than relative to the centre, because the camera's altitude is no longer
     /// tied to the centre.
     virtual void onTerrainForwardRequirementChanged(std::optional<double> /*requirementMsl*/) {}
+    /// Task C9 (16 September 2026): where the ray through the CENTRE of the screen first meets
+    /// the terrain, marched against the DEM on the render thread. This is the pivot David asked
+    /// for in so many words - "a laser pointer through the centre of the screen; whatever
+    /// terrain it hits first is the pivot" - and it differs from the ground under the centre's
+    /// map coordinate exactly on a slope facing the camera, where the ray meets the face nearer
+    /// and higher than the DEM under the centre's sea-level coordinate. nullopt when no DEM
+    /// along the ray could be read or the ray meets nothing before its far end.
+    struct CenterRayHit {
+        double longitude;
+        double latitude;
+        double altitudeMeters;
+        /// Straight-line distance from the camera to the hit, in metres, for the trace.
+        double distanceMeters;
+    };
+    virtual void onTerrainCenterRayHitChanged(std::optional<CenterRayHit> /*hit*/) {}
 
     /// The camera-ground RISE changed (task 2.0b): the rendered terrain height under the
     /// camera's own ground point MINUS the rendered terrain height under the map centre, both

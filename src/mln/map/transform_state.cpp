@@ -804,8 +804,19 @@ void TransformState::setGestureInProgress(bool val) {
         // where they grabbed it even though the camera's orbit altitude goes on following the
         // terrain under the centre for the whole gesture.
         gesturePlaneAltitude = getCenterAltitude();
+        // Task C9: the laser is re-aimed every frame while nothing is held; the gesture that
+        // begins now grabs wherever it points and keeps it. A rotate or tilt then orbits this
+        // point (orbitHeldPivot), and its gesture plane is the point's own altitude, so the
+        // fingers are solved against the face they are looking at rather than the coordinate
+        // under the sea-level centre behind it.
+        orbitPivot = centerRayHit;
+        orbitAltitudeMsl = getCameraAltitudeMeters();
+        if (orbitPivot) {
+            gesturePlaneAltitude = orbitPivot->altitudeMeters;
+        }
     } else if (!val && gestureInProgress) {
         gesturePlaneAltitude.reset();
+        orbitPivot.reset();
     }
     gestureInProgress = val;
 }
@@ -1123,6 +1134,39 @@ bool TransformState::raiseCameraAltitudeTo(double mslMeters) {
     // and latitude, none of which this touches.
     setCenterAltitude(getCenterAltitude() + (mslMeters - current));
     return true;
+}
+
+void TransformState::orbitHeldPivot() {
+    if (!valid() || !orbitPivot) {
+        return;
+    }
+    const double pivotAlt = orbitPivot->altitudeMeters;
+    const double height = orbitAltitudeMsl - pivotAlt;
+    if (!(height > 0.0) || !std::isfinite(height)) {
+        return;
+    }
+    const double cosPitch = std::cos(getPitch());
+    const double distancePixels = static_cast<double>(getCameraToCenterDistance());
+    if (!(cosPitch > 0.0) || !(distancePixels > 0.0)) {
+        return;
+    }
+    // The centre IS the pivot: the ray through the screen centre meets the terrain there, so that
+    // is where the orbit plane sits and what the camera looks at. The zoom is whatever puts the
+    // camera at the solved distance, at the pivot's own latitude.
+    const double lat = orbitPivot->latLng.latitude();
+    const double mppNow = Projection::getMetersPerPixelAtLatitude(lat, getZoom());
+    const double mppWanted = height / (cosPitch * distancePixels);
+    double wantedZoom = getZoom();
+    if (mppNow > 0.0 && mppWanted > 0.0 && std::isfinite(mppWanted)) {
+        const double z = getZoom() + std::log2(mppNow / mppWanted);
+        if (std::isfinite(z)) {
+            wantedZoom = util::clamp(z, getMinZoom(), getMaxZoom());
+        }
+    }
+    setLatLngZoom(orbitPivot->latLng, wantedZoom);
+    // Written last: setLatLngZoom leaves the stored pixel-space z alone and the new zoom would
+    // reinterpret it, exactly as constrainCameraAboveTerrain notes for the same call.
+    setCenterAltitude(pivotAlt);
 }
 
 void TransformState::setCenterAltitude(double alt_m) {

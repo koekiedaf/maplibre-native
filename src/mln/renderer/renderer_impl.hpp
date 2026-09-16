@@ -117,6 +117,9 @@ private:
     /// Task C7: the last absolute forward requirement reported to the map thread, gated by the
     /// same 0.25 m step as the rise beside it.
     std::optional<double> lastReportedForwardRequirement;
+    /// Task C9: the last centre-ray terrain hit reported, gated on a 0.5 m move in altitude or
+    /// about a metre on the ground so a still map does not post a message a frame.
+    std::optional<RendererObserver::CenterRayHit> lastReportedCenterRayHit;
     /// Band-aid audit item 6: last value reported via `onSettleBoundGivenUp`, so an
     /// unchanged value (nullopt most of the time - the healthy case) does not post an
     /// observer message every frame. Mirrors `lastReportedCenterElevation`/

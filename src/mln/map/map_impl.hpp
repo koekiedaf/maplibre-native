@@ -65,6 +65,7 @@ public:
     void onDidFinishRenderingMap() final;
     void onTerrainCenterElevationChanged(double elevationMeters) final;
     void onTerrainForwardRequirementChanged(std::optional<double> requirementMsl) final;
+    void onTerrainCenterRayHitChanged(std::optional<RendererObserver::CenterRayHit> hit) final;
     void onTerrainCameraGroundRiseChanged(std::optional<double> riseMeters) final;
     void onSettleBoundGivenUp(const std::optional<std::string>& boundNames) final;
     void onStyleImageMissing(const std::string&, const std::function<void()>&) final;

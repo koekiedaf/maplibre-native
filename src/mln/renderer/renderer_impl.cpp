@@ -1004,6 +1004,95 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             lastReportedForwardRequirement = forwardMaxElevation;
             observer->onTerrainForwardRequirementChanged(forwardMaxElevation);
         }
+
+        // Task C9: the centre-ray terrain hit - David's laser pointer through the middle of the
+        // screen. The ray runs from the camera through the point where the screen centre meets
+        // the centre's orbit plane, and on past it. It is walked in projected coordinates, the
+        // same way the forward sampler above walks, and the DEM is read at each step through the
+        // requirement-3 fallback (best level available). The first step at which the ray's own
+        // altitude is at or below the terrain is the hit, refined by bisection between that step
+        // and the one before it, so a face filling the centre of the screen is met on the face
+        // and not behind it at the coordinate under the sea-level centre.
+        std::optional<RendererObserver::CenterRayHit> centerRayHit;
+        if (terrain) {
+            const auto& ts = updateParameters->transformState;
+            const LatLng camLL = ts.getCameraLatLng();
+            const LatLng ctrLL = ts.getLatLng();
+            const double camAlt = ts.getCameraAltitudeMeters();
+            const double ctrAlt = ts.getCenterAltitude();
+            constexpr double kScale = 1.0;
+            const auto camP = Projection::project(camLL, kScale);
+            const auto ctrP = Projection::project(ctrLL, kScale);
+            const double mpu = Projection::getMetersPerPixelAtLatitude(ctrLL.latitude(), 0.0);
+            const double dx = ctrP.x - camP.x;
+            const double dy = ctrP.y - camP.y;
+            const double groundLen = std::hypot(dx, dy);
+            if (groundLen > 0.0 && camAlt > ctrAlt) {
+                // March to twice the camera-to-centre ground distance: the ray can only meet
+                // ground beyond the centre plane point if that ground is below the plane, and
+                // a doubled reach covers the far side of a valley looked into over a ridge.
+                constexpr int kSteps = 96;
+                constexpr double kReach = 2.0;
+                const double dAlt = ctrAlt - camAlt; // per unit t along camera->centre
+                auto rayAltAt = [&](double t) { return camAlt + t * dAlt; };
+                auto groundAt = [&](double t) -> std::optional<double> {
+                    return terrain->queryElevationForLatLng(
+                        Projection::unproject({camP.x + dx * t, camP.y + dy * t}, kScale));
+                };
+                double prevT = 0.0;
+                bool prevAbove = true;
+                bool found = false;
+                double hitT = 0.0;
+                for (int i = 1; i <= kSteps; ++i) {
+                    const double t = kReach * static_cast<double>(i) / static_cast<double>(kSteps);
+                    const auto g = groundAt(t);
+                    if (!g) {
+                        prevT = t;
+                        continue;
+                    }
+                    const bool above = rayAltAt(t) > *g;
+                    if (!above && prevAbove) {
+                        // Bisect between prevT (above) and t (at/below).
+                        double lo = prevT;
+                        double hi = t;
+                        for (int k = 0; k < 10; ++k) {
+                            const double mid = 0.5 * (lo + hi);
+                            const auto gm = groundAt(mid);
+                            if (gm && rayAltAt(mid) > *gm) {
+                                lo = mid;
+                            } else {
+                                hi = mid;
+                            }
+                        }
+                        hitT = hi;
+                        found = true;
+                        break;
+                    }
+                    prevAbove = above;
+                    prevT = t;
+                }
+                if (found) {
+                    const LatLng hitLL = Projection::unproject({camP.x + dx * hitT, camP.y + dy * hitT}, kScale);
+                    const auto gh = groundAt(hitT);
+                    const double horiz = groundLen * hitT * mpu;
+                    const double vert = camAlt - rayAltAt(hitT);
+                    centerRayHit = RendererObserver::CenterRayHit{
+                        hitLL.longitude(), hitLL.latitude(), gh ? *gh : rayAltAt(hitT), std::hypot(horiz, vert)};
+                }
+            }
+        }
+        const bool rayValidityChanged = centerRayHit.has_value() != lastReportedCenterRayHit.has_value();
+        bool rayMoved = false;
+        if (centerRayHit && lastReportedCenterRayHit) {
+            const auto& a = *centerRayHit;
+            const auto& b = *lastReportedCenterRayHit;
+            rayMoved = std::abs(a.altitudeMeters - b.altitudeMeters) > 0.5 ||
+                       std::abs(a.longitude - b.longitude) > 1.0e-5 || std::abs(a.latitude - b.latitude) > 1.0e-5;
+        }
+        if (rayValidityChanged || rayMoved) {
+            lastReportedCenterRayHit = centerRayHit;
+            observer->onTerrainCenterRayHitChanged(centerRayHit);
+        }
         const bool cameraGroundValidityChanged =
             cameraGroundRise.has_value() != lastReportedCameraGroundRise.has_value();
         const bool cameraGroundChanged =
@@ -1175,6 +1264,14 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                << ",\"forwardRiseM\":";
             if (traceCameraGroundRise) {
                 os << *traceCameraGroundRise;
+            } else {
+                os << "null";
+            }
+            os << ",\"centerRay\":";
+            if (lastReportedCenterRayHit) {
+                const auto& h = *lastReportedCenterRayHit;
+                os << "{\"lng\":" << h.longitude << ",\"lat\":" << h.latitude << ",\"m\":" << h.altitudeMeters
+                   << ",\"distM\":" << h.distanceMeters << "}";
             } else {
                 os << "null";
             }

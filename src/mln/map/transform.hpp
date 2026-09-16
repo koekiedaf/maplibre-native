@@ -158,6 +158,7 @@ public:
     void setForwardRequirement(std::optional<double> metres) { state.setForwardRequirement(metres); }
     std::optional<double> getForwardRequirement() const { return state.getForwardRequirement(); }
     bool raiseCameraAltitudeTo(double mslMeters) { return state.raiseCameraAltitudeTo(mslMeters); }
+    void setCenterRayHit(std::optional<TransformState::CenterRayHit> hit) { state.setCenterRayHit(std::move(hit)); }
     double getCameraAltitudeMeters() const { return state.getCameraAltitudeMeters(); }
 
 private:

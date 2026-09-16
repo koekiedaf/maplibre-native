@@ -358,6 +358,27 @@ public:
     /// because the anticipatory climb must never be able to push the camera back down. Pinch
     /// descends by changing zoom, which is a different path entirely.
     bool raiseCameraAltitudeTo(double mslMeters);
+
+    /// Task C9: the pivot for rotate and tilt. See RendererObserver::CenterRayHit.
+    struct CenterRayHit {
+        LatLng latLng;
+        double altitudeMeters;
+        double distanceMeters;
+    };
+    void setCenterRayHit(std::optional<CenterRayHit> hit) { centerRayHit = std::move(hit); }
+    const std::optional<CenterRayHit>& getCenterRayHit() const { return centerRayHit; }
+    /// The pivot captured on the first frame of the current gesture, and the camera altitude
+    /// at that instant. Both held until the fingers lift.
+    const std::optional<CenterRayHit>& getOrbitPivot() const { return orbitPivot; }
+    /// Task C9: place the camera on the sphere around the held pivot at the current pitch and
+    /// bearing, keeping its altitude exactly. The map centre becomes the pivot, the centre's
+    /// orbit plane becomes the pivot's altitude, and the camera-to-centre distance is solved
+    /// from the height to keep: distance = (altitude - pivot altitude) / cos(pitch), expressed
+    /// as the zoom that produces it within the zoom bounds. Nothing here is pinned or iterated:
+    /// the whole state is written once from the pivot, the pitch and the held altitude, which
+    /// is why it does not fight itself the way a zoom-plus-anchor-pin did (task C8 part 2,
+    /// measured at 2 to 4 km of pivot drift across three orderings).
+    void orbitHeldPivot();
     void setTerrainCameraGroundRise(std::optional<double> metres) { terrainCameraGroundRise = metres; }
     std::optional<double> getTerrainCameraGroundRise() const { return terrainCameraGroundRise; }
 
@@ -529,6 +550,10 @@ private:
     // camera altitude towards it. Absolute rather than a rise relative to the centre, because
     // the camera's altitude is no longer tied to the centre for the rise to be relative to.
     std::optional<double> forwardRequirementMsl;
+    // Task C9: the render side's latest centre-ray hit, and the one held for the gesture.
+    std::optional<CenterRayHit> centerRayHit;
+    std::optional<CenterRayHit> orbitPivot;
+    double orbitAltitudeMsl = 0.0;
     // The zoom/pitch floor: set the moment a gesture begins (the false-to-true edge of
     // setGestureInProgress) and NOT cleared when the gesture ends - it persists so the terrain-
     // rise correction cannot ratchet the camera past where the gesture that provoked it started.

@@ -381,6 +381,18 @@ void Map::Impl::onTerrainCenterElevationChanged(double elevationMeters) {
     onUpdate();
 }
 
+void Map::Impl::onTerrainCenterRayHitChanged(std::optional<RendererObserver::CenterRayHit> hit) {
+    // Task C9: stored only. It is read on the first frame of a rotate or tilt gesture
+    // (TransformState::setGestureInProgress) and held for the gesture's length, so the render
+    // thread's per-frame re-aiming of the laser never moves a pivot that fingers are holding.
+    if (hit) {
+        transform.setCenterRayHit(TransformState::CenterRayHit{
+            LatLng{hit->latitude, hit->longitude}, hit->altitudeMeters, hit->distanceMeters});
+    } else {
+        transform.setCenterRayHit(std::nullopt);
+    }
+}
+
 void Map::Impl::onTerrainForwardRequirementChanged(std::optional<double> requirementMsl) {
     transform.setForwardRequirement(requirementMsl);
     if (!requirementMsl) {

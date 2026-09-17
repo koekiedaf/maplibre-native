@@ -418,8 +418,15 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     const size_t maxMeshTiles = updateParameters ? terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles
                                                  : 0;
     if (maxMeshTiles > 0 && out.size() > maxMeshTiles) {
-        // Map centre in normalised web-mercator [0,1] (standard projection)
-        const LatLng centre = state.getLatLng();
+        // Round F, 17 September 2026: distance from the CAMERA, not the map centre. At a high
+        // pitch the centre sits far out in front of the camera, so "farthest from the centre"
+        // was the ground under the camera itself and the near half of the view - David's
+        // "bottom is now white" at zoom 13.55 - while the horizon tiles the cap exists to shed
+        // were the nearest to the centre and always kept. Ranking by the camera's own ground
+        // point keeps what is underfoot and drops the horizon, which is what the comment above
+        // always said the cap was for. The camera's lng/lat is where the eye is; the ground
+        // point directly below it is what these tiles are measured against.
+        const LatLng centre = state.getCameraLatLng();
         const double cx = centre.longitude() / 360.0 + 0.5;
         const double latRad = util::deg2rad(centre.latitude());
         const double cy = 0.5 - std::log(std::tan(M_PI / 4.0 + latRad / 2.0)) / (2.0 * M_PI);

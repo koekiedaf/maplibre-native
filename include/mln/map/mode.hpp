@@ -82,7 +82,12 @@ constexpr TerrainLoadBudget terrainLoadBudget(TerrainLoadMode mode) {
             return {8, 4, 24};
         case TerrainLoadMode::Quality:
         default:
-            return {0, 0, 64}; // no per-frame budget, generous tile cap
+            // Round F, 17 September 2026: 64 to 128. David's six reports at Gavarnie (bearing
+            // 293, tilting 67 to 80 then zooming out) were the cap biting: at pitch 80 the far
+            // half of the view went to paper, and zoomed out to 13.55 the ground under the
+            // camera did. The tiles were being dropped by distance from the map CENTRE, which at
+            // high pitch is exactly the wrong end (see RenderTerrain's cap, now camera-based).
+            return {0, 0, 128}; // no per-frame budget, generous tile cap
     }
 }
 

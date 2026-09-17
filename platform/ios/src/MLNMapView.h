@@ -517,6 +517,8 @@ MLN_EXPORT
 @property (nonatomic, assign) double drapeFarSizeFactor;
 /** Texels of drape texture per screen pixel (default 2, GL JS's quality factor; 1 is visibly softer, a quarter of the memory). */
 @property (nonatomic, assign) double drapeTexelsPerPixel;
+/** Phase 2 dial 2: the terrain mesh tile budget (default 128; 0 keeps the load mode's cap). The cover coarsens to fit it. */
+@property (nonatomic, assign) NSUInteger terrainMeshTileBudget;
 
 /**
  Camera based tile level of detail controls

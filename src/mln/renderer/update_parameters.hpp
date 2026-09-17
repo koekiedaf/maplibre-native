@@ -82,6 +82,10 @@ public:
     /// against the defaults differs in 0.08 percent of pixels at Gavarnie pitch 80).
     double drapeTexelsPerPixel = 2.0;
     std::uint64_t drapeDialEpoch = 0;
+    /// Phase 2 dial 2 (far tile detail): the mesh tile budget, overriding the load mode's
+    /// own cap when non-zero. The cover coarsens its deepest level to fit it, so a smaller
+    /// budget is a softer far field with fewer tiles and drapes; 0 keeps the mode's cap.
+    std::size_t terrainMeshTileBudget = 0;
     // Debug: when set, RenderTerrain logs the camera eye's clearance over the terrain
     // (ABOVE-GROUND ...). Off by default; the per-frame elevation sampling is skipped entirely
     // when off, so it has no cost unless explicitly enabled (Map::setDebugAboveGroundLog).

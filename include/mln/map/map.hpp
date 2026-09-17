@@ -210,6 +210,9 @@ public:
     /// UpdateParameters::drapeDistanceCurve / drapeFarSizeFactor.
     void setDrapeTextureDial(double distanceCurve, double farSizeFactor);
     void setDrapeTexelsPerPixel(double texelsPerPixel);
+    /// Phase 2 dial 2: the mesh tile budget (0 = the load mode's own cap).
+    void setTerrainMeshTileBudget(std::size_t tiles);
+    std::size_t getTerrainMeshTileBudget() const;
     double getDrapeDistanceCurve() const;
     double getDrapeFarSizeFactor() const;
     double getDrapeTexelsPerPixel() const;

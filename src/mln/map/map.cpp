@@ -584,6 +584,15 @@ void Map::setDrapeTexelsPerPixel(double texelsPerPixel) {
     impl->onUpdate();
 }
 
+void Map::setTerrainMeshTileBudget(std::size_t tiles) {
+    impl->terrainMeshTileBudget = tiles;
+    impl->onUpdate();
+}
+
+std::size_t Map::getTerrainMeshTileBudget() const {
+    return impl->terrainMeshTileBudget;
+}
+
 double Map::getDrapeTexelsPerPixel() const {
     return impl->drapeTexelsPerPixel;
 }

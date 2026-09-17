@@ -468,8 +468,10 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     //
     // Per-mode cap (TerrainLoadBudget::maxMeshTiles): Quality keeps a generous cap so terrain
     // render distance stays long; Balanced and Performance trade distance for frame time.
-    const size_t maxMeshTiles = updateParameters ? terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles
-                                                 : 0;
+    const size_t maxMeshTiles = !updateParameters ? 0
+                                : updateParameters->terrainMeshTileBudget > 0
+                                    ? updateParameters->terrainMeshTileBudget // Phase 2 dial 2
+                                    : terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles;
     // 17 September 2026, David's reports 53110e6a (z17.25 pitch 63) and d2975824 (z18.95
     // pitch 45): nearly the whole screen paper, a sliver of ground at the bottom. The trace:
     // the adaptive cover wanted 351 tiles, all z21 (the camera 200 m over the ground, so the

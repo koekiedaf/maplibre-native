@@ -3392,6 +3392,14 @@ static void *windowScreenContext = &windowScreenContext;
   _mbglMap->setDrapeTextureDial(_mbglMap->getDrapeDistanceCurve(), value);
 }
 
+- (void)setTerrainMeshTileBudget:(NSUInteger)tiles {
+  _mbglMap->setTerrainMeshTileBudget(tiles);
+}
+
+- (NSUInteger)terrainMeshTileBudget {
+  return static_cast<NSUInteger>(_mbglMap->getTerrainMeshTileBudget());
+}
+
 - (void)setDrapeTexelsPerPixel:(double)value {
   _mbglMap->setDrapeTexelsPerPixel(value);
 }

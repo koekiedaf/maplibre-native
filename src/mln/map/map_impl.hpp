@@ -130,6 +130,7 @@ public:
     std::uint64_t drapeDialEpoch = 0;
     double drapeFarSizeFactor = 0.25;
     double drapeTexelsPerPixel = 2.0;
+    std::size_t terrainMeshTileBudget = 0;
     double tileLodScale = 1;
     double tileLodPitchThreshold = (60.0 / 180.0) * std::numbers::pi;
     double tileLodZoomShift = 0;

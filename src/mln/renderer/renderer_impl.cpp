@@ -296,8 +296,51 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // permanent blankness in single-frame still renders (the render tests).
         terrain->prepareSource(orchestrator);
         const std::set<UnwrappedTileID> demTileIDs = terrain->computeMeshCover(state, updateParameters);
+        // Performance round, Phase 2 dial 1: a drape target is sized to its tile's screen
+        // footprint. The tile's width in world pixels at the current zoom, scaled by the
+        // camera's focal length over the tile centre's distance from the eye (both in world
+        // pixels; the centre altitude plane stands in for the tile's own height), gives the
+        // pixels the tile spans on screen; drapeTexelsPerPixel texels per pixel, rounded up
+        // to a power of two, clamped between 1024 * drapeFarSizeFactor and 1024. Hysteresis
+        // so a tile does not re-bake every time it crosses a step: an existing target grows
+        // only when the want exceeds it by 15 percent, and shrinks only when the want would
+        // fit its half with 20 percent to spare.
+        const double focalPx = state.getCameraToCenterDistance();
+        const double scale = state.getScale();
+        const auto cameraPx = Projection::project(state.getCameraLatLng(), scale);
+        const double cameraHeightPx = std::cos(state.getPitch()) * focalPx;
+        const double worldPx = Projection::worldSize(scale);
+        const uint32_t maxSize = texturePool.defaultTileSize();
+        const double minSizeD = std::clamp(maxSize * updateParameters->drapeFarSizeFactor, 64.0, double(maxSize));
+        const uint32_t minSize = static_cast<uint32_t>(std::exp2(std::ceil(std::log2(minSizeD))));
+        const auto sizeFor = [&](const UnwrappedTileID& id) -> uint32_t {
+            const uint32_t current = texturePool.renderTargetSize(id);
+            if (minSize >= maxSize) {
+                return maxSize;
+            }
+            const double tilePx = worldPx / std::exp2(static_cast<double>(id.canonical.z));
+            const double cx = (static_cast<double>(id.canonical.x) + 0.5 + id.wrap * std::exp2(id.canonical.z)) * tilePx;
+            const double cy = (static_cast<double>(id.canonical.y) + 0.5) * tilePx;
+            const double dx = cx - cameraPx.x;
+            const double dy = cy - cameraPx.y;
+            const double dist = std::sqrt(dx * dx + dy * dy + cameraHeightPx * cameraHeightPx);
+            const double screenPx = tilePx * focalPx / std::max(dist, 1.0);
+            const double want = screenPx * updateParameters->drapeTexelsPerPixel;
+            uint32_t desired = static_cast<uint32_t>(std::exp2(std::ceil(std::log2(std::max(want, 1.0)))));
+            desired = std::clamp(desired, minSize, maxSize);
+            if (current == 0) {
+                return desired;
+            }
+            if (desired > current && want > current * 1.15) {
+                return desired;
+            }
+            if (desired < current && want < current * 0.4) {
+                return desired;
+            }
+            return current;
+        };
         for (const auto& id : demTileIDs) {
-            texturePool.createRenderTarget(context, id, renderTreeParameters.backgroundColor);
+            texturePool.createRenderTarget(context, id, renderTreeParameters.backgroundColor, sizeFor(id));
         }
         texturePool.removeStaleRenderTargets(demTileIDs);
         frameDrapeTargetCount = demTileIDs.size();
@@ -312,9 +355,10 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // terrain is disabled instead of holding their textures indefinitely
         texturePool.removeStaleRenderTargets({});
     }
-    if (texturePool.size() != lastReportedDrapeTargetCount) {
+    if (texturePool.size() != lastReportedDrapeTargetCount || texturePool.colorBytes() != lastReportedDrapeBytes) {
         lastReportedDrapeTargetCount = texturePool.size();
-        observer->onTerrainDrapeTargetCountChanged(lastReportedDrapeTargetCount);
+        lastReportedDrapeBytes = texturePool.colorBytes();
+        observer->onTerrainDrapeTargetCountChanged(lastReportedDrapeTargetCount, lastReportedDrapeBytes);
     }
     terrainMeshTime += util::MonotonicTimer::now().count() - meshCoverStart;
     // Seeds this frame's terrainUpdateTime with the mesh-cover half measured above; the second
@@ -1672,6 +1716,23 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                 os << ",\"drapeRenderTotal\":" << st.numDrapeTargetsRendered
                    << ",\"meshBuildTotal\":" << st.numTerrainMeshBuilds
                    << ",\"drapeTargets\":" << texturePool.size()
+                   << ",\"drapeTexMB\":" << (static_cast<double>(texturePool.colorBytes()) / (1024.0 * 1024.0))
+                   << ",\"drapeSizes\":" << [&] {
+                          std::map<uint32_t, int> hist;
+                          texturePool.visitRenderTargets([&](std::shared_ptr<RenderTarget>& t) {
+                              if (t && t->getTexture()) hist[t->getTexture()->getSize().width]++;
+                          });
+                          std::ostringstream h;
+                          h << "{";
+                          bool first = true;
+                          for (const auto& [sz, n] : hist) {
+                              if (!first) h << ",";
+                              first = false;
+                              h << "\"" << sz << "\":" << n;
+                          }
+                          h << "}";
+                          return h.str();
+                      }()
                    << ",\"texMemMB\":" << (static_cast<double>(st.memTextures) / (1024.0 * 1024.0))
                    << ",\"sectionsMs\":{\"tileCover\":" << st.tileCoverTime * 1000.0
                    << ",\"terrainMesh\":" << st.terrainUpdateTime * 1000.0

@@ -205,6 +205,12 @@ public:
     /// pitch rather than past a threshold. It observes none of the four settings
     /// above.
     void setTileLodMinRadius(double radius);
+
+    /// Performance round, Phase 2 dial 1: drape texture size by distance. See
+    /// UpdateParameters::drapeTexelsPerPixel / drapeFarSizeFactor.
+    void setDrapeTextureDial(double texelsPerPixel, double farSizeFactor);
+    double getDrapeTexelsPerPixel() const;
+    double getDrapeFarSizeFactor() const;
     double getTileLodMinRadius() const;
     void setTileLodScale(double scale);
     double getTileLodScale() const;
@@ -252,6 +258,8 @@ public:
     std::size_t getTerrainMeshTileCount() const;
     /// Performance round: drape render targets held by the texture pool after the last frame.
     std::size_t getTerrainDrapeTargetCount() const;
+    /// Colour texture bytes of those targets (RGBA8, the per-tile sizes dial 1 chooses).
+    std::size_t getTerrainDrapeTextureBytes() const;
 
     /// Band-aid audit item 6 (docs/plans/2026-09-11-band-aids.md): a reading of the render
     /// side, not a request. `Renderer::Impl::render` holds four bounded counters that keep a

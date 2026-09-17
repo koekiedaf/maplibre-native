@@ -99,7 +99,7 @@ public:
     /// telemetry recorder. Reported when it changes.
     virtual void onTerrainMeshTileCountChanged(std::size_t /*count*/) {}
     /// Performance round: drape render targets the texture pool holds after this frame.
-    virtual void onTerrainDrapeTargetCountChanged(std::size_t /*count*/) {}
+    virtual void onTerrainDrapeTargetCountChanged(std::size_t /*count*/, std::size_t /*colorBytes*/) {}
 
     /// The camera-ground RISE changed (task 2.0b): the rendered terrain height under the
     /// camera's own ground point MINUS the rendered terrain height under the map centre, both

@@ -3380,6 +3380,22 @@ static void *windowScreenContext = &windowScreenContext;
   return _rendererFrontend->getTileCacheEnabled();
 }
 
+- (void)setDrapeTexelsPerPixel:(double)value {
+  _mbglMap->setDrapeTextureDial(value, _mbglMap->getDrapeFarSizeFactor());
+}
+
+- (double)drapeTexelsPerPixel {
+  return _mbglMap->getDrapeTexelsPerPixel();
+}
+
+- (void)setDrapeFarSizeFactor:(double)value {
+  _mbglMap->setDrapeTextureDial(_mbglMap->getDrapeTexelsPerPixel(), value);
+}
+
+- (double)drapeFarSizeFactor {
+  return _mbglMap->getDrapeFarSizeFactor();
+}
+
 - (void)setTileLodMinRadius:(double)tileLodMinRadius {
   _mbglMap->setTileLodMinRadius(tileLodMinRadius);
 }
@@ -3525,6 +3541,10 @@ static NSDictionary<NSString *, NSNumber *> *MLNFrameTimingStatsToDictionary(
 
 - (NSUInteger)terrainDrapeTargetCount {
   return static_cast<NSUInteger>(_mbglMap->getTerrainDrapeTargetCount());
+}
+
+- (unsigned long long)terrainDrapeTextureBytes {
+  return _mbglMap->getTerrainDrapeTextureBytes();
 }
 
 - (unsigned long long)terrainDrapeRenderCount {

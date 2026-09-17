@@ -155,6 +155,8 @@ void Map::Impl::onUpdate() {
                                .tileLodMode = tileLodMode,
                                .terrainLoadMode = terrainLoadMode,
                                .terrainSkirtLength = terrainSkirtLength,
+                               .drapeTexelsPerPixel = drapeTexelsPerPixel,
+                               .drapeFarSizeFactor = drapeFarSizeFactor,
                                .debugAboveGroundLog = debugAboveGroundLog};
 
     rendererFrontend.update(std::make_shared<UpdateParameters>(std::move(params)));
@@ -418,8 +420,9 @@ void Map::Impl::onTerrainCenterRayClearanceChanged(std::optional<double> metres)
     transform.setCenterRayClearance(metres);
 }
 
-void Map::Impl::onTerrainDrapeTargetCountChanged(std::size_t count) {
+void Map::Impl::onTerrainDrapeTargetCountChanged(std::size_t count, std::size_t colorBytes) {
     terrainDrapeTargetCount = count;
+    terrainDrapeTextureBytes = colorBytes;
 }
 
 void Map::Impl::onTerrainMeshTileCountChanged(std::size_t count) {

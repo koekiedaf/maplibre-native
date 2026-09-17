@@ -506,6 +506,16 @@ MLN_EXPORT
 @property (nonatomic, assign) double tileLodMinRadius;
 
 /**
+ Performance round, Phase 2 dial 1: drape texture size by distance. A terrain drape target is
+ sized to its tile's screen footprint, `drapeTexelsPerPixel` texels per screen pixel (default 2,
+ GL JS's quality factor: a tile 512 pixels wide keeps the full 1024 target), rounded up to a
+ power of two, never above 1024 and never below 1024 * `drapeFarSizeFactor` (default 0.25, i.e.
+ 256). A factor of 1 switches the dial off. Both are read back for the report state.
+ */
+@property (nonatomic, assign) double drapeTexelsPerPixel;
+@property (nonatomic, assign) double drapeFarSizeFactor;
+
+/**
  Camera based tile level of detail controls
 
  Factor for the distance to the camera view point
@@ -689,6 +699,9 @@ MLN_EXPORT
 
 /** Drape render targets the engine currently holds (one per mesh tile in the cover). */
 @property (nonatomic, readonly) NSUInteger terrainDrapeTargetCount;
+
+/** Colour texture bytes of the drape targets held (dial 1 sizes them by distance). */
+@property (nonatomic, readonly) unsigned long long terrainDrapeTextureBytes;
 
 /** Cumulative count of drape targets rendered (re-baked) since launch; a rate is a difference. */
 @property (nonatomic, readonly) unsigned long long terrainDrapeRenderCount;

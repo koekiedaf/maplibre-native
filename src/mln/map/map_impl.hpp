@@ -73,8 +73,9 @@ public:
     void onTerrainCenterRayMaxPitchChanged(std::optional<double> radians) final;
     void onTerrainMeshTileCountChanged(std::size_t count) final;
     std::size_t terrainMeshTileCount = 0;
-    void onTerrainDrapeTargetCountChanged(std::size_t count) final;
+    void onTerrainDrapeTargetCountChanged(std::size_t count, std::size_t colorBytes) final;
     std::size_t terrainDrapeTargetCount = 0;
+    std::size_t terrainDrapeTextureBytes = 0;
     void onTerrainCameraGroundRiseChanged(std::optional<double> riseMeters) final;
     void onSettleBoundGivenUp(const std::optional<std::string>& boundNames) final;
     void onStyleImageMissing(const std::string&, const std::function<void()>&) final;
@@ -125,6 +126,8 @@ public:
     std::unique_ptr<StillImageRequest> stillImageRequest;
 
     double tileLodMinRadius = 3;
+    double drapeTexelsPerPixel = 2.0;
+    double drapeFarSizeFactor = 0.25;
     double tileLodScale = 1;
     double tileLodPitchThreshold = (60.0 / 180.0) * std::numbers::pi;
     double tileLodZoomShift = 0;

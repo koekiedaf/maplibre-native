@@ -570,6 +570,20 @@ void Map::setTileLodMinRadius(double radius) {
     impl->tileLodMinRadius = radius;
 }
 
+void Map::setDrapeTextureDial(double texelsPerPixel, double farSizeFactor) {
+    impl->drapeTexelsPerPixel = std::clamp(texelsPerPixel, 0.25, 4.0);
+    impl->drapeFarSizeFactor = std::clamp(farSizeFactor, 1.0 / 16.0, 1.0);
+    impl->onUpdate();
+}
+
+double Map::getDrapeTexelsPerPixel() const {
+    return impl->drapeTexelsPerPixel;
+}
+
+double Map::getDrapeFarSizeFactor() const {
+    return impl->drapeFarSizeFactor;
+}
+
 double Map::getTileLodMinRadius() const {
     return impl->tileLodMinRadius;
 }
@@ -644,6 +658,10 @@ std::size_t Map::getTerrainMeshTileCount() const {
 
 std::size_t Map::getTerrainDrapeTargetCount() const {
     return impl->terrainDrapeTargetCount;
+}
+
+std::size_t Map::getTerrainDrapeTextureBytes() const {
+    return impl->terrainDrapeTextureBytes;
 }
 
 std::optional<double> Map::getTerrainCameraGroundRiseMeters() const {

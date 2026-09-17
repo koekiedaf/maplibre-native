@@ -15,6 +15,17 @@ public:
     std::shared_ptr<RenderTarget> getRenderTargetAncestorOrDescendant(
         const UnwrappedTileID& id, std::optional<UnwrappedTileID>& terrainTileID) const;
     void createRenderTarget(gfx::Context& context, const UnwrappedTileID& id, const Color& backgroundColor);
+    /// Performance round, Phase 2 dial 1: the same, at an explicit size. An existing target of
+    /// another size is replaced (and so re-baked); the caller applies the hysteresis.
+    void createRenderTarget(gfx::Context& context,
+                            const UnwrappedTileID& id,
+                            const Color& backgroundColor,
+                            uint32_t size);
+    uint32_t defaultTileSize() const { return tileSize; }
+    /// The size of the target held for `id`, 0 if none.
+    uint32_t renderTargetSize(const UnwrappedTileID& id) const;
+    /// Colour texture bytes of every target held (RGBA8), for the panel and the trace.
+    std::size_t colorBytes() const;
 
     /// Remove render targets for tiles that are no longer part of the given set
     void removeStaleRenderTargets(const std::set<UnwrappedTileID>& currentTiles);

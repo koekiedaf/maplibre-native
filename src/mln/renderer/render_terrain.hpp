@@ -458,6 +458,9 @@ public:
     };
 
     const TerrainMesh& getMesh(gfx::Context& context);
+    /// Phase 2 dial 3 (mesh coarseness): the grid at `gridSize` triangles per side (16, 32,
+    /// 64 or 128), generated once per size and cached. Far tiles draw from a coarser grid.
+    const TerrainMesh& getMesh(gfx::Context& context, size_t gridSize);
 
     /// Mesh used by the instanced depth pass. Aliased to the full terrain mesh for now;
     /// the coarser depth-only mesh optimization from the source PR can be pulled separately.
@@ -547,6 +550,7 @@ private:
      * to prevent stitching artifacts between tiles.
      */
     void generateMesh(gfx::Context& context);
+    TerrainMesh buildMesh(size_t gridSize) const;
 
     /**
      * @brief Activate or deactivate the layer group
@@ -555,6 +559,10 @@ private:
 
     // Terrain mesh (shared across all tiles)
     std::optional<TerrainMesh> mesh;
+    /// Dial 3: coarser grids by size, built on demand, dropped with `mesh` on a skirt change.
+    std::map<size_t, TerrainMesh> meshesBySize;
+    /// The grid each tile's drawable was built with; a tile whose wanted grid changes is rebuilt.
+    std::unordered_map<OverscaledTileID, size_t> drawableGridSize;
     // The skirt setting the cached mesh was built with. update() drops the mesh and every
     // tile drawable built from it when the map's setting no longer matches.
     TerrainSkirtLength meshSkirtLength = TerrainSkirtLength::Auto;
@@ -710,7 +718,8 @@ private:
                                                          const OverscaledTileID& tileID,
                                                          std::shared_ptr<gfx::Texture2D> demTexture,
                                                          std::shared_ptr<gfx::Texture2D> mapTexture,
-                                                         bool depthPass = false);
+                                                         bool depthPass = false,
+                                                         size_t gridSize = MESH_SIZE);
 };
 
 } // namespace mln

@@ -3392,6 +3392,22 @@ static void *windowScreenContext = &windowScreenContext;
   _mbglMap->setDrapeTextureDial(_mbglMap->getDrapeDistanceCurve(), value);
 }
 
+- (void)setTerrainFarMeshGrid:(NSUInteger)grid {
+  _mbglMap->setTerrainFarMeshGrid(grid);
+}
+
+- (NSUInteger)terrainFarMeshGrid {
+  return static_cast<NSUInteger>(_mbglMap->getTerrainFarMeshGrid());
+}
+
+- (void)setDrapeRerenderBudget:(NSUInteger)perFrame {
+  _mbglMap->setDrapeRerenderBudget(perFrame);
+}
+
+- (NSUInteger)drapeRerenderBudget {
+  return static_cast<NSUInteger>(_mbglMap->getDrapeRerenderBudget());
+}
+
 - (void)setTerrainMeshTileBudget:(NSUInteger)tiles {
   _mbglMap->setTerrainMeshTileBudget(tiles);
 }

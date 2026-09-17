@@ -519,6 +519,10 @@ MLN_EXPORT
 @property (nonatomic, assign) double drapeTexelsPerPixel;
 /** Phase 2 dial 2: the terrain mesh tile budget (default 128; 0 keeps the load mode's cap). The cover coarsens to fit it. */
 @property (nonatomic, assign) NSUInteger terrainMeshTileBudget;
+/** Phase 2 dial 3: the coarsest mesh grid (triangles per side) a far terrain tile may use; 128 (default) keeps the full grid everywhere. */
+@property (nonatomic, assign) NSUInteger terrainFarMeshGrid;
+/** Phase 2 dial 4: drape re-renders per frame; 0 (default) is the load mode's own budget, unlimited in Quality. */
+@property (nonatomic, assign) NSUInteger drapeRerenderBudget;
 
 /**
  Camera based tile level of detail controls

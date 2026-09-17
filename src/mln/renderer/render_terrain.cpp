@@ -619,6 +619,8 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
     if (updateParameters && updateParameters->terrainSkirtLength != meshSkirtLength) {
         meshSkirtLength = updateParameters->terrainSkirtLength;
         mesh.reset();
+        meshesBySize.clear();
+        drawableGridSize.clear();
         if (layerGroup) {
             layerGroup->clearDrawables();
         }
@@ -715,6 +717,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
     for (auto it = tilesWithDrawables.begin(); it != tilesWithDrawables.end();) {
         if (!currentTiles.contains(it->first)) {
             drawableDemCoords.erase(it->first);
+            drawableGridSize.erase(it->first);
             it = tilesWithDrawables.erase(it);
         } else {
             ++it;
@@ -764,16 +767,37 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         }
     }
 
+    // Phase 2 dial 3 (mesh coarseness): the grid a tile's mesh is built on follows its drape
+    // target's size, which already encodes the tile's screen footprint (dial 1): 1024 -> 128
+    // triangles per side, 512 -> 64, 256 -> 32, 128 -> 16, never below the dial's floor
+    // and never above MESH_SIZE. The default floor of 128 keeps every tile at the full grid.
+    const size_t farMeshGrid = updateParameters ? updateParameters->terrainFarMeshGrid : MESH_SIZE;
+    const auto wantGridFor = [&](const UnwrappedTileID& unwrapped) -> size_t {
+        if (farMeshGrid >= MESH_SIZE) {
+            return MESH_SIZE;
+        }
+        const uint32_t targetSize = texturePool.renderTargetSize(unwrapped);
+        if (targetSize == 0) {
+            return MESH_SIZE;
+        }
+        return std::clamp<size_t>(targetSize / 8, std::max<size_t>(farMeshGrid, 8), MESH_SIZE);
+    };
+    const auto gridMatches = [&](const OverscaledTileID& tileID, size_t want) {
+        const auto it = drawableGridSize.find(tileID);
+        return it != drawableGridSize.end() && it->second == want;
+    };
+
     // Create terrain drawables for each mesh tile
     for (const auto& unwrapped : meshTiles) {
         const OverscaledTileID tileID(unwrapped.canonical.z, unwrapped.wrap, unwrapped.canonical);
+        const size_t wantGrid = wantGridFor(unwrapped);
 
         // Skip if the tile already has a drawable bound to its own DEM (nothing can beat that),
         // but mark that DEM used: this early-out is such a tile's only path, so the LRU could
         // otherwise evict the texture from under the drawable still sampling it.
         if (const auto existing = tilesWithDrawables.find(tileID);
             existing != tilesWithDrawables.end() &&
-            existing->second == static_cast<int8_t>(unwrapped.canonical.z)) {
+            existing->second == static_cast<int8_t>(unwrapped.canonical.z) && gridMatches(tileID, wantGrid)) {
             if (auto cached = demTextures.find(unwrapped); cached != demTextures.end()) {
                 cached->second.lastUsed = demUpdateCounter;
             }
@@ -843,7 +867,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         // quality tier is what stops the drawable latching onto whichever ancestor loaded
         // first (see `tilesWithDrawables`).
         if (const auto existing = tilesWithDrawables.find(tileID); existing != tilesWithDrawables.end()) {
-            if (existing->second >= demZoom) {
+            if (existing->second >= demZoom && gridMatches(tileID, wantGrid)) {
                 continue;
             }
             // Performance round, Phase 1 item 3 (gesture freeze): a mesh tile that already
@@ -862,6 +886,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
                 depthDirty = true;
             }
             tilesWithDrawables.erase(existing);
+            drawableGridSize.erase(tileID);
         }
         drawableDemCoords[tileID] = demCoords;
 #if MLN_RENDER_BACKEND_OPENGL
@@ -881,16 +906,18 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         if (!renderTarget) {
             continue;
         }
-        auto drawable = createDrawableForTile(context, shaders, tileID, demTexture, renderTarget->getTexture());
+        auto drawable = createDrawableForTile(
+            context, shaders, tileID, demTexture, renderTarget->getTexture(), /*depthPass=*/false, wantGrid);
         if (drawable) {
             context.renderingStats().numTerrainMeshBuilds++;
             lg->addDrawable(std::move(drawable));
             tilesWithDrawables[tileID] = demZoom;
+            drawableGridSize[tileID] = wantGrid;
 #if !MLN_RENDER_BACKEND_OPENGL
             // Non-GL backends: one depth drawable per tile (no instancing path there).
             if (depthLg) {
                 if (auto depthDrawable = createDrawableForTile(
-                        context, shaders, tileID, demTexture, nullptr, /*depthPass=*/true)) {
+                        context, shaders, tileID, demTexture, nullptr, /*depthPass=*/true, wantGrid)) {
                     depthLg->addDrawable(std::move(depthDrawable));
                     depthDirty = true;
                 }
@@ -1606,6 +1633,17 @@ const RenderTerrain::TerrainMesh& RenderTerrain::getMesh(gfx::Context& context) 
     return *mesh;
 }
 
+const RenderTerrain::TerrainMesh& RenderTerrain::getMesh(gfx::Context& context, size_t gridSize) {
+    if (gridSize >= MESH_SIZE) {
+        return getMesh(context);
+    }
+    auto it = meshesBySize.find(gridSize);
+    if (it == meshesBySize.end()) {
+        it = meshesBySize.emplace(gridSize, buildMesh(gridSize)).first;
+    }
+    return it->second;
+}
+
 const RenderTerrain::TerrainMesh& RenderTerrain::getDepthMesh(gfx::Context& context) {
     // The instanced depth pass reuses the full terrain mesh; the source PR's coarser
     // depth-only mesh (getDepthMesh/buildMesh) is a separable optimization not pulled here.
@@ -1613,12 +1651,15 @@ const RenderTerrain::TerrainMesh& RenderTerrain::getDepthMesh(gfx::Context& cont
 }
 
 void RenderTerrain::generateMesh(gfx::Context& /*context*/) {
+    mesh = buildMesh(MESH_SIZE);
+}
+
+RenderTerrain::TerrainMesh RenderTerrain::buildMesh(size_t gridSize) const {
     // A regular grid mesh (reused for every tile, displaced by the DEM in the
     // vertex shader) plus a skirt: each tile edge is duplicated into a curtain
     // that the shader drops by u_ele_delta, hiding the cracks between neighbouring
     // tiles at different zoom levels. Ported from maplibre-gl-js Terrain
     // getTerrainMesh()/_buildSkirts(). TerrainSkirtLength::None builds the bare grid.
-    const size_t gridSize = MESH_SIZE;
     const size_t vps = gridSize + 1; // vertices per side
     const float step = static_cast<float>(util::EXTENT) / static_cast<float>(gridSize);
 
@@ -1713,7 +1754,7 @@ void RenderTerrain::generateMesh(gfx::Context& /*context*/) {
         }
     }
 
-    mesh = TerrainMesh{nullptr, // vertexBuffer - created when building the drawable
+    return TerrainMesh{nullptr, // vertexBuffer - created when building the drawable
                        nullptr, // indexBuffer - created when building the drawable
                        vertices.size() / 4,
                        indices.size(),
@@ -1755,9 +1796,10 @@ std::unique_ptr<gfx::Drawable> RenderTerrain::createDrawableForTile(gfx::Context
                                                                     const OverscaledTileID& tileID,
                                                                     std::shared_ptr<gfx::Texture2D> demTexture,
                                                                     std::shared_ptr<gfx::Texture2D> mapTexture,
-                                                                    bool depthPass) {
+                                                                    bool depthPass,
+                                                                    size_t gridSize) {
     // Ensure mesh is generated
-    const auto& terrainMesh = getMesh(context);
+    const auto& terrainMesh = getMesh(context, gridSize);
 
     if (terrainMesh.vertices.empty() || terrainMesh.indices.empty()) {
         Log::Error(Event::Render, "Terrain mesh is empty, cannot create drawable");

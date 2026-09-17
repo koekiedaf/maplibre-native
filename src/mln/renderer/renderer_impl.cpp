@@ -694,7 +694,9 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // stale texture), requesting a follow-up frame so they catch up progressively.
         // Never-rendered targets always render (avoid blank tiles). The cap comes from the
         // map's TerrainLoadMode; Quality (default) is unlimited.
-        const int drapeCap = terrainLoadBudget(updateParameters->terrainLoadMode).drapeRerendersPerFrame;
+        const int drapeCap = updateParameters->drapeRerenderBudget > 0
+                                 ? static_cast<int>(updateParameters->drapeRerenderBudget) // Phase 2 dial 4
+                                 : terrainLoadBudget(updateParameters->terrainLoadMode).drapeRerendersPerFrame;
         int drapeBudget = drapeCap > 0 ? drapeCap : (1 << 30);
         // Performance round, Phase 1 item 3 (gesture freeze, the settle-gated re-bake of
         // MapLibre GL JS): while a finger is on the map no drape target that already holds a

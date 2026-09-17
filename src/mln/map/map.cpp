@@ -593,6 +593,24 @@ std::size_t Map::getTerrainMeshTileBudget() const {
     return impl->terrainMeshTileBudget;
 }
 
+void Map::setTerrainFarMeshGrid(std::size_t grid) {
+    impl->terrainFarMeshGrid = std::clamp<std::size_t>(grid, 8, 128);
+    impl->onUpdate();
+}
+
+std::size_t Map::getTerrainFarMeshGrid() const {
+    return impl->terrainFarMeshGrid;
+}
+
+void Map::setDrapeRerenderBudget(std::size_t perFrame) {
+    impl->drapeRerenderBudget = perFrame;
+    impl->onUpdate();
+}
+
+std::size_t Map::getDrapeRerenderBudget() const {
+    return impl->drapeRerenderBudget;
+}
+
 double Map::getDrapeTexelsPerPixel() const {
     return impl->drapeTexelsPerPixel;
 }

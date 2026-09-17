@@ -213,6 +213,12 @@ public:
     /// Phase 2 dial 2: the mesh tile budget (0 = the load mode's own cap).
     void setTerrainMeshTileBudget(std::size_t tiles);
     std::size_t getTerrainMeshTileBudget() const;
+    /// Phase 2 dial 3: the coarsest far mesh grid (16, 32, 64; 128 = full grid everywhere).
+    void setTerrainFarMeshGrid(std::size_t grid);
+    std::size_t getTerrainFarMeshGrid() const;
+    /// Phase 2 dial 4: drape re-renders per frame (0 = the load mode's own budget).
+    void setDrapeRerenderBudget(std::size_t perFrame);
+    std::size_t getDrapeRerenderBudget() const;
     double getDrapeDistanceCurve() const;
     double getDrapeFarSizeFactor() const;
     double getDrapeTexelsPerPixel() const;

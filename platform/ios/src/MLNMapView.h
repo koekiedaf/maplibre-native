@@ -525,6 +525,18 @@ MLN_EXPORT
 @property (nonatomic, assign) NSUInteger drapeRerenderBudget;
 
 /**
+ Round 4 (18 September 2026), the render-resolution dial: while a gesture is in progress, and
+ through its deceleration until the map is idle, the Metal drawable is sized to this fraction of
+ the view's native scale (0.5 to 1; default 1, off). At rest the drawable returns to full size.
+ Points, touches and the map's own size never change, so nothing moves on the switch; line
+ widths, sized in framebuffer pixels, read a little heavier while moving.
+ */
+@property (nonatomic, assign) double movingRenderScale;
+
+/** The render scale in effect right now (1 at rest, `movingRenderScale` while moving). */
+@property (nonatomic, readonly) double renderScaleInEffect;
+
+/**
  Camera based tile level of detail controls
 
  Factor for the distance to the camera view point

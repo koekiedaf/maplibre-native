@@ -519,6 +519,9 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
               "MLNTerrainSkirtLengthNone must mirror mln::TerrainSkirtLength::None");
 
 @implementation MLNMapView {
+  double _movingRenderScale;   // round 4: 0 means 1 (off)
+  double _renderScaleInEffect; // round 4: 0 means 1
+  BOOL _twoFingerSequenceSeen; // round 4: a pan must not follow a two-finger release
   std::unique_ptr<mln::Map> _mbglMap;
   std::unique_ptr<MLNMapViewImpl> _mbglView;
   std::unique_ptr<MLNRenderFrontend> _rendererFrontend;
@@ -2207,7 +2210,7 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
 
 // MARK: - Gestures -
 
-- (void)touchesBegan:(__unused NSSet<UITouch *> *)touches withEvent:(__unused UIEvent *)event {
+- (void)touchesBegan:(__unused NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
   if (!self.zoomEnabled && !self.pitchEnabled && !self.rotateEnabled && !self.scrollEnabled) {
     return;
   };
@@ -2217,6 +2220,13 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   // lands; both times the right answer is "not decided yet".)
   self.twoFingerIntent = MLNTwoFingerIntentUndecided;
   self.twoFingerStartRecorded = NO;
+  // Round 4: remember whether this sequence ever had two fingers down; a fresh sequence
+  // (no touches yet besides the ones landing now) starts clean.
+  if (event.allTouches.count >= 2) {
+    _twoFingerSequenceSeen = YES;
+  } else if (event.allTouches.count <= 1) {
+    _twoFingerSequenceSeen = NO;
+  }
   if (self.userTrackingState == MLNUserTrackingStateBegan) {
     [self setUserTrackingMode:MLNUserTrackingModeNone animated:NO completionHandler:nil];
   }
@@ -2230,6 +2240,36 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   [self cameraWillChangeAnimated:animated];
   self.mbglMap.setGestureInProgress(true);
   _changeDelimiterSuppressionDepth++;
+  [self applyRenderScale:self.movingRenderScale];
+}
+
+// MARK: Round 4: render resolution while moving
+
+- (void)setMovingRenderScale:(double)scale {
+  _movingRenderScale = MIN(1.0, MAX(0.25, scale));
+  if (_renderScaleInEffect != 1.0) {
+    [self applyRenderScale:_movingRenderScale];
+  }
+}
+
+- (double)movingRenderScale {
+  return _movingRenderScale == 0 ? 1.0 : _movingRenderScale;
+}
+
+- (void)applyRenderScale:(double)scale {
+  const double clamped = MIN(1.0, MAX(0.25, scale == 0 ? 1.0 : scale));
+  if (clamped == _renderScaleInEffect) {
+    return;
+  }
+  _renderScaleInEffect = clamped;
+  if (_mbglView) {
+    _mbglView->layoutChanged();
+  }
+  [self setNeedsRerender];
+}
+
+- (double)renderScaleInEffect {
+  return _renderScaleInEffect == 0 ? 1.0 : _renderScaleInEffect;
 }
 
 - (void)notifyGestureDidEndWithDrift:(BOOL)drift {
@@ -2242,6 +2282,9 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   if (!drift) {
     BOOL animated = NO;
     [self cameraDidChangeAnimated:animated];
+    // Round 4: back to full resolution the moment the fingers lift with no drift; a drift
+    // keeps the moving scale until the map goes idle (mapViewDidBecomeIdle).
+    [self applyRenderScale:1.0];
   }
 }
 
@@ -2281,6 +2324,13 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
     [self notifyGestureDidBegin];
   } else if (pan.state == UIGestureRecognizerStateChanged) {
     CGPoint delta = [pan translationInView:pan.view];
+    // Round 4 (David: "when I let go with two fingers the screen shifts a tiny bit"): the
+    // fingers of a rotate or tilt lift one after the other, and the last one down is a
+    // one-finger pan for a few points. A touch sequence that was ever two-finger never pans.
+    if (_twoFingerSequenceSeen) {
+      [pan setTranslation:CGPointZero inView:pan.view];
+      return;
+    }
     MLNMapCamera *toCamera = [self cameraByPanningWithTranslation:delta panGesture:pan];
 
     if ([self _shouldChangeFromCamera:oldCamera toCamera:toCamera]) {
@@ -3040,10 +3090,12 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   const CGFloat separationNow = hypot(b.x - a.x, b.y - a.y);
   if (angleChange >= MLNTwoFingerTwistCommitDegrees) {
     self.twoFingerIntent = MLNTwoFingerIntentTurn;
+    _twoFingerSequenceSeen = YES;
     return self.twoFingerIntent;
   }
   if (fabs(separationNow - separationStart) >= MLNTwoFingerPinchCommitPoints) {
     self.twoFingerIntent = MLNTwoFingerIntentZoom;
+    _twoFingerSequenceSeen = YES;
     return self.twoFingerIntent;
   }
   if (travelA < MLNTwoFingerDecisionMinimumTravel || travelB < MLNTwoFingerDecisionMinimumTravel) {
@@ -3055,6 +3107,7 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   const BOOL sameWay = (day > 0) == (dby > 0);
   if (aVertical && bVertical && sameWay) {
     self.twoFingerIntent = MLNTwoFingerIntentTilt;
+    _twoFingerSequenceSeen = YES;
   }
   // Otherwise both fingers travelled together some other way (a two-finger pan): stay undecided
   // and let nothing act until the line turns, stretches, or the fingers lift.
@@ -7323,6 +7376,7 @@ static NSDictionary<NSString *, NSNumber *> *MLNFrameTimingStatsToDictionary(
 }
 
 - (void)mapViewDidBecomeIdle {
+  [self applyRenderScale:1.0]; // round 4: full resolution at rest
   if (!_mbglMap) {
     return;
   }

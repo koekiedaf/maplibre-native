@@ -295,7 +295,10 @@ void MLNMapViewMetalImpl::layoutChanged() {
     return;
   }
 
-  const auto scaleFactor = MLNEffectiveScaleFactorForView(mapView);
+  // Round 4: the drawable follows the render scale in effect (1 at rest, the moving dial's
+  // fraction during a gesture); the view's contentScaleFactor is the drawable's own scale so
+  // the layer maps it to the same points.
+  const auto scaleFactor = MLNEffectiveScaleFactorForView(mapView) * mapView.renderScaleInEffect;
   const CGSize target = CGSizeMake(std::round(viewSize.width * scaleFactor),
                                    std::round(viewSize.height * scaleFactor));
 

@@ -702,33 +702,31 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // stale texture), requesting a follow-up frame so they catch up progressively.
         // Never-rendered targets always render (avoid blank tiles). The cap comes from the
         // map's TerrainLoadMode; Quality (default) is unlimited.
-        const int drapeCap = updateParameters->drapeRerenderBudget > 0
-                                 ? static_cast<int>(updateParameters->drapeRerenderBudget) // Phase 2 dial 4
-                                 : terrainLoadBudget(updateParameters->terrainLoadMode).drapeRerendersPerFrame;
-        int drapeBudget = drapeCap > 0 ? drapeCap : (1 << 30);
-        // Performance round, Phase 1 item 3 (gesture freeze, the settle-gated re-bake of
-        // MapLibre GL JS): while a finger is on the map no drape target that already holds a
-        // bake is re-rendered - a target whose covering tiles changed (a child tile loading
-        // under a parent's bake) keeps the stale texture and is deferred, which requests the
-        // follow-up frames that re-bake it once the gesture ends. Targets that have never
-        // been rendered still render, so new ground entering the cover is never blank.
-        // Measured before this, sustained pan at pitch 80: 29 drape renders a second.
-        const bool gestureFreeze = updateParameters->transformState.isGestureInProgress();
-        if (gestureFreeze) {
-            drapeBudget = 0;
+        // Round 4, 18 September 2026 (David: "when I let go the detail suddenly appears"):
+        // the Phase 1 gesture FREEZE (no re-bakes at all while a finger is down, everything
+        // at once on release) is now a BUDGET - dial 4, re-draws per frame, default 4 - that
+        // applies while a gesture is in progress and while its deferred work drains after
+        // it, so detail streams in during the turn instead of popping on release. At rest
+        // with nothing pending the budget is moot. 0 (the "all" step) means unlimited.
+        const bool gestureActive = updateParameters->transformState.isGestureInProgress();
+        const int dialBudget = static_cast<int>(updateParameters->drapeRerenderBudget);
+        const int modeCap = terrainLoadBudget(updateParameters->terrainLoadMode).drapeRerendersPerFrame;
+        int drapeBudget = (1 << 30);
+        if (dialBudget > 0) {
+            drapeBudget = dialBudget;
+        } else if (modeCap > 0) {
+            drapeBudget = modeCap;
         }
+        (void)gestureActive;
         orchestrator.visitRenderTargets([&](RenderTarget& renderTarget) {
             if (renderTarget.getDrapeTileID()) {
                 const auto res = renderTarget.render(
                     orchestrator, renderTree, parameters, /*canRerender=*/drapeBudget > 0);
                 if (res == RenderTarget::RenderResult::Rendered) {
                     --drapeBudget;
-                } else if (res == RenderTarget::RenderResult::Deferred && !gestureFreeze) {
-                    // A deferral during the freeze must not ask for a follow-up frame: the
-                    // map would spin at full rate for the whole gesture (measured: 58 frames
-                    // a second under a slow injected pan, against 5 before). The gesture's
-                    // end is itself an update (Map::setGestureInProgress), and that frame
-                    // re-bakes everything the freeze held back.
+                } else if (res == RenderTarget::RenderResult::Deferred) {
+                    // Ask for the next frame so the budget drains; with a finger held still
+                    // this spins only until the deferred targets are done.
                     drapeWorkDeferred = true;
                 }
             }

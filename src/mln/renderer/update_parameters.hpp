@@ -91,7 +91,7 @@ public:
     std::size_t terrainFarMeshGrid = 128;
     /// Phase 2 dial 4: drape re-renders per frame, overriding the load mode's own budget when
     /// non-zero (0 = the mode's; Quality is unlimited). Never-rendered targets always render.
-    std::size_t drapeRerenderBudget = 0;
+    std::size_t drapeRerenderBudget = 4;
     // Debug: when set, RenderTerrain logs the camera eye's clearance over the terrain
     // (ABOVE-GROUND ...). Off by default; the per-frame elevation sampling is skipped entirely
     // when off, so it has no cost unless explicitly enabled (Map::setDebugAboveGroundLog).

@@ -50,6 +50,7 @@
 #include <mln/gfx/vertex_attribute.hpp> // VertexAttributeArray for the a_instance attribute
 
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -851,6 +852,9 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         return it != drawableDrapeTexture.end() && current != nullptr && it->second == current;
     };
 
+    size_t upgradeBudget = (updateParameters && updateParameters->drapeRerenderBudget > 0)
+                               ? updateParameters->drapeRerenderBudget
+                               : std::numeric_limits<size_t>::max();
     // Create terrain drawables for each mesh tile
     for (const auto& unwrapped : meshTiles) {
         const OverscaledTileID tileID(unwrapped.canonical.z, unwrapped.wrap, unwrapped.canonical);
@@ -944,8 +948,13 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
             // flat at sea level through a pan, such a tile is a hole in the mountains with
             // the neighbours' skirts hanging into it (measured at David's 6fcf398c camera,
             // whole tiles of paper mid-pan); it takes the first DEM that arrives at once.
+            // Round 4: a budget, not a freeze - dial 4's count of upgrades per frame during a
+            // gesture (0 = unlimited), so detail streams in through a turn.
             if (state.isGestureInProgress() && existing->second >= 0) {
-                continue;
+                if (upgradeBudget == 0) {
+                    continue;
+                }
+                --upgradeBudget;
             }
             lg->removeDrawablesIf(
                 [&](gfx::Drawable& drawable) { return drawable.getTileID() && *drawable.getTileID() == tileID; });

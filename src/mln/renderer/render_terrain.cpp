@@ -1869,7 +1869,13 @@ RenderTerrain::TerrainMesh RenderTerrain::buildCoarseMeshWithFineEdges(size_t g)
         vertices.push_back(0);
         return static_cast<uint16_t>(vertices.size() / 4 - 1);
     };
+    // Every triangle is emitted with the same winding as the full grid's (tl, bl, tr):
+    // negative cross product in tile space.
     const auto tri = [&](uint16_t a, uint16_t b, uint16_t c) {
+        const float x1 = vertices[a * 4], y1 = vertices[a * 4 + 1];
+        const float x2 = vertices[b * 4], y2 = vertices[b * 4 + 1];
+        const float x3 = vertices[c * 4], y3 = vertices[c * 4 + 1];
+        if ((x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1) > 0.0f) std::swap(b, c);
         indices.push_back(a);
         indices.push_back(b);
         indices.push_back(c);
@@ -1896,7 +1902,7 @@ RenderTerrain::TerrainMesh RenderTerrain::buildCoarseMeshWithFineEdges(size_t g)
         left[k] = addVert(0.0f, k * fineStep, 0);
         right[k] = addVert(extent, k * fineStep, 0);
     }
-    // The coarse lattice with the border rows replaced by the fine border vertices at coarse
+    // The coarse lattice with the border rows taken from the fine border vertices at coarse
     // positions, so interior quads and the transition ring share indices.
     const auto at = [&](size_t i, size_t j) -> uint16_t {
         if (j == 0) return top[i * r];
@@ -1906,7 +1912,7 @@ RenderTerrain::TerrainMesh RenderTerrain::buildCoarseMeshWithFineEdges(size_t g)
         return inner[j * (g + 1) + i];
     };
 
-    // Interior quads (cells fully inside the ring).
+    // Interior quads (cells whose four corners are all interior lattice vertices).
     for (size_t j = 1; j + 1 < g; ++j) {
         for (size_t i = 1; i + 1 < g; ++i) {
             const uint16_t tl = at(i, j), tr = at(i + 1, j), bl = at(i, j + 1), br = at(i + 1, j + 1);
@@ -1914,78 +1920,79 @@ RenderTerrain::TerrainMesh RenderTerrain::buildCoarseMeshWithFineEdges(size_t g)
             tri(tr, bl, br);
         }
     }
-    // Transition ring: each border cell fans from its inner side to the fine outer edge.
-    // Winding matches the interior (tl, bl, tr) orientation: counter-clockwise in tile space.
-    const auto fanEdge = [&](const std::vector<uint16_t>& edge, size_t from, size_t to, uint16_t apex, bool flip) {
-        for (size_t k = from; k < to; ++k) {
-            if (flip) tri(apex, edge[k + 1], edge[k]); else tri(apex, edge[k], edge[k + 1]);
-        }
+    // Transition ring. An edge cell fans from its two inner vertices to the fine outer edge,
+    // split at the middle fine vertex; a corner cell fans from its single inner vertex over
+    // both of its outer sides. Every fine border vertex is a triangle corner, so a coarse tile
+    // shares its edge vertices exactly with a full-grid neighbour: no T-junctions.
+    const auto fan = [&](uint16_t apex, const std::vector<uint16_t>& edge, size_t from, size_t to) {
+        for (size_t k = from; k < to; ++k) tri(apex, edge[k], edge[k + 1]);
     };
-    for (size_t i = 0; i < g; ++i) {
-        // top row cell (i, 0): outer edge top[i*r .. (i+1)*r], inner vertices at(i,1), at(i+1,1)
+    for (size_t i = 1; i + 1 < g; ++i) {
+        const size_t mid = i * r + r / 2;
         {
             const uint16_t il = at(i, 1), ir = at(i + 1, 1);
-            const size_t mid = i * r + r / 2;
-            fanEdge(top, i * r, mid, il, true);
-            fanEdge(top, mid, (i + 1) * r, ir, true);
+            fan(il, top, i * r, mid);
+            fan(ir, top, mid, (i + 1) * r);
             tri(il, top[mid], ir);
         }
-        // bottom row cell (i, g-1)
         {
             const uint16_t il = at(i, g - 1), ir = at(i + 1, g - 1);
-            const size_t mid = i * r + r / 2;
-            fanEdge(bottom, i * r, mid, il, false);
-            fanEdge(bottom, mid, (i + 1) * r, ir, false);
+            fan(il, bottom, i * r, mid);
+            fan(ir, bottom, mid, (i + 1) * r);
             tri(il, ir, bottom[mid]);
         }
     }
     for (size_t j = 1; j + 1 < g; ++j) {
-        // left column cell (0, j): outer edge left[j*r .. (j+1)*r], inner at(1,j), at(1,j+1)
+        const size_t mid = j * r + r / 2;
         {
             const uint16_t it = at(1, j), ib = at(1, j + 1);
-            const size_t mid = j * r + r / 2;
-            fanEdge(left, j * r, mid, it, false);
-            fanEdge(left, mid, (j + 1) * r, ib, false);
+            fan(it, left, j * r, mid);
+            fan(ib, left, mid, (j + 1) * r);
             tri(it, ib, left[mid]);
         }
-        // right column cell (g-1, j)
         {
             const uint16_t it = at(g - 1, j), ib = at(g - 1, j + 1);
-            const size_t mid = j * r + r / 2;
-            fanEdge(right, j * r, mid, it, true);
-            fanEdge(right, mid, (j + 1) * r, ib, true);
+            fan(it, right, j * r, mid);
+            fan(ib, right, mid, (j + 1) * r);
             tri(it, right[mid], ib);
         }
     }
-    // The four corner cells are covered twice by the loops above (top/bottom rows include
-    // i = 0 and i = g-1, whose inner vertices at(0,1)/at(g,1) are themselves fine border
-    // vertices), which double-draws nothing harmful but wastes work; acceptable for a
-    // diagnostic-grade coarse grid. The left/right loops skip j = 0 and j = g-1 for that reason.
+    {
+        uint16_t a = at(1, 1);
+        fan(a, left, 0, r);
+        fan(a, top, 0, r);
+        a = at(g - 1, 1);
+        fan(a, top, (g - 1) * r, fine);
+        fan(a, right, 0, r);
+        a = at(1, g - 1);
+        fan(a, left, (g - 1) * r, fine);
+        fan(a, bottom, 0, r);
+        a = at(g - 1, g - 1);
+        fan(a, right, (g - 1) * r, fine);
+        fan(a, bottom, (g - 1) * r, fine);
+    }
 
     // Skirts on the fine edges, same shape as the full mesh: a duplicate of each edge dropped
     // by u_ele_delta.
     if (meshSkirtLength != TerrainSkirtLength::None) {
-        const auto skirt = [&](const std::vector<uint16_t>& edge, bool flip) {
+        const auto skirt = [&](const std::vector<uint16_t>& edge) {
             std::vector<uint16_t> low(edge.size());
             for (size_t k = 0; k < edge.size(); ++k) {
                 const int16_t x = vertices[edge[k] * 4];
                 const int16_t y = vertices[edge[k] * 4 + 1];
                 low[k] = addVert(static_cast<float>(x), static_cast<float>(y), 1);
             }
+            // Skirt quads are vertical in world space; tile-space winding is degenerate for
+            // them, so emit the indices directly (the full mesh does the same).
             for (size_t k = 0; k + 1 < edge.size(); ++k) {
-                if (flip) {
-                    tri(edge[k], low[k + 1], low[k]);
-                    tri(edge[k], edge[k + 1], low[k + 1]);
-                } else {
-                    tri(edge[k], low[k], low[k + 1]);
-                    tri(edge[k], low[k + 1], edge[k + 1]);
-                }
+                indices.insert(indices.end(), {edge[k], low[k], low[k + 1]});
+                indices.insert(indices.end(), {edge[k], low[k + 1], edge[k + 1]});
             }
         };
-        skirt(top, false);
-        skirt(bottom, true);
-        skirt(left, true);
-        skirt(right, false);
+        skirt(top);
+        skirt(bottom);
+        skirt(left);
+        skirt(right);
     }
 
     return TerrainMesh{nullptr, nullptr, vertices.size() / 4, indices.size(), std::move(vertices), std::move(indices)};

@@ -63,11 +63,14 @@ public:
     TerrainLoadMode terrainLoadMode = TerrainLoadMode::Quality;
     TerrainSkirtLength terrainSkirtLength = TerrainSkirtLength::Auto;
     /// Performance round, Phase 2 dial 1 (drape texture size by distance). A drape target is
-    /// sized to its tile's screen footprint: `drapeTexelsPerPixel` texels for every screen
-    /// pixel the tile spans (2, MapLibre GL JS's qualityFactor, keeps the full 1024 target for
-    /// a tile 512 pixels wide), rounded up to a power of two, never above 1024 and never
-    /// below 1024 * `drapeFarSizeFactor`. 1.0 for the factor switches the dial off.
-    double drapeTexelsPerPixel = 2.0;
+    /// sized to its tile's screen footprint: two texels for every screen pixel of the tile's
+    /// width (MapLibre GL JS's qualityFactor: a tile 512 pixels wide keeps the full 1024
+    /// target), the width scaled by the tile's foreshortening (the sine of the view's
+    /// elevation angle at the tile) raised to `drapeDistanceCurve` - 0 sizes by width alone,
+    /// 0.5 by the tile's screen area, 1 by its screen height - rounded up to a power of two,
+    /// never above 1024 and never below 1024 * `drapeFarSizeFactor`. A factor of 1.0
+    /// switches the dial off.
+    double drapeDistanceCurve = 0.5;
     double drapeFarSizeFactor = 0.25;
     // Debug: when set, RenderTerrain logs the camera eye's clearance over the terrain
     // (ABOVE-GROUND ...). Off by default; the per-frame elevation sampling is skipped entirely

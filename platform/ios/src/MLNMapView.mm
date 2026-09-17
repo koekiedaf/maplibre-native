@@ -3380,16 +3380,16 @@ static void *windowScreenContext = &windowScreenContext;
   return _rendererFrontend->getTileCacheEnabled();
 }
 
-- (void)setDrapeTexelsPerPixel:(double)value {
+- (void)setDrapeDistanceCurve:(double)value {
   _mbglMap->setDrapeTextureDial(value, _mbglMap->getDrapeFarSizeFactor());
 }
 
-- (double)drapeTexelsPerPixel {
-  return _mbglMap->getDrapeTexelsPerPixel();
+- (double)drapeDistanceCurve {
+  return _mbglMap->getDrapeDistanceCurve();
 }
 
 - (void)setDrapeFarSizeFactor:(double)value {
-  _mbglMap->setDrapeTextureDial(_mbglMap->getDrapeTexelsPerPixel(), value);
+  _mbglMap->setDrapeTextureDial(_mbglMap->getDrapeDistanceCurve(), value);
 }
 
 - (double)drapeFarSizeFactor {

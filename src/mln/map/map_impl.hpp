@@ -126,7 +126,7 @@ public:
     std::unique_ptr<StillImageRequest> stillImageRequest;
 
     double tileLodMinRadius = 3;
-    double drapeTexelsPerPixel = 2.0;
+    double drapeDistanceCurve = 0.5;
     double drapeFarSizeFactor = 0.25;
     double tileLodScale = 1;
     double tileLodPitchThreshold = (60.0 / 180.0) * std::numbers::pi;

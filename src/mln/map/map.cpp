@@ -570,14 +570,14 @@ void Map::setTileLodMinRadius(double radius) {
     impl->tileLodMinRadius = radius;
 }
 
-void Map::setDrapeTextureDial(double texelsPerPixel, double farSizeFactor) {
-    impl->drapeTexelsPerPixel = std::clamp(texelsPerPixel, 0.25, 4.0);
+void Map::setDrapeTextureDial(double distanceCurve, double farSizeFactor) {
+    impl->drapeDistanceCurve = std::clamp(distanceCurve, 0.0, 1.0);
     impl->drapeFarSizeFactor = std::clamp(farSizeFactor, 1.0 / 16.0, 1.0);
     impl->onUpdate();
 }
 
-double Map::getDrapeTexelsPerPixel() const {
-    return impl->drapeTexelsPerPixel;
+double Map::getDrapeDistanceCurve() const {
+    return impl->drapeDistanceCurve;
 }
 
 double Map::getDrapeFarSizeFactor() const {

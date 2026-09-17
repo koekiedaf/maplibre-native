@@ -155,7 +155,7 @@ void Map::Impl::onUpdate() {
                                .tileLodMode = tileLodMode,
                                .terrainLoadMode = terrainLoadMode,
                                .terrainSkirtLength = terrainSkirtLength,
-                               .drapeTexelsPerPixel = drapeTexelsPerPixel,
+                               .drapeDistanceCurve = drapeDistanceCurve,
                                .drapeFarSizeFactor = drapeFarSizeFactor,
                                .debugAboveGroundLog = debugAboveGroundLog};
 

@@ -507,12 +507,13 @@ MLN_EXPORT
 
 /**
  Performance round, Phase 2 dial 1: drape texture size by distance. A terrain drape target is
- sized to its tile's screen footprint, `drapeTexelsPerPixel` texels per screen pixel (default 2,
- GL JS's quality factor: a tile 512 pixels wide keeps the full 1024 target), rounded up to a
+ sized to its tile's footprint on screen (two texels per screen pixel of its width, GL JS's
+ quality factor), the width scaled by the tile's foreshortening raised to `drapeDistanceCurve`
+ (0 sizes by width alone, 0.5 by screen area, 1 by screen height; default 0.5), rounded up to a
  power of two, never above 1024 and never below 1024 * `drapeFarSizeFactor` (default 0.25, i.e.
  256). A factor of 1 switches the dial off. Both are read back for the report state.
  */
-@property (nonatomic, assign) double drapeTexelsPerPixel;
+@property (nonatomic, assign) double drapeDistanceCurve;
 @property (nonatomic, assign) double drapeFarSizeFactor;
 
 /**

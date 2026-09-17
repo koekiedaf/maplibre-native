@@ -207,9 +207,9 @@ public:
     void setTileLodMinRadius(double radius);
 
     /// Performance round, Phase 2 dial 1: drape texture size by distance. See
-    /// UpdateParameters::drapeTexelsPerPixel / drapeFarSizeFactor.
-    void setDrapeTextureDial(double texelsPerPixel, double farSizeFactor);
-    double getDrapeTexelsPerPixel() const;
+    /// UpdateParameters::drapeDistanceCurve / drapeFarSizeFactor.
+    void setDrapeTextureDial(double distanceCurve, double farSizeFactor);
+    double getDrapeDistanceCurve() const;
     double getDrapeFarSizeFactor() const;
     double getTileLodMinRadius() const;
     void setTileLodScale(double scale);

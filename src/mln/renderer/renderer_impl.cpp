@@ -300,8 +300,9 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // footprint. The tile's width in world pixels at the current zoom, scaled by the
         // camera's focal length over the tile centre's distance from the eye (both in world
         // pixels; the centre altitude plane stands in for the tile's own height), gives the
-        // pixels the tile spans on screen; drapeTexelsPerPixel texels per pixel, rounded up
-        // to a power of two, clamped between 1024 * drapeFarSizeFactor and 1024. Hysteresis
+        // pixels the tile spans on screen, foreshortened by the view's elevation angle raised
+        // to drapeDistanceCurve; two texels per pixel, rounded up to a power of two, clamped
+        // between 1024 * drapeFarSizeFactor and 1024. Hysteresis
         // so a tile does not re-bake every time it crosses a step: an existing target grows
         // only when the want exceeds it by 15 percent, and shrinks only when the want would
         // fit its half with 20 percent to spare.
@@ -324,8 +325,12 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             const double dx = cx - cameraPx.x;
             const double dy = cy - cameraPx.y;
             const double dist = std::sqrt(dx * dx + dy * dy + cameraHeightPx * cameraHeightPx);
-            const double screenPx = tilePx * focalPx / std::max(dist, 1.0);
-            const double want = screenPx * updateParameters->drapeTexelsPerPixel;
+            const double widthPx = tilePx * focalPx / std::max(dist, 1.0);
+            // Foreshortening: the sine of the elevation angle from the tile to the eye.
+            const double sinElev = std::clamp(cameraHeightPx / std::max(dist, 1.0), 0.0, 1.0);
+            const double screenPx = widthPx * std::pow(sinElev, updateParameters->drapeDistanceCurve);
+            constexpr double kTexelsPerPixel = 2.0; // GL JS's qualityFactor
+            const double want = screenPx * kTexelsPerPixel;
             uint32_t desired = static_cast<uint32_t>(std::exp2(std::ceil(std::log2(std::max(want, 1.0)))));
             desired = std::clamp(desired, minSize, maxSize);
             if (current == 0) {

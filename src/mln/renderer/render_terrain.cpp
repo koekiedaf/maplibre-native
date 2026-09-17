@@ -767,20 +767,20 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         }
     }
 
-    // Phase 2 dial 3 (mesh coarseness): the grid a tile's mesh is built on follows its drape
-    // target's size, which already encodes the tile's screen footprint (dial 1): 1024 -> 128
-    // triangles per side, 512 -> 64, 256 -> 32, 128 -> 16, never below the dial's floor
-    // and never above MESH_SIZE. The default floor of 128 keeps every tile at the full grid.
+    // Phase 2 dial 3 (mesh coarseness): a tile whose drape target is below full size (dial 1
+    // already judged it far, by screen footprint) is meshed on the dial's grid (16, 32 or 64
+    // triangles per side); a near tile (full 1024 target) keeps the full 128 grid. The
+    // default of 128 keeps every tile at the full grid.
     const size_t farMeshGrid = updateParameters ? updateParameters->terrainFarMeshGrid : MESH_SIZE;
     const auto wantGridFor = [&](const UnwrappedTileID& unwrapped) -> size_t {
         if (farMeshGrid >= MESH_SIZE) {
             return MESH_SIZE;
         }
         const uint32_t targetSize = texturePool.renderTargetSize(unwrapped);
-        if (targetSize == 0) {
+        if (targetSize == 0 || targetSize >= texturePool.defaultTileSize()) {
             return MESH_SIZE;
         }
-        return std::clamp<size_t>(targetSize / 8, std::max<size_t>(farMeshGrid, 8), MESH_SIZE);
+        return std::clamp<size_t>(farMeshGrid, 8, MESH_SIZE);
     };
     const auto gridMatches = [&](const OverscaledTileID& tileID, size_t want) {
         const auto it = drawableGridSize.find(tileID);

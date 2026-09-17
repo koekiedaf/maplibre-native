@@ -197,9 +197,14 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
         // bottom of the screen and paper everywhere else (David's reports 53110e6a and
         // d2975824, 17 September). Applied only once the mesh cover exists, so the first
         // frame bootstraps from the plain frustum.
+        // Round 3, 17 September 2026: only tiles at this source's MIN zoom are candidates -
+        // the clamped horizon tiles that were the memory fault. Any deeper frustum tile stays
+        // whatever the mesh does above it: a filter that read the mesh cover in the mid field
+        // fed the cover's own elevation-aware LOD, and with a tile budget the two flipped
+        // each other every frame (76 and 61 tiles alternating at David's 5c4bb1c1 camera).
         const auto beneathCoarseMesh = [&](const OverscaledTileID& id) {
             UnwrappedTileID t = id.toUnwrapped();
-            if (t.canonical.z < 2) {
+            if (t.canonical.z < 2 || t.canonical.z != zoomRange.min) {
                 return false;
             }
             // Ancestors from two levels up to the root.

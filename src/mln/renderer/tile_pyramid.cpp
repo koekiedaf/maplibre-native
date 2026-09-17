@@ -188,36 +188,32 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
         // pitch 78, 1412 z8 DEM tiles resident for a 52-tile mesh whose far tiles sit at z2
         // to z7 and can never sample them (a mesh tile binds its own DEM or an ancestor,
         // never a descendant). Those tiles were 3.2 GB of textures and a 1.9 GB process - the
-        // colleague's crash. A frustum tile is kept only where the mesh can use it: it is a
-        // mesh tile, an ancestor of one, or a direct child of one. Not the bare mesh cover:
-        // the elevation-aware LOD consults DEM under the ground it is about to split, so the
-        // frustum's near-field tiles must stay (measured at Gavarnie z14.2 pitch 77: without
-        // them the near field settled one level coarser, 4 z16 tiles for 16 z17, and the
-        // cover oscillated at the Gavarnie wall, 32 and 26 tiles alternating every frame).
-        // Filtered rather than replaced, and only once the mesh cover exists, so the first
-        // frame can bootstrap from the plain frustum. Nothing is retained beyond that: an
-        // ancestor and a descendant both rendered draw the hillshade twice into the drapes
-        // (raster layers do not use the tile stencil masks), which reads as a darker map.
-        std::set<UnwrappedTileID> selfOrAncestor;
-        for (const auto& m : *parameters.requiredTiles) {
-            UnwrappedTileID t = m;
-            while (selfOrAncestor.insert(t).second && t.canonical.z > 0) {
-                t = UnwrappedTileID{t.wrap, t.canonical.scaledTo(static_cast<uint8_t>(t.canonical.z - 1))};
-            }
-        }
-        const auto meshCanUse = [&](const OverscaledTileID& id) {
-            const UnwrappedTileID t = id.toUnwrapped();
-            if (selfOrAncestor.contains(t)) {
-                return true;
-            }
-            if (t.canonical.z == 0) {
+        // colleague's crash. A frustum tile is dropped only when it lies TWO OR MORE levels
+        // beneath a mesh tile: the mesh there is coarse on purpose and cannot use it. Every
+        // other frustum tile stays, in particular tiles over ground the mesh cover has not
+        // reached: the elevation-aware LOD reads DEM there to decide how coarse the far
+        // cover may be, and starving it holds the cover at its finest level - measured at
+        // Gavarnie z17.25 pitch 63 with a mesh-only cover: 128 z21 tiles in a patch at the
+        // bottom of the screen and paper everywhere else (David's reports 53110e6a and
+        // d2975824, 17 September). Applied only once the mesh cover exists, so the first
+        // frame bootstraps from the plain frustum.
+        const auto beneathCoarseMesh = [&](const OverscaledTileID& id) {
+            UnwrappedTileID t = id.toUnwrapped();
+            if (t.canonical.z < 2) {
                 return false;
             }
-            const UnwrappedTileID parent{t.wrap, t.canonical.scaledTo(static_cast<uint8_t>(t.canonical.z - 1))};
-            return parameters.requiredTiles->contains(parent);
+            // Ancestors from two levels up to the root.
+            for (uint8_t z = t.canonical.z - 2;; --z) {
+                if (parameters.requiredTiles->contains(UnwrappedTileID{t.wrap, t.canonical.scaledTo(z)})) {
+                    return true;
+                }
+                if (z == 0) {
+                    return false;
+                }
+            }
         };
-        std::erase_if(idealTiles, [&](const OverscaledTileID& id) { return !meshCanUse(id); });
-        std::erase_if(panTiles, [&](const OverscaledTileID& id) { return !meshCanUse(id); });
+        std::erase_if(idealTiles, beneathCoarseMesh);
+        std::erase_if(panTiles, beneathCoarseMesh);
         for (const auto& required : *parameters.requiredTiles) {
             const uint8_t requiredZoom = required.canonical.z;
             const uint8_t ancestorZoom = std::min(requiredZoom, zoomRange.max);

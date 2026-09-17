@@ -316,13 +316,21 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // draped lines were magnified 2.4x. A tile whose footprint asks for it may take a
         // 2048 target (16 MB); the floor and the foreshortening rule are unchanged, so only
         // the few tiles nearest the camera ever reach it.
+        // Round 4, 18 September 2026 (David's frayed roads at Utrecht z16.28 pitch 80): the
+        // one or two tiles under the camera at a steep pitch span the whole width of the
+        // screen and more; at 2048 their road edges showed as texel steps. The two tiles
+        // whose footprint asks for the most may take 4096 (64 MB each); everything else
+        // stays capped at 2048.
         const uint32_t maxSize = texturePool.defaultTileSize() * 2;
+        const uint32_t hugeSize = texturePool.defaultTileSize() * 4;
+        constexpr int kHugeTargets = 2;
         const double minSizeD = std::clamp(texturePool.defaultTileSize() * updateParameters->drapeFarSizeFactor, 64.0, double(maxSize));
         const uint32_t minSize = static_cast<uint32_t>(std::exp2(std::ceil(std::log2(minSizeD))));
         // A dial moved in the panel (the epoch changed): every target in view takes its
         // desired size this frame, hysteresis skipped, so the change is visible at once.
         const bool dialMoved = updateParameters->drapeDialEpoch != lastDrapeDialEpoch;
         lastDrapeDialEpoch = updateParameters->drapeDialEpoch;
+        std::set<UnwrappedTileID> hugeAllowed;
         const auto sizeFor = [&](const UnwrappedTileID& id) -> uint32_t {
             const uint32_t current = texturePool.renderTargetSize(id);
             if (minSize >= maxSize) {
@@ -343,7 +351,8 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             const double screenPx = widthPx * std::pow(sinElev, updateParameters->drapeDistanceCurve);
             const double want = screenPx * updateParameters->drapeTexelsPerPixel;
             uint32_t desired = static_cast<uint32_t>(std::exp2(std::ceil(std::log2(std::max(want, 1.0)))));
-            desired = std::clamp(desired, minSize, maxSize);
+            const uint32_t cap = hugeAllowed.contains(id) ? hugeSize : maxSize;
+            desired = std::clamp(desired, minSize, cap);
             if (current == 0 || dialMoved) {
                 return desired;
             }
@@ -355,6 +364,23 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             }
             return current;
         };
+        // The tiles allowed 4096: the kHugeTargets nearest the camera's ground point whose
+        // want exceeds 2048 by half again (a fixed set per frame, so it cannot flicker).
+        {
+            std::vector<std::pair<double, UnwrappedTileID>> byDistance;
+            for (const auto& id : demTileIDs) {
+                const double tilePx = worldPx / std::exp2(static_cast<double>(id.canonical.z));
+                const double cx = (static_cast<double>(id.canonical.x) + 0.5 + id.wrap * std::exp2(id.canonical.z)) * tilePx;
+                const double cy = (static_cast<double>(id.canonical.y) + 0.5) * tilePx;
+                const double dx = cx - cameraPx.x;
+                const double dy = cy - cameraPx.y;
+                byDistance.emplace_back(dx * dx + dy * dy, id);
+            }
+            std::sort(byDistance.begin(), byDistance.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+            for (int i = 0; i < kHugeTargets && i < static_cast<int>(byDistance.size()); ++i) {
+                hugeAllowed.insert(byDistance[i].second);
+            }
+        }
         for (const auto& id : demTileIDs) {
             texturePool.createRenderTarget(context, id, renderTreeParameters.backgroundColor, sizeFor(id));
         }

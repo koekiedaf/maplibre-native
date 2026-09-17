@@ -129,6 +129,8 @@ public:
     /// below - see getLastFrameMeshCoverTileIds.
     void setFrameMeshCover(std::set<UnwrappedTileID> cover) {
         lastFrameMeshCover = cover;
+        demRequestCover = cover;
+        demRequestCover.insert(lastFrameRawMeshCover.begin(), lastFrameRawMeshCover.end());
         frameMeshCover = std::move(cover);
     }
 
@@ -145,6 +147,11 @@ public:
     /// does) and passes it into the DEM source's TileParameters::requiredTiles so
     /// TilePyramid::update can fold it into idealTiles.
     const std::set<UnwrappedTileID>& getLastFrameMeshCover() const { return lastFrameMeshCover; }
+    /// Round 3: what the DEM source is asked for - the final cover plus the RAW (camera-only,
+    /// pre-budget) cover of the last frame. The DEM filter and the elevation-aware LOD read
+    /// this; keyed on the final cover alone, a budget-coarsened cover dropped the DEM under
+    /// its own fine tiles, the LOD lost them, and the cover flipped every frame.
+    const std::set<UnwrappedTileID>& getDemRequestCover() const { return demRequestCover; }
 
     /**
      * @brief DuckMaps fork only, task M1: a hash of everything about the terrain that decides
@@ -647,6 +654,8 @@ private:
     /// computeMeshCover's ceiling). Sticky, so the budget cannot flip the cover between two
     /// states every frame; relaxed one level at a time only when the raw cover fits.
     mutable std::optional<uint8_t> meshCoarsenCeiling;
+    mutable std::set<UnwrappedTileID> lastFrameRawMeshCover;
+    std::set<UnwrappedTileID> demRequestCover;
 
     // DEM decode vector for the source's encoding (default: Mapbox Terrain-RGB)
     std::array<float, 4> demUnpackVector = {{6553.6f, 25.6f, 0.1f, 10000.0f}};

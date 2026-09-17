@@ -291,6 +291,8 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
         out.insert(id.toUnwrapped());
     }
 
+    lastFrameRawMeshCover = out; // round 3: see getDemRequestCover
+
     // DuckMaps fork only: trace point 1/3 - util::tileCover's own raw output, before this
     // function touches it at all. Whether THIS set already contains overlapping pairs is a
     // separate question from the dilation fix below (tileCover is a disjoint quadtree DFS, so

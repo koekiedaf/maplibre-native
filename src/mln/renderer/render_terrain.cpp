@@ -621,6 +621,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         mesh.reset();
         meshesBySize.clear();
         drawableGridSize.clear();
+        drawableDrapeTexture.clear();
         if (layerGroup) {
             layerGroup->clearDrawables();
         }
@@ -718,6 +719,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         if (!currentTiles.contains(it->first)) {
             drawableDemCoords.erase(it->first);
             drawableGridSize.erase(it->first);
+            drawableDrapeTexture.erase(it->first);
             it = tilesWithDrawables.erase(it);
         } else {
             ++it;
@@ -786,6 +788,13 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         const auto it = drawableGridSize.find(tileID);
         return it != drawableGridSize.end() && it->second == want;
     };
+    // Round 3: the drawable must sample the texture its tile's CURRENT drape target owns.
+    const auto textureMatches = [&](const OverscaledTileID& tileID, const UnwrappedTileID& unwrapped) {
+        const auto it = drawableDrapeTexture.find(tileID);
+        const auto target = texturePool.getRenderTarget(unwrapped);
+        const gfx::Texture2D* current = (target && target->getTexture()) ? target->getTexture().get() : nullptr;
+        return it != drawableDrapeTexture.end() && current != nullptr && it->second == current;
+    };
 
     // Create terrain drawables for each mesh tile
     for (const auto& unwrapped : meshTiles) {
@@ -797,7 +806,8 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         // otherwise evict the texture from under the drawable still sampling it.
         if (const auto existing = tilesWithDrawables.find(tileID);
             existing != tilesWithDrawables.end() &&
-            existing->second == static_cast<int8_t>(unwrapped.canonical.z) && gridMatches(tileID, wantGrid)) {
+            existing->second == static_cast<int8_t>(unwrapped.canonical.z) && gridMatches(tileID, wantGrid) &&
+            textureMatches(tileID, unwrapped)) {
             if (auto cached = demTextures.find(unwrapped); cached != demTextures.end()) {
                 cached->second.lastUsed = demUpdateCounter;
             }
@@ -867,7 +877,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         // quality tier is what stops the drawable latching onto whichever ancestor loaded
         // first (see `tilesWithDrawables`).
         if (const auto existing = tilesWithDrawables.find(tileID); existing != tilesWithDrawables.end()) {
-            if (existing->second >= demZoom && gridMatches(tileID, wantGrid)) {
+            if (existing->second >= demZoom && gridMatches(tileID, wantGrid) && textureMatches(tileID, unwrapped)) {
                 continue;
             }
             // Performance round, Phase 1 item 3 (gesture freeze): a mesh tile that already
@@ -891,6 +901,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
             }
             tilesWithDrawables.erase(existing);
             drawableGridSize.erase(tileID);
+            drawableDrapeTexture.erase(tileID);
         }
         drawableDemCoords[tileID] = demCoords;
 #if MLN_RENDER_BACKEND_OPENGL
@@ -917,6 +928,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
             lg->addDrawable(std::move(drawable));
             tilesWithDrawables[tileID] = demZoom;
             drawableGridSize[tileID] = wantGrid;
+            drawableDrapeTexture[tileID] = renderTarget->getTexture().get();
 #if !MLN_RENDER_BACKEND_OPENGL
             // Non-GL backends: one depth drawable per tile (no instancing path there).
             if (depthLg) {

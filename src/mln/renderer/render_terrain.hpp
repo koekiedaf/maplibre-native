@@ -563,6 +563,11 @@ private:
     std::map<size_t, TerrainMesh> meshesBySize;
     /// The grid each tile's drawable was built with; a tile whose wanted grid changes is rebuilt.
     std::unordered_map<OverscaledTileID, size_t> drawableGridSize;
+    /// Round 3: the drape texture each tile's drawable samples. Dial 1 replaces a target (and
+    /// its texture) when the wanted size changes; a drawable still holding the old texture
+    /// showed the old bake, or paper (David's "Not drawn?"). A tile whose target's texture is
+    /// not the one it was built with is rebuilt.
+    std::unordered_map<OverscaledTileID, const gfx::Texture2D*> drawableDrapeTexture;
     // The skirt setting the cached mesh was built with. update() drops the mesh and every
     // tile drawable built from it when the map's setting no longer matches.
     TerrainSkirtLength meshSkirtLength = TerrainSkirtLength::Auto;

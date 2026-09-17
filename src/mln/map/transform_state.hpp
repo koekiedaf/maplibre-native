@@ -384,9 +384,10 @@ public:
     void setCenterRayMaxPitch(std::optional<double> radians) { centerRayMaxPitch = radians; }
     std::optional<double> getCenterRayClearance() const { return centerRayClearanceMeters; }
     /// Task E: how close the camera may come to the terrain along its own ray while tilting.
-    /// 5 m, David's number. Distinct from the 60 m stand-off, which stays for one-finger travel,
-    /// the anticipatory climb and the pinch.
-    static constexpr double tiltClearanceMeters = 5.0;
+    /// 50 m, David's correction of 17 September after flying builds 7 and 8 ("it comes too
+    /// low"); 5 m was his 16 September number. Distinct from the 60 m stand-off, which stays for
+    /// one-finger travel, the anticipatory climb and the pinch.
+    static constexpr double tiltClearanceMeters = 50.0;
     void setTerrainCameraGroundRise(std::optional<double> metres) { terrainCameraGroundRise = metres; }
     std::optional<double> getTerrainCameraGroundRise() const { return terrainCameraGroundRise; }
 

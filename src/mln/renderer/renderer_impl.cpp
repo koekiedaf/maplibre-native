@@ -1175,7 +1175,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                     const double ux = dx / groundLen;
                     const double uy = dy / groundLen;
                     const double currentPitch = ts.getPitch();
-                    constexpr double kClearance = 5.0;
+                    constexpr double kClearance = TransformState::tiltClearanceMeters; // 50 m, David, 17 September
                     constexpr int kPitchSteps = 60;
                     constexpr int kSegSteps = 40;
                     double maxOkPitch = currentPitch;

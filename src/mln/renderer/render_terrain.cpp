@@ -875,7 +875,11 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
             // own DEM (a drawable rebuild) waits for rest, like the drape re-bake above. New
             // tiles entering the cover are still built below. Rest is not gated on anything
             // else: the first frame after the gesture performs every pending upgrade.
-            if (state.isGestureInProgress()) {
+            // Round 3, 17 September 2026: NOT a tile on the flat placeholder (demZoom -1). Held
+            // flat at sea level through a pan, such a tile is a hole in the mountains with
+            // the neighbours' skirts hanging into it (measured at David's 6fcf398c camera,
+            // whole tiles of paper mid-pan); it takes the first DEM that arrives at once.
+            if (state.isGestureInProgress() && existing->second >= 0) {
                 continue;
             }
             lg->removeDrawablesIf(

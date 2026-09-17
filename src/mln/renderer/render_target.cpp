@@ -406,7 +406,12 @@ RenderTarget::RenderResult RenderTarget::render(RenderOrchestrator& orchestrator
         // frame. Leave bakedCoverage/bakedSignature unchanged so it is re-evaluated and
         // rendered on a subsequent frame. A never-rendered target falls through (rendering
         // it now avoids a blank tile), so bursts of *new* targets are not deferred.
-        if (!canRerender && hasRenderedContent) {
+        // Round 3, 17 September 2026 (David's "Not drawn?"): a target whose last bake had no
+        // draped content at all (rendered before its covering tiles arrived) is a paper
+        // quad on the terrain, not a slightly stale texture; it re-renders regardless of the
+        // budget and of the gesture freeze, like a never-rendered target.
+        const bool bakedEmpty = bakedCoverage.groupsWithContent == 0;
+        if (!canRerender && hasRenderedContent && !bakedEmpty) {
             return RenderResult::Deferred;
         }
 

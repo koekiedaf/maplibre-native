@@ -1410,6 +1410,15 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                     os << "{\"z\":" << z << ",\"count\":" << count << "}";
                 }
             }
+            os << "],\"meshCoverIds\":[";
+            if (traceTerrain) {
+                bool firstMesh = true;
+                for (const auto& id : traceTerrain->getLastFrameMeshCoverTileIds()) {
+                    if (!firstMesh) { os << ","; }
+                    firstMesh = false;
+                    os << "\"" << static_cast<int>(id.z) << "/" << id.x << "/" << id.y << "\"";
+                }
+            }
             os << "],\"meshCoverCount\":" << meshCoverCount
                << ",\"meshCoverMinZ\":" << static_cast<int>(meshCoverMinZ)
                << ",\"meshCoverMaxZ\":" << static_cast<int>(meshCoverMaxZ);

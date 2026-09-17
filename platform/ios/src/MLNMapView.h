@@ -31,6 +31,10 @@ NS_ASSUME_NONNULL_BEGIN
 /** Options for ``MLNMapView/decelerationRate``. */
 typedef CGFloat MLNMapViewDecelerationRate NS_TYPED_EXTENSIBLE_ENUM;
 
+/// Round G, 17 September 2026: a presented-frame timestamp, in `CACurrentMediaTime` seconds.
+/// Ported from the Codex branch's drawable-presentation recorder (the hook only, not its camera).
+typedef void (^MLNPresentedFrameHandler)(CFTimeInterval presentedTime);
+
 /** The default deceleration rate for a map view. */
 FOUNDATION_EXTERN MLN_EXPORT const MLNMapViewDecelerationRate MLNMapViewDecelerationRateNormal;
 
@@ -531,6 +535,15 @@ MLN_EXPORT
  average It is recommended to first configure the pixelRatio before adjusting TileLodZoomShift.
  */
 @property (nonatomic, assign) double tileLodZoomShift;
+
+/**
+ Receives actual Metal presentation timestamps, one per presented drawable. Registered before
+ each drawable is presented, so the count is presented frames, not render-loop callbacks - the
+ metric docs/plans/spec.md asks for. Invoked on a Metal-owned queue; return promptly. On the
+ simulator, whose CAMetalDrawable lacks the presentation callback, the command buffer's
+ completion time is delivered instead and is labelled as such in the state.
+ */
+@property (nonatomic, copy, nullable) MLNPresentedFrameHandler presentedFrameHandler;
 
 // MARK: Terrain
 

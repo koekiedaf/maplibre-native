@@ -11,6 +11,8 @@ class MLNMapViewMetalImpl final : public MLNMapViewImpl,
                                   public mln::mtl::RendererBackend,
                                   public mln::gfx::Renderable {
 public:
+  /// Round G: the map view's presented-frame handler, read on the render thread.
+  MLNPresentedFrameHandler getPresentedFrameHandler() const;
   MLNMapViewMetalImpl(MLNMapView*);
   ~MLNMapViewMetalImpl() override;
 

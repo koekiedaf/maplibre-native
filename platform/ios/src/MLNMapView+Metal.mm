@@ -11,6 +11,14 @@
 
 #import <Metal/Metal.hpp>
 
+// The Bazel Apple toolchain's Metal module only forward-declares these newer MTLDrawable
+// members even when building against an SDK that provides them. Keep the Objective-C surface
+// local and typed; every CAMetalDrawable on the deployment target implements this at runtime.
+@protocol MLNDrawablePresentation <NSObject>
+@property(nonatomic, readonly) CFTimeInterval presentedTime;
+- (void)addPresentedHandler:(void (^)(id<MLNDrawablePresentation> drawable))block;
+@end
+
 @interface MLNMapViewImplDelegate : NSObject <MTKViewDelegate>
 @end
 
@@ -72,6 +80,29 @@ public:
   void swap() override {
     id<CAMetalDrawable> currentDrawable = [mtlView currentDrawable];
     if (currentDrawable) {
+      // Round G: presented-frame timing. The registration precedes presentation, and a
+      // dropped or unpresented drawable reports presentedTime 0 and is deliberately skipped. A
+      // copied handler is taken before any Metal work is scheduled so replacement or teardown
+      // on the main thread cannot race the callback's lifetime.
+      MLNPresentedFrameHandler handler = backend.getPresentedFrameHandler();
+      if (handler) {
+        id<MLNDrawablePresentation> presentedDrawable = (id)currentDrawable;
+        if ([presentedDrawable respondsToSelector:@selector(addPresentedHandler:)]) {
+          [presentedDrawable addPresentedHandler:^(id<MLNDrawablePresentation> drawable) {
+            const CFTimeInterval presented = drawable.presentedTime;
+            if (presented > 0) {
+              handler(presented);
+            }
+          }];
+        } else {
+          // CoreSimulator's CAMetalDrawable lacks the presentation callback. A completed
+          // command buffer is the closest simulator-only frame boundary; the device path
+          // above is true presentation timing.
+          [commandBuffer addCompletedHandler:^(id<MTLCommandBuffer>) {
+            handler(CACurrentMediaTime());
+          }];
+        }
+      }
       if (presentsWithTransaction) {
         [commandBuffer commit];
         [commandBuffer waitUntilCompleted];
@@ -246,4 +277,8 @@ MLNBackendResource* MLNMapViewMetalImpl::getObject() {
                                               device:resource.mtlView.device
                                 renderPassDescriptor:[MTLRenderPassDescriptor renderPassDescriptor]
                                        commandBuffer:resource.commandBuffer];
+}
+
+MLNPresentedFrameHandler MLNMapViewMetalImpl::getPresentedFrameHandler() const {
+  return mapView.presentedFrameHandler;
 }

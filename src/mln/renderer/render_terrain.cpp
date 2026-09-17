@@ -288,6 +288,59 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     // separate question from the dilation fix below (tileCover is a disjoint quadtree DFS, so
     // it should not, but that is worth confirming rather than assuming) - see this task's own
     // report for the measured count.
+    // Round G, 17 September 2026: level hysteresis, the stateful half of the flicker fix.
+    // tileCover is rebuilt from the root every frame from a continuous distance-to-zoom
+    // function with a hard rounding edge, so under sustained motion a patch of ground crosses
+    // that edge back and forth and is replaced by its child or its parent on every crossing -
+    // measured at pitch 79 over 27 s, 253 child-to-parent and 112 parent-to-child swaps, each
+    // one a fresh mesh build and drape that reads as terrain flickering. tileCover itself has
+    // no memory, so the memory lives here: for every raw tile whose PARENT was in last
+    // frame's cover, the parent is kept and the raw children are dropped (the camera has moved
+    // a hair past the split edge, not closed in); for every last-frame tile whose parent the
+    // raw cover now wants, the children are kept instead (a hair past the merge edge). A
+    // genuine change of two levels, or a tile leaving the frustum, passes through untouched:
+    // this only holds a tie at a single edge, it never keeps a tile the cover no longer wants
+    // at all. The result is disjoint by construction, since a parent and its children are
+    // never both kept.
+    if (!lastFrameMeshCover.empty()) {
+        std::set<UnwrappedTileID> held;
+        std::set<UnwrappedTileID> dropped;
+        const auto parentOf = [](const UnwrappedTileID& id) -> std::optional<UnwrappedTileID> {
+            if (id.canonical.z == 0) return std::nullopt;
+            return UnwrappedTileID(id.canonical.z - 1, id.canonical.x >> 1, id.canonical.y >> 1);
+        };
+        // parent -> child splits: raw has the children, last frame had the parent
+        for (const auto& id : out) {
+            const auto p = parentOf(id);
+            if (p && lastFrameMeshCover.count(*p)) {
+                held.insert(*p);
+                dropped.insert(id);
+            }
+        }
+        // child -> parent merges: raw has the parent, last frame had (some of) the children
+        for (const auto& prev : lastFrameMeshCover) {
+            const auto p = parentOf(prev);
+            if (p && out.count(*p) && !dropped.count(*p)) {
+                // keep last frame's children of this parent only if ALL four are still
+                // wanted somewhere in the frustum; otherwise the merge is real.
+                bool allFour = true;
+                for (int dy = 0; dy < 2 && allFour; ++dy)
+                    for (int dx = 0; dx < 2 && allFour; ++dx) {
+                        const UnwrappedTileID child(p->canonical.z + 1, (p->canonical.x << 1) + dx, (p->canonical.y << 1) + dy);
+                        if (!lastFrameMeshCover.count(child)) allFour = false;
+                    }
+                if (allFour) {
+                    dropped.insert(*p);
+                    for (int dy = 0; dy < 2; ++dy)
+                        for (int dx = 0; dx < 2; ++dx)
+                            held.insert(UnwrappedTileID(p->canonical.z + 1, (p->canonical.x << 1) + dx, (p->canonical.y << 1) + dy));
+                }
+            }
+        }
+        for (const auto& id : dropped) out.erase(id);
+        for (const auto& id : held) out.insert(id);
+    }
+
     const std::size_t preDilationCount = out.size();
     const int preDilationOverlapPairs = traceMeshCover ? countOverlappingPairs(out) : 0;
 
@@ -440,12 +493,26 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
             return dx * dx + dy * dy;
         };
 
+        // Round G, 17 September 2026: hysteresis at the cap boundary. Measured on a 27 s flight
+        // at pitch 79 (traces/g-flicker-before.jsonl): 1060 mesh adds and 997 removes, with 116
+        // tiles dropped and re-added within five frames - tiles right at the 128th rank trading
+        // places with each other as the camera moved a metre, each swap a fresh mesh build and a
+        // fresh drape, seen as terrain flickering. A tile that was in last frame's cover is now
+        // kept unless a newcomer is clearly nearer: its distance is scaled down by kKeepBias
+        // before ranking, so a newcomer has to beat it by that margin to displace it. Nothing
+        // about which tiles are visible changes; only who wins a near-tie at the edge.
+        constexpr double kKeepBias = 0.85 * 0.85; // squared: distances here are squared
+        const auto& previous = lastFrameMeshCover;
+        const auto rankDist2 = [&](const UnwrappedTileID& id) {
+            const double d2 = tileDist2(id);
+            return previous.count(id) ? d2 * kKeepBias : d2;
+        };
         std::vector<UnwrappedTileID> sorted(out.begin(), out.end());
         std::partial_sort(
             sorted.begin(),
             sorted.begin() + static_cast<std::ptrdiff_t>(maxMeshTiles),
             sorted.end(),
-            [&](const UnwrappedTileID& a, const UnwrappedTileID& b) { return tileDist2(a) < tileDist2(b); });
+            [&](const UnwrappedTileID& a, const UnwrappedTileID& b) { return rankDist2(a) < rankDist2(b); });
         out = std::set<UnwrappedTileID>(sorted.begin(), sorted.begin() + static_cast<std::ptrdiff_t>(maxMeshTiles));
     }
 

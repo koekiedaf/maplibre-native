@@ -197,6 +197,13 @@ void RenderHillshadeLayer::update(gfx::ShaderRegistry& shaders,
     stats.drawablesRemoved += tileLayerGroup->removeDrawablesIf(
         [&](gfx::Drawable& drawable) { return drawable.getTileID() && !hasRenderTile(*drawable.getTileID()); });
 
+    // Round 3, 17 September 2026 (David's seams): the DEM source's render set carries the
+    // mesh's own tiles beside the frustum cover's, so an ancestor and a descendant can both
+    // be rendered, and this layer drew both into the same drape - a darker patch with straight
+    // tile edges. Fill layers clip such overlaps with the tile stencil masks; hillshade now
+    // does the same (drape targets carry a stencil attachment for exactly this).
+    tileLayerGroup->setStencilTiles(renderTiles);
+
     if (!staticDataSharedVertices) {
         staticDataSharedVertices = std::make_shared<HillshadeVertexVector>(RenderStaticData::rasterVertices());
     }
@@ -382,6 +389,7 @@ void RenderHillshadeLayer::update(gfx::ShaderRegistry& shaders,
         hillshadeBuilder->setEnableDepth(false);
         hillshadeBuilder->setColorMode(gfx::ColorMode::alphaBlended());
         hillshadeBuilder->setCullFaceMode(gfx::CullFaceMode::disabled());
+        hillshadeBuilder->setEnableStencil(true); // round 3: clip overlapping DEM tiles
         hillshadeBuilder->setRenderPass(renderPass);
         hillshadeBuilder->setVertexAttributes(buildVertexAttributes());
         hillshadeBuilder->setRawVertices({}, vertices->elements(), gfx::AttributeDataType::Short2);

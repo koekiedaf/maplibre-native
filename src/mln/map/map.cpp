@@ -642,6 +642,10 @@ std::size_t Map::getTerrainMeshTileCount() const {
     return impl->terrainMeshTileCount;
 }
 
+std::size_t Map::getTerrainDrapeTargetCount() const {
+    return impl->terrainDrapeTargetCount;
+}
+
 std::optional<double> Map::getTerrainCameraGroundRiseMeters() const {
     return impl->transform.getTerrainCameraGroundRise();
 }
@@ -657,6 +661,73 @@ double Map::getTerrainCameraAltitudeAboveCentreMeters() const {
 
 double Map::getTerrainCentreAltitudeMeters() const {
     return impl->transform.getState().getCenterAltitude();
+}
+
+namespace {
+Map::FrameTimingStats toFrameTimingStats(const util::FrameTimingRecorder::Report& report) {
+    return Map::FrameTimingStats{
+        .count = report.count,
+        .medianMs = report.medianMs,
+        .p95Ms = report.p95Ms,
+        .meanMs = report.meanMs,
+        .minMs = report.minMs,
+        .maxMs = report.maxMs,
+    };
+}
+} // namespace
+
+void Map::recordFrameCPUMs(double milliseconds) {
+    if (!impl->frameTimingEnabled.load(std::memory_order_relaxed)) return;
+    impl->cpuFrameTiming.record(milliseconds);
+}
+
+void Map::recordFrameGPUMs(double milliseconds) {
+    if (!impl->frameTimingEnabled.load(std::memory_order_relaxed)) return;
+    impl->gpuFrameTiming.record(milliseconds);
+}
+
+void Map::setFrameTimingEnabled(bool enabled) {
+    impl->frameTimingEnabled.store(enabled, std::memory_order_relaxed);
+}
+
+bool Map::isFrameTimingEnabled() const {
+    return impl->frameTimingEnabled.load(std::memory_order_relaxed);
+}
+
+std::uint64_t Map::getDrapeRenderCount() const {
+    return impl->drapeRenderCount.load(std::memory_order_relaxed);
+}
+
+std::uint64_t Map::getTerrainMeshBuildCount() const {
+    return impl->terrainMeshBuildCount.load(std::memory_order_relaxed);
+}
+
+std::uint64_t Map::getTextureMemoryBytes() const {
+    return impl->textureMemoryBytes.load(std::memory_order_relaxed);
+}
+
+void Map::resetFrameTiming() {
+    impl->cpuFrameTiming.reset();
+    impl->gpuFrameTiming.reset();
+    impl->tileCoverTiming.reset();
+    impl->terrainMeshTiming.reset();
+    impl->drapeTargetsTiming.reset();
+    impl->layerPrepareTiming.reset();
+    impl->uploadTiming.reset();
+    impl->placementTiming.reset();
+}
+
+Map::FrameTimingReport Map::getFrameTimingReport() const {
+    return FrameTimingReport{
+        .cpu = toFrameTimingStats(impl->cpuFrameTiming.report()),
+        .gpu = toFrameTimingStats(impl->gpuFrameTiming.report()),
+        .tileCover = toFrameTimingStats(impl->tileCoverTiming.report()),
+        .terrainMesh = toFrameTimingStats(impl->terrainMeshTiming.report()),
+        .drapeTargets = toFrameTimingStats(impl->drapeTargetsTiming.report()),
+        .layerPrepare = toFrameTimingStats(impl->layerPrepareTiming.report()),
+        .upload = toFrameTimingStats(impl->uploadTiming.report()),
+        .placement = toFrameTimingStats(impl->placementTiming.report()),
+    };
 }
 
 void Map::setDebugAboveGroundLog(bool enabled) {

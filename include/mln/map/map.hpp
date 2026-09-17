@@ -250,6 +250,8 @@ public:
     std::optional<double> getTerrainCameraGroundRiseMeters() const;
     /// Round G: terrain mesh tiles drawn by the last rendered frame.
     std::size_t getTerrainMeshTileCount() const;
+    /// Performance round: drape render targets held by the texture pool after the last frame.
+    std::size_t getTerrainDrapeTargetCount() const;
 
     /// Band-aid audit item 6 (docs/plans/2026-09-11-band-aids.md): a reading of the render
     /// side, not a request. `Renderer::Impl::render` holds four bounded counters that keep a
@@ -282,6 +284,70 @@ public:
     ClientOptions getClientOptions() const;
 
     const std::unique_ptr<util::ActionJournal>& getActionJournal();
+
+    /// Task "make it measurable": a per-frame timing sample in milliseconds, pushed by the
+    /// platform layer. `recordFrameCPUMs` is the wall time `RendererFrontend::render()` itself
+    /// took to prepare a frame (build the command buffer), timed synchronously around that call
+    /// - see `MLNMapView.renderSync` on iOS. `recordFrameGPUMs` is a Metal command buffer's own
+    /// `GPUEndTime - GPUStartTime`, delivered asynchronously by a completion handler once the
+    /// GPU has actually finished the frame - see `MLNMapViewMetalRenderableResource::swap()`.
+    /// These are two different clocks measuring two different things on two different threads;
+    /// neither implies the other.
+    void recordFrameCPUMs(double milliseconds);
+    void recordFrameGPUMs(double milliseconds);
+
+    /// Performance round, Phase 0: the timing recorders above are diagnostic-only and OFF by
+    /// default; nothing is recorded (and the platform layer skips its timer reads) until the
+    /// owner's tuning panel switches this on. The counters below are always maintained; they
+    /// are plain integer copies of what the renderer already counts.
+    void setFrameTimingEnabled(bool enabled);
+    bool isFrameTimingEnabled() const;
+
+    /// Read-only, from the last rendered frame's gfx::RenderingStats: cumulative drape target
+    /// renders, cumulative terrain mesh drawable builds, and the texture memory the context
+    /// currently accounts for, in bytes. Rates are differences between two readings.
+    std::uint64_t getDrapeRenderCount() const;
+    std::uint64_t getTerrainMeshBuildCount() const;
+    std::uint64_t getTextureMemoryBytes() const;
+
+    /// Discards every sample recorded so far in every timing recorder (CPU, GPU and the six
+    /// per-section recorders below), so a caller (bench.py's sustained-motion mode) can start a
+    /// clean window right before driving a gesture and read back a distribution that describes
+    /// only that interval.
+    void resetFrameTiming();
+
+    struct FrameTimingStats {
+        std::size_t count = 0;
+        double medianMs = 0.0;
+        double p95Ms = 0.0;
+        double meanMs = 0.0;
+        double minMs = 0.0;
+        double maxMs = 0.0;
+    };
+    struct FrameTimingReport {
+        FrameTimingStats cpu;
+        FrameTimingStats gpu;
+
+        // Task "break the frame down by section": where a frame's CPU time (the `cpu` stats
+        // above) actually goes, sourced from the same per-frame gfx::RenderingStats the render
+        // side already produces (see rendering_stats.hpp) - not a second, independently-timed
+        // mechanism. These six do not have to sum exactly to `cpu`: they cover the phases that
+        // could plausibly scale with camera tilt (the brief's own list), not literally every
+        // instruction the frame executes (matrix math, GC/allocation, the parts of
+        // RendererFrontend::render() outside RenderOrchestrator::createRenderTree and
+        // Renderer::Impl::render's own named blocks).
+        FrameTimingStats tileCover;    ///< computing the tile cover (per-source, incl. util::tileCover)
+        FrameTimingStats terrainMesh;  ///< building/updating the terrain mesh (mesh cover + RenderTerrain::update)
+        FrameTimingStats drapeTargets; ///< preparing each drape target and rendering to it
+        FrameTimingStats layerPrepare; ///< per-layer per-tile preparation (RenderLayer::prepare)
+        FrameTimingStats upload;       ///< uploads to the GPU (both UploadPass blocks)
+        FrameTimingStats placement;    ///< symbol placement and collision (Placement::placeLayers)
+    };
+    /// Read-only measurement, not a request: the current rolling-window distribution of every
+    /// timing recorder above, CPU/GPU and the six-section breakdown alike. `count` on each says
+    /// exactly how many samples the percentiles were computed from, so a number can never again
+    /// be quoted from two or three frames without that being visible right beside it.
+    FrameTimingReport getFrameTimingReport() const;
 
 protected:
     class Impl;

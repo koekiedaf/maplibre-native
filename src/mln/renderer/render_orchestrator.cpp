@@ -417,6 +417,15 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
     // Track which layers are flagged for rendering
     std::vector<bool> updateList(orderedLayers.size());
 
+    // Task "break the frame down by section": wraps the whole per-source update loop below,
+    // which is where each source's tile cover is computed (RenderSource::update ->
+    // TilePyramid::update -> util::tileCover) - the section named "computing the tile cover"
+    // in the brief. Timed here, not inside TilePyramid::update itself, because a source also
+    // does relayout/prepare bookkeeping in the same call and splitting tileCover out from that
+    // would need a second timing mechanism threaded through RenderSource - this whole loop IS
+    // the tile-cover phase from a frame-breakdown point of view.
+    const auto tileCoverStart = util::MonotonicTimer::now().count();
+
     // Update all sources and initialize renderItems.
     for (const auto& sourceImpl : *sourceImpls) {
         MLN_TRACE_ZONE(update source);
@@ -500,6 +509,7 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         }
         addChanges(changes);
     }
+    renderTreeParameters->tileCoverTime = util::MonotonicTimer::now().count() - tileCoverStart;
 
     // Enable 3D mode if terrain is present
     if (renderTerrain && renderTerrain->isEnabled()) {
@@ -522,6 +532,11 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         }
     }
 
+    // Task "break the frame down by section": "the per-layer per-tile preparation" - each
+    // layer's own RenderLayer::prepare, which is where a layer builds/refreshes its drawables
+    // from its buckets for this frame's view. Timed around the loop, not inside prepare()
+    // itself, so no per-layer-type change is needed to get a frame-level number.
+    const auto layerPrepareStart = util::MonotonicTimer::now().count();
     auto opaquePassCutOffEstimation = layerRenderItems.size();
     for (auto& renderItem : layerRenderItems) {
         RenderLayer& renderLayer = renderItem.layer;
@@ -543,6 +558,13 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
             }
         }
     }
+    renderTreeParameters->layerPrepareTime = util::MonotonicTimer::now().count() - layerPrepareStart;
+
+    // Task "break the frame down by section": "symbol placement and collision" - covers both
+    // the cross-tile symbol index bookkeeping and the actual Placement::placeLayers call below
+    // (whichever branch runs), since both only do anything when layersNeedPlacement is
+    // non-empty and both are part of what this task's brief calls one section.
+    const auto placementStart = util::MonotonicTimer::now().count();
 
     // Symbol placement.
     assert((updateParameters->mode == MapMode::Tile) || !placedSymbolDataCollected);
@@ -611,6 +633,7 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         renderTreeParameters->symbolFadeChange = 1.0f;
         renderTreeParameters->needsRepaint = false;
     }
+    renderTreeParameters->placementTime = util::MonotonicTimer::now().count() - placementStart;
 
     if (!renderTreeParameters->needsRepaint && renderTreeParameters->loaded) {
         MLN_TRACE_ZONE(reduce);
@@ -1073,9 +1096,15 @@ void RenderOrchestrator::updateLayers(gfx::ShaderRegistry& shaders,
         }
     }
 
-    // Update terrain if enabled
+    // Update terrain if enabled. Task "break the frame down by section": this is the other
+    // half of "building or updating the terrain mesh" (the first half, computeMeshCover, is
+    // timed in Renderer::Impl::render and summed into the same field) - added directly onto
+    // context.renderingStats() here since this function already has the context and
+    // Renderer::Impl::render reads it back off the same object after this call returns.
     if (renderTerrain && renderTerrain->isEnabled()) {
+        const auto terrainUpdateStart = util::MonotonicTimer::now().count();
         renderTerrain->update(*this, shaders, context, texturePool, state, updateParameters, renderTree, changes);
+        context.renderingStats().terrainUpdateTime += util::MonotonicTimer::now().count() - terrainUpdateStart;
     }
 
     addChanges(changes);

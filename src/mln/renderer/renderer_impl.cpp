@@ -209,6 +209,15 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
     staticData->has3D = renderTreeParameters.has3D;
     const Size renderableSize = backend.getDefaultRenderable().getSize();
 
+    // Task "break the frame down by section": the three phases RenderOrchestrator::
+    // createRenderTree already timed onto RenderTreeParameters (they run before this
+    // function is even called) - copied into this frame's RenderingStats here so they
+    // travel out through the same context.threadSafeCopyRenderingStats() call every other
+    // stat in this struct already uses, rather than a second reporting path.
+    context.renderingStats().tileCoverTime = renderTreeParameters.tileCoverTime;
+    context.renderingStats().layerPrepareTime = renderTreeParameters.layerPrepareTime;
+    context.renderingStats().placementTime = renderTreeParameters.placementTime;
+
     // Set when the drape render budget defers a target this frame, so a follow-up frame is
     // requested (via needsRepaint) to let the deferred targets catch up progressively.
     bool drapeWorkDeferred = false;
@@ -266,6 +275,14 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
     // Number of terrain drape targets in this frame's cover; drives the re-enable follow-up
     // frame and the drape re-bake trigger below (0 while terrain is off or its cover is empty).
     std::size_t frameDrapeTargetCount = 0;
+    // Task "break the frame down by section": "building or updating the terrain mesh" - starts
+    // here (computeMeshCover, the elevation-aware ideal cover the mesh will be built from) and
+    // is added to again below around orchestrator.updateLayers, which is where RenderTerrain::
+    // update actually builds/refreshes the mesh geometry itself - both are part of the same
+    // named section, so this local accumulates across both call sites rather than reporting
+    // two separate numbers for one thing in the brief's list.
+    double terrainMeshTime = 0.0;
+    const auto meshCoverStart = util::MonotonicTimer::now().count();
     if (auto* terrain = orchestrator.getRenderTerrain()) {
         // Drape targets must exist before RenderTerrain::update drapes into them,
         // so build the same mesh cover it will use - the elevation-aware LOD ideal
@@ -295,6 +312,23 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // terrain is disabled instead of holding their textures indefinitely
         texturePool.removeStaleRenderTargets({});
     }
+    if (texturePool.size() != lastReportedDrapeTargetCount) {
+        lastReportedDrapeTargetCount = texturePool.size();
+        observer->onTerrainDrapeTargetCountChanged(lastReportedDrapeTargetCount);
+    }
+    terrainMeshTime += util::MonotonicTimer::now().count() - meshCoverStart;
+    // Seeds this frame's terrainUpdateTime with the mesh-cover half measured above; the second
+    // half (RenderTerrain::update itself) is added with += from inside
+    // RenderOrchestrator::updateLayers below, once this frame's context is passed to it - a
+    // plain assignment here first means that += can never pick up a stale value left over from
+    // a previous frame (nothing else resets this field between frames).
+    context.renderingStats().terrainUpdateTime = terrainMeshTime;
+
+    // Task "break the frame down by section": "uploads to the GPU" - both UploadPass blocks in
+    // this function (this one and "Upload layer groups" below) feed the same local, summed
+    // once into context.renderingStats() right after the second block closes.
+    double uploadTime = 0.0;
+    const auto firstUploadStart = util::MonotonicTimer::now().count();
 
     // - UPLOAD PASS -------------------------------------------------------------------------------
     // Uploads all required buffers and images before we do any actual rendering.
@@ -316,6 +350,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         renderTree.getLineAtlas().upload(*uploadPass);
         renderTree.getPatternAtlas().upload(*uploadPass);
     }
+    uploadTime += util::MonotonicTimer::now().count() - firstUploadStart;
 
     // - LAYER GROUP UPDATE ------------------------------------------------------------------------
     // Updates all layer groups and process changes
@@ -349,7 +384,13 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
     // across frames and rebuilt only when the drape content changes (below). parameters
     // points into it for the drape targets pass.
 
-    // Upload layer groups
+    // Upload layer groups. Task "break the frame down by section": timed as part of "uploads
+    // to the GPU" alongside the first UploadPass above, even though this block also runs each
+    // layer group's tweaker (building the UBOs the uploads just below then upload) - the code's
+    // own comment already calls the whole block "Upload layer groups", and splitting tweaker
+    // time out from the uploads it feeds would need a second timing mechanism inside every
+    // tweaker for a distinction this task's brief does not ask for.
+    const auto secondUploadStart = util::MonotonicTimer::now().count();
     {
         const auto uploadPass = parameters.encoder->createUploadPass("layerGroup-upload",
                                                                      parameters.backend.getDefaultRenderable());
@@ -514,6 +555,8 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // Upload the Debug layer group
         orchestrator.visitDebugLayerGroups([&](LayerGroupBase& layerGroup) { layerGroup.upload(*uploadPass); });
     }
+    uploadTime += util::MonotonicTimer::now().count() - secondUploadStart;
+    context.renderingStats().uploadTime = uploadTime;
 
     const Size atlasSize = parameters.patternAtlas.getPixelSize();
     const auto& worldSize = parameters.renderableSize;
@@ -771,10 +814,20 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         common3DPass();
         drawable3DPass();
     }
+    // Task "break the frame down by section": "preparing each drape target and rendering to
+    // it" - drawableTargetsPass renders every non-drape RenderTarget (a drape target's own
+    // upstream producer, e.g. hillshade's prepare pass) and then every drape target itself,
+    // subject to the drape re-render budget. Timed around the call rather than inside the
+    // lambda so the lambda's own logic (and the drapeWorkDeferred capture it writes) is
+    // untouched.
+    const auto drapeTargetsStart = util::MonotonicTimer::now().count();
     drawableTargetsPass();
+    context.renderingStats().drapeTargetsTime = util::MonotonicTimer::now().count() - drapeTargetsStart;
     // Terrain depth pass for symbol occlusion (sampled by calculate_visibility)
     if (auto* terrain = orchestrator.getRenderTerrain()) {
+        const auto terrainDepthStart = util::MonotonicTimer::now().count();
         terrain->renderDepth(orchestrator, renderTree, parameters);
+        context.renderingStats().terrainDepthTime = util::MonotonicTimer::now().count() - terrainDepthStart;
     }
     commonClearPass();
     context.bindGlobalUniformBuffers(*parameters.renderPass);
@@ -1592,6 +1645,27 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                 os << "\"" << *settleBoundGivenUp << "\"";
             } else {
                 os << "null";
+            }
+            // Performance round, Phase 0: this frame's work counters (cumulative on the
+            // context, so a per-frame figure is the difference from the previous line) and
+            // the section CPU times in milliseconds, the same fields Map::getFrameTimingReport
+            // aggregates. Also the pool size and texture memory, so a trace alone shows
+            // whether drape targets are freed when the map is at rest.
+            {
+                const auto& st = context.renderingStats();
+                os << ",\"drapeRenderTotal\":" << st.numDrapeTargetsRendered
+                   << ",\"meshBuildTotal\":" << st.numTerrainMeshBuilds
+                   << ",\"drapeTargets\":" << texturePool.size()
+                   << ",\"texMemMB\":" << (static_cast<double>(st.memTextures) / (1024.0 * 1024.0))
+                   << ",\"sectionsMs\":{\"tileCover\":" << st.tileCoverTime * 1000.0
+                   << ",\"terrainMesh\":" << st.terrainUpdateTime * 1000.0
+                   << ",\"drapeTargets\":" << st.drapeTargetsTime * 1000.0
+                   << ",\"layerPrepare\":" << st.layerPrepareTime * 1000.0
+                   << ",\"upload\":" << st.uploadTime * 1000.0
+                   << ",\"placement\":" << st.placementTime * 1000.0
+                   << ",\"terrainDepth\":" << st.terrainDepthTime * 1000.0
+                   << ",\"encoding\":" << st.encodingTime * 1000.0
+                   << ",\"rendering\":" << st.renderingTime * 1000.0 << "}";
             }
             os << "}\n";
 

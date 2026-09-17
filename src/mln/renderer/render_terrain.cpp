@@ -837,6 +837,7 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
         }
         auto drawable = createDrawableForTile(context, shaders, tileID, demTexture, renderTarget->getTexture());
         if (drawable) {
+            context.renderingStats().numTerrainMeshBuilds++;
             lg->addDrawable(std::move(drawable));
             tilesWithDrawables[tileID] = demZoom;
 #if !MLN_RENDER_BACKEND_OPENGL

@@ -13,6 +13,9 @@
 #include <mln/style/style.hpp>
 #include <mln/util/size.hpp>
 #include <mln/tile/tile_operation.hpp>
+#include <mln/util/frame_timing.hpp>
+
+#include <atomic>
 
 #include <numbers>
 
@@ -70,6 +73,8 @@ public:
     void onTerrainCenterRayMaxPitchChanged(std::optional<double> radians) final;
     void onTerrainMeshTileCountChanged(std::size_t count) final;
     std::size_t terrainMeshTileCount = 0;
+    void onTerrainDrapeTargetCountChanged(std::size_t count) final;
+    std::size_t terrainDrapeTargetCount = 0;
     void onTerrainCameraGroundRiseChanged(std::optional<double> riseMeters) final;
     void onSettleBoundGivenUp(const std::optional<std::string>& boundNames) final;
     void onStyleImageMissing(const std::string&, const std::function<void()>&) final;
@@ -133,6 +138,33 @@ public:
     /// `onSettleBoundGivenUp`'s own comment and `Map::getSettleBoundGivenUp`. nullopt is the
     /// common, healthy case.
     std::optional<std::string> lastSettleBoundGivenUp;
+
+    /// Task "make it measurable": real per-frame CPU/GPU timing, fed by the platform layer
+    /// (`Map::recordFrameCPUMs`/`recordFrameGPUMs`) and read back by
+    /// `Map::getFrameTimingReport`. See `mln::util::FrameTimingRecorder`'s own comment.
+    util::FrameTimingRecorder cpuFrameTiming;
+    util::FrameTimingRecorder gpuFrameTiming;
+    /// Performance round, Phase 0: off unless the owner's panel is open (Map::setFrameTimingEnabled).
+    std::atomic<bool> frameTimingEnabled{false};
+    /// Copies of the last frame's cumulative counters (Map::getDrapeRenderCount and friends).
+    std::atomic<std::uint64_t> drapeRenderCount{0};
+    std::atomic<std::uint64_t> terrainMeshBuildCount{0};
+    std::atomic<std::uint64_t> textureMemoryBytes{0};
+
+    /// Task "break the frame down by section": six more windows of the same recorder, one per
+    /// named section, fed from `Map::Impl::onDidFinishRenderingFrame` - unlike the CPU/GPU pair
+    /// above these are never called into from platform code; the per-frame `gfx::RenderingStats`
+    /// this method already receives every frame carries the section times straight from the
+    /// renderer, so this class just records them. Same units (record() takes milliseconds; the
+    /// stats fields are seconds, converted on the way in), same reset story
+    /// (`Map::resetFrameTiming`), same read API (`Map::getFrameTimingReport`, which grew six more
+    /// named members rather than a second call).
+    util::FrameTimingRecorder tileCoverTiming;
+    util::FrameTimingRecorder terrainMeshTiming;
+    util::FrameTimingRecorder drapeTargetsTiming;
+    util::FrameTimingRecorder layerPrepareTiming;
+    util::FrameTimingRecorder uploadTiming;
+    util::FrameTimingRecorder placementTiming;
 };
 
 // Forward declaration of this method is required for the MapProjection class

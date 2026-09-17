@@ -1393,7 +1393,21 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
     [self updateViewsWithCurrentUpdateParameters];
 
     if (_rendererFrontend) {
+      // Task "make it measurable": the real CPU cost of preparing this frame - everything
+      // `render()` does synchronously on this thread, up to and including encoding draw calls
+      // into the Metal command buffer, but NOT the GPU's own time actually executing that
+      // buffer (that half is timed separately, asynchronously, in
+      // `MLNMapViewMetalRenderableResource::swap()` off the command buffer's own
+      // GPUStartTime/GPUEndTime). Two different clocks for two different halves of one frame,
+      // so a future round can tell which one is the wall David is hitting.
+      // Performance round, Phase 0: skipped entirely unless the owner's panel switched the
+      // recorders on (Map::setFrameTimingEnabled).
+      const bool timeThisFrame = _mbglMap && _mbglMap->isFrameTimingEnabled();
+      const CFAbsoluteTime cpuFrameStart = timeThisFrame ? CFAbsoluteTimeGetCurrent() : 0;
       _rendererFrontend->render();
+      if (timeThisFrame) {
+        _mbglMap->recordFrameCPUMs((CFAbsoluteTimeGetCurrent() - cpuFrameStart) * 1000.0);
+      }
     }
   }
 
@@ -3460,6 +3474,69 @@ static void *windowScreenContext = &windowScreenContext;
 
 - (CGFloat)terrainCentreAltitudeMeters {
   return _mbglMap->getTerrainCentreAltitudeMeters();
+}
+
+// MARK: Frame timing (task "make it measurable")
+
+static NSDictionary<NSString *, NSNumber *> *MLNFrameTimingStatsToDictionary(
+    const mln::Map::FrameTimingStats &stats) {
+  return @{
+    @"count" : @(stats.count),
+    @"medianMs" : @(stats.medianMs),
+    @"p95Ms" : @(stats.p95Ms),
+    @"meanMs" : @(stats.meanMs),
+    @"minMs" : @(stats.minMs),
+    @"maxMs" : @(stats.maxMs),
+  };
+}
+
+- (NSDictionary<NSString *, NSNumber *> *)cpuFrameTimingStats {
+  return MLNFrameTimingStatsToDictionary(_mbglMap->getFrameTimingReport().cpu);
+}
+
+- (NSDictionary<NSString *, NSNumber *> *)gpuFrameTimingStats {
+  return MLNFrameTimingStatsToDictionary(_mbglMap->getFrameTimingReport().gpu);
+}
+
+// Task "break the frame down by section".
+- (NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *)frameSectionTimingStats {
+  const auto report = _mbglMap->getFrameTimingReport();
+  return @{
+    @"tileCover" : MLNFrameTimingStatsToDictionary(report.tileCover),
+    @"terrainMesh" : MLNFrameTimingStatsToDictionary(report.terrainMesh),
+    @"drapeTargets" : MLNFrameTimingStatsToDictionary(report.drapeTargets),
+    @"layerPrepare" : MLNFrameTimingStatsToDictionary(report.layerPrepare),
+    @"upload" : MLNFrameTimingStatsToDictionary(report.upload),
+    @"placement" : MLNFrameTimingStatsToDictionary(report.placement),
+  };
+}
+
+- (void)resetFrameTimingStats {
+  _mbglMap->resetFrameTiming();
+}
+
+- (void)setFrameTimingEnabled:(BOOL)frameTimingEnabled {
+  _mbglMap->setFrameTimingEnabled(frameTimingEnabled);
+}
+
+- (BOOL)frameTimingEnabled {
+  return _mbglMap->isFrameTimingEnabled();
+}
+
+- (NSUInteger)terrainDrapeTargetCount {
+  return static_cast<NSUInteger>(_mbglMap->getTerrainDrapeTargetCount());
+}
+
+- (unsigned long long)terrainDrapeRenderCount {
+  return _mbglMap->getDrapeRenderCount();
+}
+
+- (unsigned long long)terrainMeshBuildCount {
+  return _mbglMap->getTerrainMeshBuildCount();
+}
+
+- (unsigned long long)engineTextureMemoryBytes {
+  return _mbglMap->getTextureMemoryBytes();
 }
 
 - (void)setFrustumOffset:(UIEdgeInsets)frustumOffset {

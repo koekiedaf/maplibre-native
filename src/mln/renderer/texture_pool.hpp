@@ -19,6 +19,9 @@ public:
     /// Remove render targets for tiles that are no longer part of the given set
     void removeStaleRenderTargets(const std::set<UnwrappedTileID>& currentTiles);
 
+    /// Drape render targets currently held.
+    std::size_t size() const { return renderTargets.size(); }
+
     template <typename Func /* void(std::shared_ptr<RenderTarget>&) */>
     void visitRenderTargets(Func f) {
         for (auto& pair : renderTargets) {

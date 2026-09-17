@@ -273,6 +273,27 @@ void Map::Impl::onDidFinishRenderingFrame(RenderMode renderMode,
         renderingStatsView->update(*style, stats);
     }
 
+    // Task "break the frame down by section": record this frame's six section times,
+    // unconditionally like the CPU/GPU recorders (not gated on MapMode::Continuous below),
+    // since a still-image render's frame breakdown is just as real as a continuous one's.
+    // gfx::RenderingStats reports seconds; FrameTimingRecorder::record wants milliseconds,
+    // matching recordFrameCPUMs/recordFrameGPUMs's own convention.
+    // Performance round, Phase 0: diagnostic-only, gated on the owner's panel.
+    if (frameTimingEnabled.load(std::memory_order_relaxed)) {
+        tileCoverTiming.record(stats.tileCoverTime * 1000.0);
+        terrainMeshTiming.record(stats.terrainUpdateTime * 1000.0);
+        drapeTargetsTiming.record(stats.drapeTargetsTime * 1000.0);
+        layerPrepareTiming.record(stats.layerPrepareTime * 1000.0);
+        uploadTiming.record(stats.uploadTime * 1000.0);
+        placementTiming.record(stats.placementTime * 1000.0);
+    }
+    drapeRenderCount.store(static_cast<std::uint64_t>(std::max(0, stats.numDrapeTargetsRendered)),
+                           std::memory_order_relaxed);
+    terrainMeshBuildCount.store(static_cast<std::uint64_t>(std::max(0, stats.numTerrainMeshBuilds)),
+                                std::memory_order_relaxed);
+    textureMemoryBytes.store(static_cast<std::uint64_t>(std::max<int64_t>(0, stats.memTextures)),
+                             std::memory_order_relaxed);
+
     if (mode == MapMode::Continuous) {
         const MapObserver::RenderFrameStatus frameStatus{.mode = static_cast<MapObserver::RenderMode>(renderMode),
                                                          .needsRepaint = needsRepaint,
@@ -395,6 +416,10 @@ void Map::Impl::onTerrainCenterRayHitChanged(std::optional<RendererObserver::Cen
 
 void Map::Impl::onTerrainCenterRayClearanceChanged(std::optional<double> metres) {
     transform.setCenterRayClearance(metres);
+}
+
+void Map::Impl::onTerrainDrapeTargetCountChanged(std::size_t count) {
+    terrainDrapeTargetCount = count;
 }
 
 void Map::Impl::onTerrainMeshTileCountChanged(std::size_t count) {

@@ -19,6 +19,13 @@ public:
 public:
   void restoreFramebufferBinding();
 
+  /// Task "make it measurable": lets the renderable resource's `swap()` (a method of an
+  /// unrelated class, so it cannot reach the protected `mapView` member this class inherits)
+  /// find the live `MLNMapView` to push a completed Metal command buffer's GPU timing into,
+  /// via `-[MLNMapView mbglMap]` (`MLNMapView_Private.h`, already imported above). Weak, same
+  /// as the inherited field itself - never lengthens the map view's lifetime.
+  MLNMapView* getMapViewForTiming() const { return mapView; }
+
   // Implementation of mln::gfx::RendererBackend
 public:
   mln::gfx::Renderable& getDefaultRenderable() override { return *this; }

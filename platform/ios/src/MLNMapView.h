@@ -638,6 +638,68 @@ MLN_EXPORT
 @property (nonatomic, readonly) CGFloat terrainCentreAltitudeMeters;
 
 /**
+ Task "make it measurable": a rolling-window distribution of real per-frame CPU preparation
+ time, in milliseconds - the wall time `RendererFrontend::render()` itself took, timed
+ synchronously around that call on the same thread it runs on. This is the CPU half of a
+ frame; `gpuFrameTimingStats` below is the other. Keys: `count` (how many samples the
+ percentiles below were computed from - never trust `medianMs`/`p95Ms` without checking this
+ first), `medianMs`, `p95Ms`, `meanMs`, `minMs`, `maxMs`. An empty report (`count` 0) means no
+ frame has rendered since the last reset.
+ */
+- (NSDictionary<NSString *, NSNumber *> *)cpuFrameTimingStats;
+
+/**
+ Task "make it measurable": the GPU counterpart of `cpuFrameTimingStats`, a rolling-window
+ distribution of real per-frame GPU execution time in milliseconds, read off each Metal
+ command buffer's own `GPUEndTime - GPUStartTime` once the GPU has actually finished that
+ frame - not estimated from a delegate callback's arrival rate. Same keys and the same
+ caution about `count`.
+ */
+- (NSDictionary<NSString *, NSNumber *> *)gpuFrameTimingStats;
+
+/**
+ Task "break the frame down by section": where a frame's CPU time actually goes, not just its
+ total (`cpuFrameTimingStats` above). A dictionary of six rolling-window distributions, one per
+ named section, each shaped exactly like `cpuFrameTimingStats`'s own dictionary (`count`,
+ `medianMs`, `p95Ms`, `meanMs`, `minMs`, `maxMs`) - so the same "check `count` first" caution
+ applies to each of them independently. Keys: `tileCover` (computing the tile cover),
+ `terrainMesh` (building/updating the terrain mesh), `drapeTargets` (preparing each drape
+ target and rendering to it), `layerPrepare` (per-layer per-tile preparation), `upload`
+ (uploads to the GPU) and `placement` (symbol placement and collision). Sourced from the same
+ per-frame `mln::gfx::RenderingStats` the render side already produces for every frame, not a
+ second, independently-timed mechanism - see `mln::Map::FrameTimingReport`'s own comment for
+ why these six do not have to sum exactly to `cpuFrameTimingStats`'s total.
+ */
+- (NSDictionary<NSString *, NSDictionary<NSString *, NSNumber *> *> *)frameSectionTimingStats;
+
+/**
+ Discards every CPU, GPU and per-section frame timing sample recorded so far, so a caller can
+ start a clean window immediately before driving a sustained gesture and read back a
+ distribution (`cpuFrameTimingStats`/`gpuFrameTimingStats`/`frameSectionTimingStats`) that
+ describes only that interval.
+ */
+- (void)resetFrameTimingStats;
+
+/**
+ Performance round, Phase 0: the frame timing recorders above are diagnostic-only and off
+ by default. The owner's tuning panel sets this to YES while it is open and back to NO when
+ it closes; while NO nothing is recorded and the per-frame timer reads are skipped.
+ */
+@property (nonatomic) BOOL frameTimingEnabled;
+
+/** Drape render targets the engine currently holds (one per mesh tile in the cover). */
+@property (nonatomic, readonly) NSUInteger terrainDrapeTargetCount;
+
+/** Cumulative count of drape targets rendered (re-baked) since launch; a rate is a difference. */
+@property (nonatomic, readonly) unsigned long long terrainDrapeRenderCount;
+
+/** Cumulative count of terrain mesh drawables built since launch; a rate is a difference. */
+@property (nonatomic, readonly) unsigned long long terrainMeshBuildCount;
+
+/** Texture memory the engine's rendering statistics currently account for, in bytes. */
+@property (nonatomic, readonly) unsigned long long engineTextureMemoryBytes;
+
+/**
  Frustum offset used to disable rendering of elements at the edge of the screen
 
  Offset applied to camera frustum and scissor rectangle. The camrea frustum is modified

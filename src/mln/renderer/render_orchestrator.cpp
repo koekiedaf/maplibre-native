@@ -494,7 +494,7 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         // null for every other source in this loop so nothing else is affected.
         tileParameters.requiredTiles =
             (renderTerrain && renderTerrain->isEnabled() && sourceImpl->id == renderTerrain->getSourceID())
-                ? &renderTerrain->getDemRequestCover()
+                ? &renderTerrain->getLastFrameMeshCover()
                 : nullptr;
 
         tileParameters.isUpdateSynchronous = sourceImpl->isUpdateSynchronous();

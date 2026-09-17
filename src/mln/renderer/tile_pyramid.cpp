@@ -192,9 +192,12 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
         // mesh tile, an ancestor of one, or a direct child of one. Not the bare mesh cover:
         // the elevation-aware LOD consults DEM under the ground it is about to split, so the
         // frustum's near-field tiles must stay (measured at Gavarnie z14.2 pitch 77: without
-        // them the near field settled one level coarser, 4 z16 tiles for 16 z17). Filtered
-        // rather than replaced, and only once the mesh cover exists, so the first frame can
-        // bootstrap from the plain frustum.
+        // them the near field settled one level coarser, 4 z16 tiles for 16 z17, and the
+        // cover oscillated at the Gavarnie wall, 32 and 26 tiles alternating every frame).
+        // Filtered rather than replaced, and only once the mesh cover exists, so the first
+        // frame can bootstrap from the plain frustum. Nothing is retained beyond that: an
+        // ancestor and a descendant both rendered draw the hillshade twice into the drapes
+        // (raster layers do not use the tile stencil masks), which reads as a darker map.
         std::set<UnwrappedTileID> selfOrAncestor;
         for (const auto& m : *parameters.requiredTiles) {
             UnwrappedTileID t = m;

@@ -1239,41 +1239,6 @@ std::vector<CanonicalTileID> RenderTerrain::getResidentDemTileIds() const {
     return ids;
 }
 
-void RenderTerrain::updateDemRequestCover(const std::set<UnwrappedTileID>& cover) {
-    // Keys for O(1) "near" tests: the cover tiles, their parents (a tile whose parent is here
-    // is a cover tile's child or sibling) and every ancestor.
-    std::set<UnwrappedTileID> parents;
-    std::set<UnwrappedTileID> ancestors;
-    for (const auto& c : cover) {
-        UnwrappedTileID t = c;
-        bool first = true;
-        while (t.canonical.z > 0) {
-            t = UnwrappedTileID{t.wrap, t.canonical.scaledTo(static_cast<uint8_t>(t.canonical.z - 1))};
-            if (first) {
-                parents.insert(t);
-                first = false;
-            }
-            if (!ancestors.insert(t).second) {
-                break; // this chain is already recorded
-            }
-        }
-    }
-    std::set<UnwrappedTileID> next = cover;
-    for (const auto& t : demRequestCover) {
-        if (cover.contains(t) || ancestors.contains(t)) {
-            next.insert(t);
-            continue;
-        }
-        if (t.canonical.z > 0) {
-            const UnwrappedTileID parent{t.wrap, t.canonical.scaledTo(static_cast<uint8_t>(t.canonical.z - 1))};
-            if (cover.contains(parent) || parents.contains(parent)) {
-                next.insert(t); // a direct child, or a sibling, of a cover tile
-            }
-        }
-    }
-    demRequestCover = std::move(next);
-}
-
 std::size_t RenderTerrain::terrainSettleSignature() const {
     // See the header for why this exists. Two accumulators, each salted, so a cover entry and
     // a binding entry can never cancel each other out in the sum.

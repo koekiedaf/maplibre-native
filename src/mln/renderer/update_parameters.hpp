@@ -74,6 +74,13 @@ public:
     /// Bumped by Map::setDrapeTextureDial so the renderer resizes every drape target in view
     /// at once (hysteresis skipped for that frame): a dial moved in the panel must show.
     double drapeFarSizeFactor = 0.25;
+    /// Texels of drape texture per screen pixel of a tile's width: 2 is GL JS's quality
+    /// factor; 1 halves every target's edge (a quarter of the memory), visibly softer.
+    /// The one drape dial whose effect can be seen: the size-by-footprint rule above keeps
+    /// every target at this density whatever the distance, so the floor and the curve only
+    /// ever move memory, not the picture (measured 17 September: floor 64 with curve 1
+    /// against the defaults differs in 0.08 percent of pixels at Gavarnie pitch 80).
+    double drapeTexelsPerPixel = 2.0;
     std::uint64_t drapeDialEpoch = 0;
     // Debug: when set, RenderTerrain logs the camera eye's clearance over the terrain
     // (ABOVE-GROUND ...). Off by default; the per-frame elevation sampling is skipped entirely

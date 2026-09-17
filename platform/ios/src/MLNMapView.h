@@ -515,6 +515,8 @@ MLN_EXPORT
  */
 @property (nonatomic, assign) double drapeDistanceCurve;
 @property (nonatomic, assign) double drapeFarSizeFactor;
+/** Texels of drape texture per screen pixel (default 2, GL JS's quality factor; 1 is visibly softer, a quarter of the memory). */
+@property (nonatomic, assign) double drapeTexelsPerPixel;
 
 /**
  Camera based tile level of detail controls

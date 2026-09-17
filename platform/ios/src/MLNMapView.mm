@@ -3392,6 +3392,14 @@ static void *windowScreenContext = &windowScreenContext;
   _mbglMap->setDrapeTextureDial(_mbglMap->getDrapeDistanceCurve(), value);
 }
 
+- (void)setDrapeTexelsPerPixel:(double)value {
+  _mbglMap->setDrapeTexelsPerPixel(value);
+}
+
+- (double)drapeTexelsPerPixel {
+  return _mbglMap->getDrapeTexelsPerPixel();
+}
+
 - (double)drapeFarSizeFactor {
   return _mbglMap->getDrapeFarSizeFactor();
 }

@@ -578,6 +578,16 @@ void Map::setDrapeTextureDial(double distanceCurve, double farSizeFactor) {
     impl->onUpdate();
 }
 
+void Map::setDrapeTexelsPerPixel(double texelsPerPixel) {
+    impl->drapeTexelsPerPixel = std::clamp(texelsPerPixel, 0.25, 4.0);
+    ++impl->drapeDialEpoch;
+    impl->onUpdate();
+}
+
+double Map::getDrapeTexelsPerPixel() const {
+    return impl->drapeTexelsPerPixel;
+}
+
 double Map::getDrapeDistanceCurve() const {
     return impl->drapeDistanceCurve;
 }

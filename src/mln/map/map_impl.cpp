@@ -157,6 +157,7 @@ void Map::Impl::onUpdate() {
                                .terrainSkirtLength = terrainSkirtLength,
                                .drapeDistanceCurve = drapeDistanceCurve,
                                .drapeFarSizeFactor = drapeFarSizeFactor,
+                               .drapeTexelsPerPixel = drapeTexelsPerPixel,
                                .drapeDialEpoch = drapeDialEpoch,
                                .debugAboveGroundLog = debugAboveGroundLog};
 

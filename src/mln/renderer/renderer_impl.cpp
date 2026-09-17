@@ -333,8 +333,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             // Foreshortening: the sine of the elevation angle from the tile to the eye.
             const double sinElev = std::clamp(cameraHeightPx / std::max(dist, 1.0), 0.0, 1.0);
             const double screenPx = widthPx * std::pow(sinElev, updateParameters->drapeDistanceCurve);
-            constexpr double kTexelsPerPixel = 2.0; // GL JS's qualityFactor
-            const double want = screenPx * kTexelsPerPixel;
+            const double want = screenPx * updateParameters->drapeTexelsPerPixel;
             uint32_t desired = static_cast<uint32_t>(std::exp2(std::ceil(std::log2(std::max(want, 1.0)))));
             desired = std::clamp(desired, minSize, maxSize);
             if (current == 0 || dialMoved) {

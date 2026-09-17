@@ -651,7 +651,8 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // follow-up frames that re-bake it once the gesture ends. Targets that have never
         // been rendered still render, so new ground entering the cover is never blank.
         // Measured before this, sustained pan at pitch 80: 29 drape renders a second.
-        if (updateParameters->transformState.isGestureInProgress()) {
+        const bool gestureFreeze = updateParameters->transformState.isGestureInProgress();
+        if (gestureFreeze) {
             drapeBudget = 0;
         }
         orchestrator.visitRenderTargets([&](RenderTarget& renderTarget) {
@@ -660,7 +661,12 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                     orchestrator, renderTree, parameters, /*canRerender=*/drapeBudget > 0);
                 if (res == RenderTarget::RenderResult::Rendered) {
                     --drapeBudget;
-                } else if (res == RenderTarget::RenderResult::Deferred) {
+                } else if (res == RenderTarget::RenderResult::Deferred && !gestureFreeze) {
+                    // A deferral during the freeze must not ask for a follow-up frame: the
+                    // map would spin at full rate for the whole gesture (measured: 58 frames
+                    // a second under a slow injected pan, against 5 before). The gesture's
+                    // end is itself an update (Map::setGestureInProgress), and that frame
+                    // re-bakes everything the freeze held back.
                     drapeWorkDeferred = true;
                 }
             }

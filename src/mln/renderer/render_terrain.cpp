@@ -470,6 +470,42 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     // render distance stays long; Balanced and Performance trade distance for frame time.
     const size_t maxMeshTiles = updateParameters ? terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles
                                                  : 0;
+    // 17 September 2026, David's reports 53110e6a (z17.25 pitch 63) and d2975824 (z18.95
+    // pitch 45): nearly the whole screen paper, a sliver of ground at the bottom. The trace:
+    // the adaptive cover wanted 351 tiles, all z21 (the camera 200 m over the ground, so the
+    // whole view is "near"), the cap kept the 128 nearest the camera and DROPPED the rest, and
+    // a dropped tile's ground is meshed by nothing - util::tileCover is a disjoint partition,
+    // so no ancestor stands in. The same mechanism was the far-right paper wedge at pitch 80.
+    // A budget has to be spent on resolution, not on coverage: while the cover is over budget,
+    // every tile at the deepest zoom present is replaced by its parent and the set
+    // de-duplicated (the 12 September coarsening, reverted then because that day's paper was
+    // a camera inside the rock, which it could not fix; today's is the cap, which it does).
+    // Coverage-preserving (a parent's footprint contains its child's), disjointness-preserving
+    // (a parent cannot become a descendant of another cover tile unless its child already
+    // was), a pure function of the input set, one level per pass so it terminates. The
+    // nearest-to-camera trim below stays as the last resort for a budget smaller than the
+    // shallowest level's own tile count, where coarsening cannot reach.
+    while (maxMeshTiles > 0 && out.size() > maxMeshTiles) {
+        uint8_t deepest = zoomRange.min;
+        for (const auto& id : out) {
+            deepest = std::max(deepest, id.canonical.z);
+        }
+        if (deepest <= zoomRange.min) {
+            break;
+        }
+        std::set<UnwrappedTileID> coarsened;
+        for (const auto& id : out) {
+            if (id.canonical.z == deepest) {
+                coarsened.emplace(id.wrap,
+                                  CanonicalTileID(static_cast<uint8_t>(deepest - 1),
+                                                  id.canonical.x >> 1,
+                                                  id.canonical.y >> 1));
+            } else {
+                coarsened.insert(id);
+            }
+        }
+        out = std::move(coarsened);
+    }
     if (maxMeshTiles > 0 && out.size() > maxMeshTiles) {
         // Round F, 17 September 2026: distance from the CAMERA, not the map centre. At a high
         // pitch the centre sits far out in front of the camera, so "farthest from the centre"

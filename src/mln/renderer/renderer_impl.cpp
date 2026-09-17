@@ -311,8 +311,13 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         const auto cameraPx = Projection::project(state.getCameraLatLng(), scale);
         const double cameraHeightPx = std::cos(state.getPitch()) * focalPx;
         const double worldPx = Projection::worldSize(scale);
-        const uint32_t maxSize = texturePool.defaultTileSize();
-        const double minSizeD = std::clamp(maxSize * updateParameters->drapeFarSizeFactor, 64.0, double(maxSize));
+        // Round 3, 17 September 2026 (David's blurry roads top-down at z15.68): a z15 tile
+        // at pitch 0 spans about 2460 device pixels and its drape was capped at 1024, so the
+        // draped lines were magnified 2.4x. A tile whose footprint asks for it may take a
+        // 2048 target (16 MB); the floor and the foreshortening rule are unchanged, so only
+        // the few tiles nearest the camera ever reach it.
+        const uint32_t maxSize = texturePool.defaultTileSize() * 2;
+        const double minSizeD = std::clamp(texturePool.defaultTileSize() * updateParameters->drapeFarSizeFactor, 64.0, double(maxSize));
         const uint32_t minSize = static_cast<uint32_t>(std::exp2(std::ceil(std::log2(minSizeD))));
         // A dial moved in the panel (the epoch changed): every target in view takes its
         // desired size this frame, hysteresis skipped, so the change is visible at once.
@@ -322,6 +327,9 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             const uint32_t current = texturePool.renderTargetSize(id);
             if (minSize >= maxSize) {
                 return maxSize;
+            }
+            if (updateParameters->drapeFarSizeFactor >= 1.0) {
+                return texturePool.defaultTileSize(); // the dial's "off": every target 1024 as before
             }
             const double tilePx = worldPx / std::exp2(static_cast<double>(id.canonical.z));
             const double cx = (static_cast<double>(id.canonical.x) + 0.5 + id.wrap * std::exp2(id.canonical.z)) * tilePx;

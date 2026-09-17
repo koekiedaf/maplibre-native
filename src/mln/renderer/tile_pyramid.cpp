@@ -180,7 +180,20 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
     // node.zoom` ternary in util::tileCover). Duplicates already present in idealTiles are
     // skipped; panTiles (prefetch) is left untouched - the mesh's need is for the tile
     // itself, not a lower-res placeholder ahead of it.
-    if (parameters.requiredTiles) {
+    if (parameters.requiredTiles && !parameters.requiredTiles->empty()) {
+        // Performance round, Phase 1 item 4 (the frustum check): for the terrain's DEM source
+        // the mesh cover IS the cover. The frustum cover above, computed at the ideal zoom and
+        // clamped to this source's min zoom, asks for every tile out to the horizon at a
+        // pitched, zoomed-out camera: measured at Gavarnie z9.66 pitch 78, 1412 z8 DEM tiles
+        // resident for a 52-tile mesh whose far tiles sit at z2 to z7 and can never sample
+        // them (a mesh tile binds its own DEM or an ancestor, never a descendant). Those
+        // tiles were 3.2 GB of textures and a 1.9 GB process - the colleague's crash. Nothing
+        // but the mesh (and hillshade draped onto it, which draws per mesh tile) reads this
+        // source, so the only tiles worth loading are the ones the mesh needs, folded in
+        // below. The frustum cover is kept only while the mesh cover is still empty (the
+        // first frame), so the terrain can bootstrap.
+        idealTiles.clear();
+        panTiles.clear();
         for (const auto& required : *parameters.requiredTiles) {
             const uint8_t requiredZoom = required.canonical.z;
             const uint8_t ancestorZoom = std::min(requiredZoom, zoomRange.max);

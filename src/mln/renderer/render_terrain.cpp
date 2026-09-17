@@ -808,6 +808,14 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
             if (existing->second >= demZoom) {
                 continue;
             }
+            // Performance round, Phase 1 item 3 (gesture freeze): a mesh tile that already
+            // draws from an ancestor DEM keeps it until the finger lifts; the upgrade to its
+            // own DEM (a drawable rebuild) waits for rest, like the drape re-bake above. New
+            // tiles entering the cover are still built below. Rest is not gated on anything
+            // else: the first frame after the gesture performs every pending upgrade.
+            if (state.isGestureInProgress()) {
+                continue;
+            }
             lg->removeDrawablesIf(
                 [&](gfx::Drawable& drawable) { return drawable.getTileID() && *drawable.getTileID() == tileID; });
             if (depthLg) {
@@ -1229,6 +1237,41 @@ std::vector<CanonicalTileID> RenderTerrain::getResidentDemTileIds() const {
         ids.push_back(renderTile.id.canonical);
     }
     return ids;
+}
+
+void RenderTerrain::updateDemRequestCover(const std::set<UnwrappedTileID>& cover) {
+    // Keys for O(1) "near" tests: the cover tiles, their parents (a tile whose parent is here
+    // is a cover tile's child or sibling) and every ancestor.
+    std::set<UnwrappedTileID> parents;
+    std::set<UnwrappedTileID> ancestors;
+    for (const auto& c : cover) {
+        UnwrappedTileID t = c;
+        bool first = true;
+        while (t.canonical.z > 0) {
+            t = UnwrappedTileID{t.wrap, t.canonical.scaledTo(static_cast<uint8_t>(t.canonical.z - 1))};
+            if (first) {
+                parents.insert(t);
+                first = false;
+            }
+            if (!ancestors.insert(t).second) {
+                break; // this chain is already recorded
+            }
+        }
+    }
+    std::set<UnwrappedTileID> next = cover;
+    for (const auto& t : demRequestCover) {
+        if (cover.contains(t) || ancestors.contains(t)) {
+            next.insert(t);
+            continue;
+        }
+        if (t.canonical.z > 0) {
+            const UnwrappedTileID parent{t.wrap, t.canonical.scaledTo(static_cast<uint8_t>(t.canonical.z - 1))};
+            if (cover.contains(parent) || parents.contains(parent)) {
+                next.insert(t); // a direct child, or a sibling, of a cover tile
+            }
+        }
+    }
+    demRequestCover = std::move(next);
 }
 
 std::size_t RenderTerrain::terrainSettleSignature() const {

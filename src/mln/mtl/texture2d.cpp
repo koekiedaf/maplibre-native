@@ -179,6 +179,11 @@ void Texture2D::createMetalTexture() {
                 break;
         }
 #endif
+        if (storageMode) {
+            // Explicit request wins over the platform defaults above (item 2, memoryless
+            // attachments).
+            textureDescriptor->setStorageMode(*storageMode);
+        }
         metalTexture = context.createMetalTexture(std::move(textureDescriptor));
         if (!metalTexture) {
             throw std::bad_alloc();
@@ -190,7 +195,10 @@ void Texture2D::createMetalTexture() {
         context.threadSafeAccessRenderingStats([&](gfx::RenderingStats& stats) {
             stats.numCreatedTextures++;
             stats.numActiveTextures++;
-            stats.memTextures += getDataSize();
+            // A memoryless attachment occupies no memory; do not account it.
+            if (!(storageMode && *storageMode == MTL::StorageModeMemoryless)) {
+                stats.memTextures += getDataSize();
+            }
         });
     }
 }
@@ -212,12 +220,20 @@ void Texture2D::destroyMetalTexture() noexcept {
     metalTexture.reset();
     context.threadSafeAccessRenderingStats([&](gfx::RenderingStats& stats) {
         stats.numActiveTextures--;
-        stats.memTextures -= getDataSize();
+        if (!(storageMode && *storageMode == MTL::StorageModeMemoryless)) {
+            stats.memTextures -= getDataSize();
+        }
     });
 }
 
 gfx::Texture2D& Texture2D::setUsage(MTL::TextureUsage usage_) noexcept {
     usage = usage_;
+    textureDirty = true;
+    return *this;
+}
+
+gfx::Texture2D& Texture2D::setStorageMode(MTL::StorageMode mode) noexcept {
+    storageMode = mode;
     textureDirty = true;
     return *this;
 }

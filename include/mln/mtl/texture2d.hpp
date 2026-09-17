@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include <mln/gfx/texture2d.hpp>
 #include <mln/mtl/mtl_fwd.hpp>
 #include <mln/util/image.hpp>
@@ -49,6 +51,13 @@ public:
 
     gfx::Texture2D& setUsage(MTL::TextureUsage usage_) noexcept;
 
+    /// Performance round, Phase 1 item 2: an explicit Metal storage mode for the texture.
+    /// Unset, the descriptor's default applies (Shared, or Private for depth/stencil on the
+    /// simulator and x86-64). `StorageModeMemoryless` is for attachments that are cleared on
+    /// load, never stored and never sampled: they then take no memory at all on a tile-based
+    /// GPU. Only for textures whose usage excludes ShaderRead.
+    gfx::Texture2D& setStorageMode(MTL::StorageMode mode) noexcept;
+
     MTL::Texture* getMetalTexture() const noexcept;
 
     void updateSamplerConfiguration();
@@ -76,6 +85,7 @@ private:
     gfx::TexturePixelType pixelFormat{gfx::TexturePixelType::RGBA};
     gfx::TextureChannelDataType channelType{gfx::TextureChannelDataType::UnsignedByte};
     MTL::TextureUsage usage{MTL::TextureUsageShaderRead};
+    std::optional<MTL::StorageMode> storageMode;
     SamplerState samplerState{};
 
     std::shared_ptr<PremultipliedImage> image{nullptr};

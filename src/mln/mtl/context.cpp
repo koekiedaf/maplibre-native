@@ -258,8 +258,14 @@ void configureOffscreenAttachment(const gfx::Texture2DPtr& texture,
     texture->setSamplerConfiguration({.filter = gfx::TextureFilterType::Linear,
                                       .wrapU = gfx::TextureWrapType::Clamp,
                                       .wrapV = gfx::TextureWrapType::Clamp});
-    static_cast<Texture2D*>(texture.get())
-        ->setUsage(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite | MTL::TextureUsageRenderTarget);
+    // Performance round, Phase 1 item 2: every offscreen depth/stencil attachment is cleared
+    // on load and stored DontCare (OffscreenTextureResource::bind), and nothing samples it,
+    // so it lives in tile memory only: MTLStorageModeMemoryless, render-target usage alone.
+    // Measured at 1024x1024 that is the 4 MB shared depth plus the 1 MB shared stencil, and
+    // at screen size the terrain depth pass's own attachment.
+    auto* mtlTexture = static_cast<Texture2D*>(texture.get());
+    mtlTexture->setUsage(MTL::TextureUsageRenderTarget);
+    mtlTexture->setStorageMode(MTL::StorageModeMemoryless);
 }
 } // namespace
 

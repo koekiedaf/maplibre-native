@@ -237,6 +237,13 @@ void MLNMapViewMetalImpl::createView() {
   resource.mtlView.contentMode = UIViewContentModeCenter;
   resource.mtlView.colorPixelFormat = MTLPixelFormatBGRA8Unorm;
   resource.mtlView.depthStencilPixelFormat = MTLPixelFormatDepth32Float_Stencil8;
+  // Performance round, Phase 1 item 2: the main pass's depth/stencil is cleared every frame
+  // and never read back (the terrain occlusion depth is a separate render target of its own),
+  // so it lives in tile memory only. At 3x on a 6.1 inch phone that is a 1179x2556x5-byte
+  // attachment, about 15 MB, that no longer exists in system memory.
+  if (@available(iOS 16.0, *)) {
+    resource.mtlView.depthStencilStorageMode = MTLStorageModeMemoryless;
+  }
   resource.mtlView.opaque = mapView.opaque;
   resource.mtlView.layer.opaque = mapView.opaque;
   resource.mtlView.enableSetNeedsDisplay = YES;

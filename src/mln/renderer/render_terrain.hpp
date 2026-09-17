@@ -129,8 +129,20 @@ public:
     /// below - see getLastFrameMeshCoverTileIds.
     void setFrameMeshCover(std::set<UnwrappedTileID> cover) {
         lastFrameMeshCover = cover;
+        updateDemRequestCover(cover);
         frameMeshCover = std::move(cover);
     }
+
+    /// Performance round, Phase 1 item 4: the tiles the DEM source is asked to hold. The mesh
+    /// cover itself plus every tile that was in it before and is still NEAR the current cover
+    /// (equal to, an ancestor of, a direct child of, or a sibling of a cover tile). Retention
+    /// is what stops the cover oscillating: the cover is elevation-aware, so it depends on
+    /// the DEM it asks for, and a tile that leaves the cover the moment its DEM arrives would
+    /// otherwise be unloaded, its elevation forgotten, and the cover flip back (measured at
+    /// the Gavarnie wall without this: 32 and 26 tiles alternating every frame, seven mesh
+    /// builds and seven drape renders a frame, for ever). Far tiles are still dropped at
+    /// once, so a pitched zoomed-out camera cannot accumulate the horizon.
+    const std::set<UnwrappedTileID>& getDemRequestCover() const { return demRequestCover; }
 
     /// DuckMaps fork only, task M1c: the previous frame's cover, used to tell the DEM
     /// source which tiles the mesh will need. The mesh cover is computed independently
@@ -630,6 +642,9 @@ private:
     /// setFrameMeshCover above), kept for the debug elevation trace after update()
     /// consumes and clears frameMeshCover.
     std::set<UnwrappedTileID> lastFrameMeshCover;
+    /// See getDemRequestCover.
+    std::set<UnwrappedTileID> demRequestCover;
+    void updateDemRequestCover(const std::set<UnwrappedTileID>& cover);
 
     // DEM decode vector for the source's encoding (default: Mapbox Terrain-RGB)
     std::array<float, 4> demUnpackVector = {{6553.6f, 25.6f, 0.1f, 10000.0f}};

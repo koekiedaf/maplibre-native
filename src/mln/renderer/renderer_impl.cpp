@@ -644,6 +644,16 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // map's TerrainLoadMode; Quality (default) is unlimited.
         const int drapeCap = terrainLoadBudget(updateParameters->terrainLoadMode).drapeRerendersPerFrame;
         int drapeBudget = drapeCap > 0 ? drapeCap : (1 << 30);
+        // Performance round, Phase 1 item 3 (gesture freeze, the settle-gated re-bake of
+        // MapLibre GL JS): while a finger is on the map no drape target that already holds a
+        // bake is re-rendered - a target whose covering tiles changed (a child tile loading
+        // under a parent's bake) keeps the stale texture and is deferred, which requests the
+        // follow-up frames that re-bake it once the gesture ends. Targets that have never
+        // been rendered still render, so new ground entering the cover is never blank.
+        // Measured before this, sustained pan at pitch 80: 29 drape renders a second.
+        if (updateParameters->transformState.isGestureInProgress()) {
+            drapeBudget = 0;
+        }
         orchestrator.visitRenderTargets([&](RenderTarget& renderTarget) {
             if (renderTarget.getDrapeTileID()) {
                 const auto res = renderTarget.render(

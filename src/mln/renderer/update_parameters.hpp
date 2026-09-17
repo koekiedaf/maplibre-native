@@ -71,7 +71,10 @@ public:
     /// never above 1024 and never below 1024 * `drapeFarSizeFactor`. A factor of 1.0
     /// switches the dial off.
     double drapeDistanceCurve = 0.5;
+    /// Bumped by Map::setDrapeTextureDial so the renderer resizes every drape target in view
+    /// at once (hysteresis skipped for that frame): a dial moved in the panel must show.
     double drapeFarSizeFactor = 0.25;
+    std::uint64_t drapeDialEpoch = 0;
     // Debug: when set, RenderTerrain logs the camera eye's clearance over the terrain
     // (ABOVE-GROUND ...). Off by default; the per-frame elevation sampling is skipped entirely
     // when off, so it has no cost unless explicitly enabled (Map::setDebugAboveGroundLog).

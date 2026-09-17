@@ -314,6 +314,10 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         const uint32_t maxSize = texturePool.defaultTileSize();
         const double minSizeD = std::clamp(maxSize * updateParameters->drapeFarSizeFactor, 64.0, double(maxSize));
         const uint32_t minSize = static_cast<uint32_t>(std::exp2(std::ceil(std::log2(minSizeD))));
+        // A dial moved in the panel (the epoch changed): every target in view takes its
+        // desired size this frame, hysteresis skipped, so the change is visible at once.
+        const bool dialMoved = updateParameters->drapeDialEpoch != lastDrapeDialEpoch;
+        lastDrapeDialEpoch = updateParameters->drapeDialEpoch;
         const auto sizeFor = [&](const UnwrappedTileID& id) -> uint32_t {
             const uint32_t current = texturePool.renderTargetSize(id);
             if (minSize >= maxSize) {
@@ -333,7 +337,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             const double want = screenPx * kTexelsPerPixel;
             uint32_t desired = static_cast<uint32_t>(std::exp2(std::ceil(std::log2(std::max(want, 1.0)))));
             desired = std::clamp(desired, minSize, maxSize);
-            if (current == 0) {
+            if (current == 0 || dialMoved) {
                 return desired;
             }
             if (desired > current && want > current * 1.15) {

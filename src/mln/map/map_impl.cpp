@@ -157,6 +157,7 @@ void Map::Impl::onUpdate() {
                                .terrainSkirtLength = terrainSkirtLength,
                                .drapeDistanceCurve = drapeDistanceCurve,
                                .drapeFarSizeFactor = drapeFarSizeFactor,
+                               .drapeDialEpoch = drapeDialEpoch,
                                .debugAboveGroundLog = debugAboveGroundLog};
 
     rendererFrontend.update(std::make_shared<UpdateParameters>(std::move(params)));

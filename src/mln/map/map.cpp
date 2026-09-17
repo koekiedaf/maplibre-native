@@ -568,11 +568,13 @@ FreeCameraOptions Map::getFreeCameraOptions() const {
 
 void Map::setTileLodMinRadius(double radius) {
     impl->tileLodMinRadius = radius;
+    impl->onUpdate(); // Phase 2 dial 2: a dial moved in the panel must show at once
 }
 
 void Map::setDrapeTextureDial(double distanceCurve, double farSizeFactor) {
     impl->drapeDistanceCurve = std::clamp(distanceCurve, 0.0, 1.0);
     impl->drapeFarSizeFactor = std::clamp(farSizeFactor, 1.0 / 16.0, 1.0);
+    ++impl->drapeDialEpoch;
     impl->onUpdate();
 }
 
@@ -590,6 +592,7 @@ double Map::getTileLodMinRadius() const {
 
 void Map::setTileLodScale(double scale) {
     impl->tileLodScale = scale;
+    impl->onUpdate(); // Phase 2 dial 2
 }
 
 double Map::getTileLodScale() const {

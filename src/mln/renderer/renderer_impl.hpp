@@ -125,6 +125,7 @@ private:
     std::size_t lastReportedMeshTileCount = 0;
     std::size_t lastReportedDrapeTargetCount = 0;
     std::size_t lastReportedDrapeBytes = 0;
+    std::uint64_t lastDrapeDialEpoch = 0;
     /// Band-aid audit item 6: last value reported via `onSettleBoundGivenUp`, so an
     /// unchanged value (nullopt most of the time - the healthy case) does not post an
     /// observer message every frame. Mirrors `lastReportedCenterElevation`/

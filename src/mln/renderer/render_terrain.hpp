@@ -643,6 +643,10 @@ private:
     /// setFrameMeshCover above), kept for the debug elevation trace after update()
     /// consumes and clears frameMeshCover.
     std::set<UnwrappedTileID> lastFrameMeshCover;
+    /// Round 3: the deepest zoom the budget let the RAW cover keep last frame (see
+    /// computeMeshCover's ceiling). Sticky, so the budget cannot flip the cover between two
+    /// states every frame; relaxed one level at a time only when the raw cover fits.
+    mutable std::optional<uint8_t> meshCoarsenCeiling;
 
     // DEM decode vector for the source's encoding (default: Mapbox Terrain-RGB)
     std::array<float, 4> demUnpackVector = {{6553.6f, 25.6f, 0.1f, 10000.0f}};

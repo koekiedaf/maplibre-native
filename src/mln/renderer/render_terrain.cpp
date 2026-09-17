@@ -216,6 +216,14 @@ RenderTerrain::RenderTerrain(Immutable<style::Terrain::Impl> impl_)
 
 RenderTerrain::~RenderTerrain() = default;
 
+namespace {
+size_t terrainLoadBudgetTiles(const std::shared_ptr<UpdateParameters>& updateParameters) {
+    return updateParameters->terrainMeshTileBudget > 0
+               ? updateParameters->terrainMeshTileBudget
+               : terrainLoadBudget(updateParameters->terrainLoadMode).maxMeshTiles;
+}
+} // namespace
+
 std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     const TransformState& state, const std::shared_ptr<UpdateParameters>& updateParameters) const {
     std::set<UnwrappedTileID> out;
@@ -302,6 +310,51 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     // this only holds a tie at a single edge, it never keeps a tile the cover no longer wants
     // at all. The result is disjoint by construction, since a parent and its children are
     // never both kept.
+    // Round 3, 17 September 2026 (David's 5c4bb1c1 with Terrain tiles 96): the budget's
+    // coarsening ran AFTER the level hysteresis and the dilation, on a set that depended on
+    // last frame's coarsened result, and at that camera the cover flipped 76 <-> 61 tiles
+    // every frame for ever, 16 mesh builds and 16 drape renders a frame. The budget is now
+    // applied first, as a CEILING on zoom computed from the raw camera-only cover (stable at
+    // rest): the deepest level is merged into parents until the raw cover fits 70 percent of
+    // the budget (the dilation ring adds the rest). The ceiling is sticky: it deepens by one
+    // level only when the raw cover at that depth already fits, so nothing can oscillate. The
+    // count-based coarsening below stays as the last resort.
+    const size_t rawBudget = updateParameters ? terrainLoadBudgetTiles(updateParameters) : 0;
+    if (rawBudget > 0 && !out.empty()) {
+        const auto mergeDeeperThan = [](std::set<UnwrappedTileID>& s, uint8_t ceiling) {
+            std::set<UnwrappedTileID> merged;
+            for (const auto& id : s) {
+                if (id.canonical.z > ceiling) {
+                    merged.emplace(id.wrap, id.canonical.scaledTo(ceiling));
+                } else {
+                    merged.insert(id);
+                }
+            }
+            s = std::move(merged);
+        };
+        const auto deepestOf = [](const std::set<UnwrappedTileID>& s) {
+            uint8_t d = 0;
+            for (const auto& id : s) d = std::max(d, id.canonical.z);
+            return d;
+        };
+        const size_t rawLimit = std::max<size_t>(8, rawBudget * 7 / 10);
+        const uint8_t rawDeepest = deepestOf(out);
+        // Candidate: last frame's ceiling relaxed by one, or the raw depth when there is none.
+        uint8_t ceiling = meshCoarsenCeiling ? std::min<uint8_t>(rawDeepest, *meshCoarsenCeiling + 1) : rawDeepest;
+        std::set<UnwrappedTileID> probe = out;
+        mergeDeeperThan(probe, ceiling);
+        while (probe.size() > rawLimit && ceiling > zoomRange.min) {
+            --ceiling;
+            mergeDeeperThan(probe, ceiling);
+        }
+        if (ceiling < rawDeepest) {
+            mergeDeeperThan(out, ceiling);
+            meshCoarsenCeiling = ceiling;
+        } else {
+            meshCoarsenCeiling.reset();
+        }
+    }
+
     if (!lastFrameMeshCover.empty()) {
         std::set<UnwrappedTileID> held;
         std::set<UnwrappedTileID> dropped;

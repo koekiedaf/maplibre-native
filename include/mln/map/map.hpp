@@ -248,6 +248,8 @@ public:
     /// `std::nullopt` when there is no render terrain. Exists so `constrainCameraAboveTerrain`'s
     /// clamp can be measured from a test harness instead of guessed.
     std::optional<double> getTerrainCameraGroundRiseMeters() const;
+    /// Round G: terrain mesh tiles drawn by the last rendered frame.
+    std::size_t getTerrainMeshTileCount() const;
 
     /// Band-aid audit item 6 (docs/plans/2026-09-11-band-aids.md): a reading of the render
     /// side, not a request. `Renderer::Impl::render` holds four bounded counters that keep a

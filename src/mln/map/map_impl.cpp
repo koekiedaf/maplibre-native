@@ -397,6 +397,10 @@ void Map::Impl::onTerrainCenterRayClearanceChanged(std::optional<double> metres)
     transform.setCenterRayClearance(metres);
 }
 
+void Map::Impl::onTerrainMeshTileCountChanged(std::size_t count) {
+    terrainMeshTileCount = count;
+}
+
 void Map::Impl::onTerrainCenterRayMaxPitchChanged(std::optional<double> radians) {
     transform.setCenterRayMaxPitch(radians);
 }

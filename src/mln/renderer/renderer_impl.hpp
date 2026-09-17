@@ -122,6 +122,7 @@ private:
     std::optional<RendererObserver::CenterRayHit> lastReportedCenterRayHit;
     std::optional<double> lastReportedCenterRayClearance;
     std::optional<double> lastReportedCenterRayMaxPitch;
+    std::size_t lastReportedMeshTileCount = 0;
     /// Band-aid audit item 6: last value reported via `onSettleBoundGivenUp`, so an
     /// unchanged value (nullopt most of the time - the healthy case) does not post an
     /// observer message every frame. Mirrors `lastReportedCenterElevation`/

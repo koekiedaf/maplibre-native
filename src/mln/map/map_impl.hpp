@@ -68,6 +68,8 @@ public:
     void onTerrainCenterRayHitChanged(std::optional<RendererObserver::CenterRayHit> hit) final;
     void onTerrainCenterRayClearanceChanged(std::optional<double> metres) final;
     void onTerrainCenterRayMaxPitchChanged(std::optional<double> radians) final;
+    void onTerrainMeshTileCountChanged(std::size_t count) final;
+    std::size_t terrainMeshTileCount = 0;
     void onTerrainCameraGroundRiseChanged(std::optional<double> riseMeters) final;
     void onSettleBoundGivenUp(const std::optional<std::string>& boundNames) final;
     void onStyleImageMissing(const std::string&, const std::function<void()>&) final;

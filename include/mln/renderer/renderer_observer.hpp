@@ -95,6 +95,9 @@ public:
     /// Task E: the flattest pitch (radians) at which an orbit at the current radius about the
     /// centre-ray hit still keeps the tilt clearance along the ray; nullopt when unknown.
     virtual void onTerrainCenterRayMaxPitchChanged(std::optional<double> /*radians*/) {}
+    /// Round G: the number of terrain mesh tiles the last rendered frame drew, for the app's
+    /// telemetry recorder. Reported when it changes.
+    virtual void onTerrainMeshTileCountChanged(std::size_t /*count*/) {}
 
     /// The camera-ground RISE changed (task 2.0b): the rendered terrain height under the
     /// camera's own ground point MINUS the rendered terrain height under the map centre, both

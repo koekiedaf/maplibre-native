@@ -638,6 +638,10 @@ double Map::getTerrainCameraMarginMeters() const {
     return impl->transform.getTerrainCameraMarginMeters();
 }
 
+std::size_t Map::getTerrainMeshTileCount() const {
+    return impl->terrainMeshTileCount;
+}
+
 std::optional<double> Map::getTerrainCameraGroundRiseMeters() const {
     return impl->transform.getTerrainCameraGroundRise();
 }

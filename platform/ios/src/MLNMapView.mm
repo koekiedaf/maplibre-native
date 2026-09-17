@@ -3440,6 +3440,10 @@ static void *windowScreenContext = &windowScreenContext;
   return _mbglMap->getTerrainCameraMarginMeters();
 }
 
+- (NSUInteger)terrainMeshTileCount {
+  return static_cast<NSUInteger>(_mbglMap->getTerrainMeshTileCount());
+}
+
 - (NSNumber *)terrainCameraGroundRiseMeters {
   const std::optional<double> rise = _mbglMap->getTerrainCameraGroundRiseMeters();
   return rise ? @(*rise) : nil;

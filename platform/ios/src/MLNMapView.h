@@ -605,6 +605,10 @@ MLN_EXPORT
  */
 @property (nonatomic, readonly, nullable) NSNumber *terrainCameraGroundRiseMeters;
 
+/** A reading, not a request: the number of terrain mesh tiles the last rendered frame drew.
+ Round G, for the app's telemetry recorder. */
+@property (nonatomic, readonly) NSUInteger terrainMeshTileCount;
+
 /**
  A reading of the render side, not a request: item 6 of the band-aid audit
  (docs/plans/2026-09-11-band-aids.md). The renderer holds four bounded counters that keep a

@@ -558,6 +558,7 @@ private:
      */
     void generateMesh(gfx::Context& context);
     TerrainMesh buildMesh(size_t gridSize) const;
+    TerrainMesh buildCoarseMeshWithFineEdges(size_t gridSize) const;
 
     /**
      * @brief Activate or deactivate the layer group

@@ -1735,6 +1735,9 @@ void RenderTerrain::generateMesh(gfx::Context& /*context*/) {
 }
 
 RenderTerrain::TerrainMesh RenderTerrain::buildMesh(size_t gridSize) const {
+    if (gridSize < MESH_SIZE) {
+        return buildCoarseMeshWithFineEdges(gridSize);
+    }
     // A regular grid mesh (reused for every tile, displaced by the DEM in the
     // vertex shader) plus a skirt: each tile edge is duplicated into a curtain
     // that the shader drops by u_ele_delta, hiding the cracks between neighbouring
@@ -1840,6 +1843,152 @@ RenderTerrain::TerrainMesh RenderTerrain::buildMesh(size_t gridSize) const {
                        indices.size(),
                        std::move(vertices),
                        std::move(indices)};
+}
+
+// Round 4, 18 September 2026 (David's "strange seam still there" at Aoraki with Mesh
+// coarseness 16): a coarse grid beside a full one opened a crack along the shared edge that
+// the skirt curtain then showed as a pale strip. A coarse tile now keeps its EDGES at the full
+// MESH_SIZE resolution: the interior is a gridSize x gridSize lattice one cell in from the
+// border, the border is sampled every EXTENT/MESH_SIZE like every other tile, and the ring of
+// border cells is triangulated as fans from the interior lattice to the fine edge. Every tile
+// edge therefore has the same vertices whatever the grid, and the skirts are built on the
+// fine edges exactly as for the full mesh.
+RenderTerrain::TerrainMesh RenderTerrain::buildCoarseMeshWithFineEdges(size_t g) const {
+    const float extent = static_cast<float>(util::EXTENT);
+    const size_t fine = MESH_SIZE;             // fine subdivisions per side
+    const size_t r = fine / g;                 // fine steps per coarse cell
+    const float coarseStep = extent / static_cast<float>(g);
+    const float fineStep = extent / static_cast<float>(fine);
+
+    std::vector<int16_t> vertices;
+    std::vector<uint16_t> indices;
+    const auto addVert = [&](float x, float y, int16_t skirt) -> uint16_t {
+        vertices.push_back(static_cast<int16_t>(x));
+        vertices.push_back(static_cast<int16_t>(y));
+        vertices.push_back(skirt);
+        vertices.push_back(0);
+        return static_cast<uint16_t>(vertices.size() / 4 - 1);
+    };
+    const auto tri = [&](uint16_t a, uint16_t b, uint16_t c) {
+        indices.push_back(a);
+        indices.push_back(b);
+        indices.push_back(c);
+    };
+
+    // Interior lattice: coarse vertices at (i, j) for i, j in [1, g-1].
+    std::vector<uint16_t> inner((g + 1) * (g + 1), 0);
+    for (size_t j = 1; j < g; ++j) {
+        for (size_t i = 1; i < g; ++i) {
+            inner[j * (g + 1) + i] = addVert(i * coarseStep, j * coarseStep, 0);
+        }
+    }
+    // Fine border vertices: top (y = 0), bottom (y = extent), left (x = 0), right (x = extent).
+    std::vector<uint16_t> top(fine + 1), bottom(fine + 1), left(fine + 1), right(fine + 1);
+    for (size_t k = 0; k <= fine; ++k) {
+        top[k] = addVert(k * fineStep, 0.0f, 0);
+        bottom[k] = addVert(k * fineStep, extent, 0);
+    }
+    left[0] = top[0];
+    left[fine] = bottom[0];
+    right[0] = top[fine];
+    right[fine] = bottom[fine];
+    for (size_t k = 1; k < fine; ++k) {
+        left[k] = addVert(0.0f, k * fineStep, 0);
+        right[k] = addVert(extent, k * fineStep, 0);
+    }
+    // The coarse lattice with the border rows replaced by the fine border vertices at coarse
+    // positions, so interior quads and the transition ring share indices.
+    const auto at = [&](size_t i, size_t j) -> uint16_t {
+        if (j == 0) return top[i * r];
+        if (j == g) return bottom[i * r];
+        if (i == 0) return left[j * r];
+        if (i == g) return right[j * r];
+        return inner[j * (g + 1) + i];
+    };
+
+    // Interior quads (cells fully inside the ring).
+    for (size_t j = 1; j + 1 < g; ++j) {
+        for (size_t i = 1; i + 1 < g; ++i) {
+            const uint16_t tl = at(i, j), tr = at(i + 1, j), bl = at(i, j + 1), br = at(i + 1, j + 1);
+            tri(tl, bl, tr);
+            tri(tr, bl, br);
+        }
+    }
+    // Transition ring: each border cell fans from its inner side to the fine outer edge.
+    // Winding matches the interior (tl, bl, tr) orientation: counter-clockwise in tile space.
+    const auto fanEdge = [&](const std::vector<uint16_t>& edge, size_t from, size_t to, uint16_t apex, bool flip) {
+        for (size_t k = from; k < to; ++k) {
+            if (flip) tri(apex, edge[k + 1], edge[k]); else tri(apex, edge[k], edge[k + 1]);
+        }
+    };
+    for (size_t i = 0; i < g; ++i) {
+        // top row cell (i, 0): outer edge top[i*r .. (i+1)*r], inner vertices at(i,1), at(i+1,1)
+        {
+            const uint16_t il = at(i, 1), ir = at(i + 1, 1);
+            const size_t mid = i * r + r / 2;
+            fanEdge(top, i * r, mid, il, true);
+            fanEdge(top, mid, (i + 1) * r, ir, true);
+            tri(il, top[mid], ir);
+        }
+        // bottom row cell (i, g-1)
+        {
+            const uint16_t il = at(i, g - 1), ir = at(i + 1, g - 1);
+            const size_t mid = i * r + r / 2;
+            fanEdge(bottom, i * r, mid, il, false);
+            fanEdge(bottom, mid, (i + 1) * r, ir, false);
+            tri(il, ir, bottom[mid]);
+        }
+    }
+    for (size_t j = 1; j + 1 < g; ++j) {
+        // left column cell (0, j): outer edge left[j*r .. (j+1)*r], inner at(1,j), at(1,j+1)
+        {
+            const uint16_t it = at(1, j), ib = at(1, j + 1);
+            const size_t mid = j * r + r / 2;
+            fanEdge(left, j * r, mid, it, false);
+            fanEdge(left, mid, (j + 1) * r, ib, false);
+            tri(it, ib, left[mid]);
+        }
+        // right column cell (g-1, j)
+        {
+            const uint16_t it = at(g - 1, j), ib = at(g - 1, j + 1);
+            const size_t mid = j * r + r / 2;
+            fanEdge(right, j * r, mid, it, true);
+            fanEdge(right, mid, (j + 1) * r, ib, true);
+            tri(it, right[mid], ib);
+        }
+    }
+    // The four corner cells are covered twice by the loops above (top/bottom rows include
+    // i = 0 and i = g-1, whose inner vertices at(0,1)/at(g,1) are themselves fine border
+    // vertices), which double-draws nothing harmful but wastes work; acceptable for a
+    // diagnostic-grade coarse grid. The left/right loops skip j = 0 and j = g-1 for that reason.
+
+    // Skirts on the fine edges, same shape as the full mesh: a duplicate of each edge dropped
+    // by u_ele_delta.
+    if (meshSkirtLength != TerrainSkirtLength::None) {
+        const auto skirt = [&](const std::vector<uint16_t>& edge, bool flip) {
+            std::vector<uint16_t> low(edge.size());
+            for (size_t k = 0; k < edge.size(); ++k) {
+                const int16_t x = vertices[edge[k] * 4];
+                const int16_t y = vertices[edge[k] * 4 + 1];
+                low[k] = addVert(static_cast<float>(x), static_cast<float>(y), 1);
+            }
+            for (size_t k = 0; k + 1 < edge.size(); ++k) {
+                if (flip) {
+                    tri(edge[k], low[k + 1], low[k]);
+                    tri(edge[k], edge[k + 1], low[k + 1]);
+                } else {
+                    tri(edge[k], low[k], low[k + 1]);
+                    tri(edge[k], low[k + 1], edge[k + 1]);
+                }
+            }
+        };
+        skirt(top, false);
+        skirt(bottom, true);
+        skirt(left, true);
+        skirt(right, false);
+    }
+
+    return TerrainMesh{nullptr, nullptr, vertices.size() / 4, indices.size(), std::move(vertices), std::move(indices)};
 }
 
 std::shared_ptr<gfx::Texture2D> RenderTerrain::createDEMTexture(gfx::Context& context, const DEMData& demData) {

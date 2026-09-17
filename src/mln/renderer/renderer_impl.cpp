@@ -1219,7 +1219,15 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                     const double ux = dx / groundLen;
                     const double uy = dy / groundLen;
                     const double currentPitch = ts.getPitch();
-                    constexpr double kClearance = TransformState::tiltClearanceMeters; // 50 m, David, 17 September
+                    // Two floors, 17 September 2026. David's "it comes too low" is about the
+                    // CAMERA: it now stays TransformState::tiltClearanceMeters (50 m) over the
+                    // terrain in its own fifth of the ray. The rest of the ray keeps the
+                    // original 5 m, because that is what lets a tilt look just over a ridge
+                    // crest at the target: measured at the app's default Gavarnie camera, the
+                    // 50 m floor applied to the whole ray stopped the tilt at 33 degrees (a
+                    // crest 26 m under the ray, halfway out), where 5 m allowed 80.
+                    constexpr double kCameraClearance = TransformState::tiltClearanceMeters;
+                    constexpr double kRayClearance = TransformState::rayClearanceMeters;
                     constexpr int kPitchSteps = 60;
                     constexpr int kSegSteps = 40;
                     double maxOkPitch = currentPitch;
@@ -1235,7 +1243,8 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                             const auto gg = terrain->queryElevationForLatLng(
                                 Projection::unproject({pivotX - ux * back * f, pivotY - uy * back * f}, kScale));
                             if (!gg) continue;
-                            if (pivotAlt + up * f - *gg < kClearance) { ok = false; break; }
+                            const double floor = f >= 0.8 ? kCameraClearance : kRayClearance;
+                            if (pivotAlt + up * f - *gg < floor) { ok = false; break; }
                         }
                         if (ok) maxOkPitch = theta; else break;
                     }

@@ -388,6 +388,9 @@ public:
     /// low"); 5 m was his 16 September number. Distinct from the 60 m stand-off, which stays for
     /// one-finger travel, the anticipatory climb and the pinch.
     static constexpr double tiltClearanceMeters = 50.0;
+    /// The floor for the rest of the ray between camera and target: the 16 September 5 m, which
+    /// is what lets a tilt look just over a ridge crest. See Renderer::Impl's pitch search.
+    static constexpr double rayClearanceMeters = 5.0;
     void setTerrainCameraGroundRise(std::optional<double> metres) { terrainCameraGroundRise = metres; }
     std::optional<double> getTerrainCameraGroundRise() const { return terrainCameraGroundRise; }
 

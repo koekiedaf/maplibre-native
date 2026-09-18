@@ -274,6 +274,13 @@ void RenderHillshadeLayer::update(gfx::ShaderRegistry& shaders,
             }
             bucket.renderTarget = renderTarget;
             bucket.renderTargetPrepared = true;
+            // Round 7, 18 September 2026: the opt-in RenderTarget::render's render-once path
+            // documents ("by RenderHillshadeLayer when it creates a prepare target") was never
+            // called, so every hillshade prepare target re-ran its Sobel pass every frame: on
+            // David's 13 mini at his 38ce0ffd camera that was 48 of a 58 ms frame, and with the
+            // hillshade layer hidden the same flight ran at 59 fps. The DEM baked into the
+            // prepare drawable never changes, so the target renders once and keeps its texture.
+            renderTarget->setRenderOnce(true);
 
             auto singleTileLayerGroup = context.createTileLayerGroup(0, /*initialCapacity=*/1, getID(), false);
             if (!singleTileLayerGroup) {

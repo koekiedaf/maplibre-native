@@ -53,7 +53,9 @@ void Renderer::render(const std::shared_ptr<UpdateParameters>& updateParameters)
     const auto frameStart = util::MonotonicTimer::now().count();
     if (auto renderTree = impl->orchestrator.createRenderTree(updateParameters, impl->dynamicTextureAtlas)) {
         impl->traceTreeBuildSeconds = util::MonotonicTimer::now().count() - frameStart;
+        const auto prepareStart = util::MonotonicTimer::now().count();
         renderTree->prepare();
+        impl->tracePrepareSeconds = util::MonotonicTimer::now().count() - prepareStart;
         impl->render(*renderTree, updateParameters);
     }
     impl->traceFrameTotalSeconds = util::MonotonicTimer::now().count() - frameStart;

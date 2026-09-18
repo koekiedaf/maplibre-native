@@ -83,6 +83,11 @@ private:
     double traceTreeBuildSeconds = 0.0;
     double traceMainPassSeconds = 0.0;
     double traceFrameTotalSeconds = 0.0;
+    double tracePass3DSeconds = 0.0;
+    double traceClearPassSeconds = 0.0;
+    double traceEndFrameSeconds = 0.0;
+    double tracePrepareSeconds = 0.0;
+    double traceBeginFrameSeconds = 0.0;
 
     // Previous frame's frame-global draped-content signature, to detect when the terrain
     // drape content changed and the draped tweakers/targets must re-run (see render()).

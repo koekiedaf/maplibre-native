@@ -192,7 +192,9 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
 
     // Blocks execution until the renderable is available.
     backend.getDefaultRenderable().wait();
+    const auto beginFrameStart = util::MonotonicTimer::now().count();
     context.beginFrame();
+    traceBeginFrameSeconds = util::MonotonicTimer::now().count() - beginFrameStart;
 
     if (!staticData) {
         staticData = std::make_unique<RenderStaticData>(std::make_unique<gfx::ShaderRegistry>());
@@ -900,10 +902,12 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         }
     };
 
+    const auto pass3DStart = util::MonotonicTimer::now().count();
     if (parameters.staticData.has3D) {
         common3DPass();
         drawable3DPass();
     }
+    tracePass3DSeconds = util::MonotonicTimer::now().count() - pass3DStart;
     // Task "break the frame down by section": "preparing each drape target and rendering to
     // it" - drawableTargetsPass renders every non-drape RenderTarget (a drape target's own
     // upstream producer, e.g. hillshade's prepare pass) and then every drape target itself,
@@ -919,7 +923,9 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         terrain->renderDepth(orchestrator, renderTree, parameters);
         context.renderingStats().terrainDepthTime = util::MonotonicTimer::now().count() - terrainDepthStart;
     }
+    const auto clearStart = util::MonotonicTimer::now().count();
     commonClearPass();
+    traceClearPassSeconds = util::MonotonicTimer::now().count() - clearStart;
     context.bindGlobalUniformBuffers(*parameters.renderPass);
     // DuckMaps fork only, task T3: right after the main pass is created and bound, before any
     // layer group draws into it - see skyPass's own comment above for why.
@@ -943,7 +949,9 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
     context.renderingStats().renderingTime = util::MonotonicTimer::now().count() - startRendering;
 
     parameters.encoder.reset();
+    const auto endFrameStart = util::MonotonicTimer::now().count();
     context.endFrame();
+    traceEndFrameSeconds = util::MonotonicTimer::now().count() - endFrameStart;
 
 #if MLN_RENDER_BACKEND_METAL
     if constexpr (EnableMetalCapture) {
@@ -1803,6 +1811,11 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                    << ",\"terrainDepth\":" << st.terrainDepthTime * 1000.0
                    << ",\"encoding\":" << st.encodingTime * 1000.0
                    << ",\"rendering\":" << st.renderingTime * 1000.0
+                   << ",\"pass3D\":" << tracePass3DSeconds * 1000.0
+                   << ",\"clearPass\":" << traceClearPassSeconds * 1000.0
+                   << ",\"endFrame\":" << traceEndFrameSeconds * 1000.0
+                   << ",\"prepare\":" << tracePrepareSeconds * 1000.0
+                   << ",\"beginFrame\":" << traceBeginFrameSeconds * 1000.0
                    << ",\"treeBuild\":" << traceTreeBuildSeconds * 1000.0
                    << ",\"mainPass\":" << traceMainPassSeconds * 1000.0
                    << ",\"frameTotal\":" << traceFrameTotalSeconds * 1000.0 << "}";

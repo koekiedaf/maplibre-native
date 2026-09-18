@@ -535,6 +535,9 @@ MLN_EXPORT
 
 /** The render scale in effect right now (1 at rest, `movingRenderScale` while moving). */
 @property (nonatomic, readonly) double renderScaleInEffect;
+/// Round 5 (bench only): applies a render scale right now, gesture or not, so a harness can
+/// measure the drawable switch on a still map. The next gesture end or idle restores 1.
+- (void)debugApplyRenderScale:(double)scale;
 
 /**
  Camera based tile level of detail controls

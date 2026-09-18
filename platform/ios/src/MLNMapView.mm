@@ -2270,6 +2270,10 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   [self setNeedsRerender];
 }
 
+- (void)debugApplyRenderScale:(double)scale {
+  [self applyRenderScale:scale];
+}
+
 - (double)renderScaleInEffect {
   return _renderScaleInEffect == 0 ? 1.0 : _renderScaleInEffect;
 }

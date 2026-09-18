@@ -522,6 +522,7 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   double _movingRenderScale;   // round 4: 0 means 1 (off)
   double _renderScaleInEffect; // round 4: 0 means 1
   BOOL _twoFingerSequenceSeen; // round 4: a pan must not follow a two-finger release
+  BOOL _debugRenderScaleHeld; // round 5 bench: debugApplyRenderScale holds through idle
   std::unique_ptr<mln::Map> _mbglMap;
   std::unique_ptr<MLNMapViewImpl> _mbglView;
   std::unique_ptr<MLNRenderFrontend> _rendererFrontend;
@@ -2271,6 +2272,7 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
 }
 
 - (void)debugApplyRenderScale:(double)scale {
+  _debugRenderScaleHeld = scale != 1.0;
   [self applyRenderScale:scale];
 }
 
@@ -7386,7 +7388,7 @@ static NSDictionary<NSString *, NSNumber *> *MLNFrameTimingStatsToDictionary(
   // the map reports idle after every fully rendered frame while the fingers hold still
   // mid-gesture too, and this reset then ran with the fingers still down, so the moving
   // scale lasted one frame. Only when no gesture is in progress.
-  if (_changeDelimiterSuppressionDepth == 0) {
+  if (_changeDelimiterSuppressionDepth == 0 && !_debugRenderScaleHeld) {
     [self applyRenderScale:1.0];
   }
   if (!_mbglMap) {

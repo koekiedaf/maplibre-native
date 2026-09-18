@@ -310,6 +310,12 @@ void MLNMapViewMetalImpl::layoutChanged() {
   }
 
   setRenderableSize({static_cast<uint32_t>(target.width), static_cast<uint32_t>(target.height)});
+#if DEBUG
+  NSLog(@"[duckmaps-rs] layoutChanged scale=%.3f target=%.0fx%.0f drawable=%.0fx%.0f csf=%.3f auto=%d",
+        scaleFactor, target.width, target.height, resource.mtlView.drawableSize.width,
+        resource.mtlView.drawableSize.height, resource.mtlView.contentScaleFactor,
+        (int)resource.mtlView.autoResizeDrawable);
+#endif
 }
 
 MLNBackendResource* MLNMapViewMetalImpl::getObject() {

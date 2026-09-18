@@ -498,7 +498,12 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         // the drape bakes - see TileParameters::requiredTilesAreMeshCover. NOT the other
         // raster-dem sources (the style carries five, one per quality; only the terrain's own
         // is drawn): asking them too cost the 13 mini 1.1 GB and a third of its frame (measured).
-        const bool drapedSource = terrainOn && !isDemSource && sourceImpl->type != style::SourceType::RasterDEM;
+        // Measured on the 13 mini, the vector prefetch of the mesh cover cost 300 to 700 MB
+        // of parsed tiles at David's cameras (650 MB became 1.0 to 1.7 GB, the back-off fired,
+        // runs were killed) and is OFF; only the DEM's own ring stays (1 MB tiles, cheap). A
+        // tile entering the cover then has its relief a ring early and bakes with the hillshade
+        // (shaded ground, colours a frame or two behind) instead of flat paper.
+        const bool drapedSource = false && terrainOn && !isDemSource && sourceImpl->type != style::SourceType::RasterDEM;
         tileParameters.requiredTiles = isDemSource ? &renderTerrain->getDemRequestCover()
                                        : drapedSource ? &renderTerrain->getDrapedRequestCover()
                                                       : nullptr;

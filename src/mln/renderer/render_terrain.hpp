@@ -138,6 +138,10 @@ public:
         // 13 mini). Every source is asked for the 8-neighbours of every cover tile as well,
         // at the tile's own zoom, so the ground a turn brings in is loading a ring early.
         for (const auto& id : lastFrameMeshCover) {
+            // Coarse tiles only: the flashes measured were z5 to z10 (the ground a turn
+            // sweeps in fastest); a full ring at z12+ near the camera cost the 13 mini a
+            // third of its frame rate and 150 MB (measured, first try of this ring).
+            if (id.canonical.z > 11) continue;
             const int64_t dim = int64_t{1} << id.canonical.z;
             const int64_t gx = static_cast<int64_t>(id.wrap) * dim + id.canonical.x;
             for (int64_t dy = -1; dy <= 1; ++dy) {

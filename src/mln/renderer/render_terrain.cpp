@@ -855,6 +855,12 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
     size_t upgradeBudget = (updateParameters && updateParameters->drapeRerenderBudget > 0)
                                ? updateParameters->drapeRerenderBudget
                                : std::numeric_limits<size_t>::max();
+    if (state.isGestureInProgress()) {
+        postGestureFrames = 12;
+    } else if (postGestureFrames > 0) {
+        --postGestureFrames;
+    }
+    upgradesDeferred = false;
     // Create terrain drawables for each mesh tile
     for (const auto& unwrapped : meshTiles) {
         const OverscaledTileID tileID(unwrapped.canonical.z, unwrapped.wrap, unwrapped.canonical);
@@ -950,8 +956,12 @@ void RenderTerrain::update(RenderOrchestrator& orchestrator,
             // whole tiles of paper mid-pan); it takes the first DEM that arrives at once.
             // Round 4: a budget, not a freeze - dial 4's count of upgrades per frame during a
             // gesture (0 = unlimited), so detail streams in through a turn.
-            if (state.isGestureInProgress() && existing->second >= 0) {
+            // ... and for a dozen frames after the release, so the upgrades a turn deferred
+            // drain a few per frame instead of all in the first idle frame (measured: 39 mesh
+            // builds in one frame at release, the hitch David feels as "it snaps in").
+            if ((state.isGestureInProgress() || postGestureFrames > 0) && existing->second >= 0) {
                 if (upgradeBudget == 0) {
+                    upgradesDeferred = true;
                     continue;
                 }
                 --upgradeBudget;

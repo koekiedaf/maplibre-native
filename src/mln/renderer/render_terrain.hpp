@@ -559,6 +559,13 @@ private:
     void generateMesh(gfx::Context& context);
     TerrainMesh buildMesh(size_t gridSize) const;
     TerrainMesh buildCoarseMeshWithFineEdges(size_t gridSize) const;
+    /// Round 4: frames left in the post-release window during which DEM upgrades still obey
+    /// dial 4's per-frame budget (set to 12 on every gesture frame, counts down at rest).
+    int postGestureFrames = 0;
+    /// True when the last update left DEM upgrades waiting on that budget: the renderer asks
+    /// for a follow-up frame so they drain at rest.
+    bool upgradesDeferred = false;
+    bool hasDeferredUpgrades() const { return upgradesDeferred; }
 
     /**
      * @brief Activate or deactivate the layer group

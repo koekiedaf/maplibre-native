@@ -1786,7 +1786,8 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         // budget deferred any new tile, so deferred drapes/tiles catch up progressively even
         // after the interaction stops.
         renderTreeParameters.needsRepaint || drapeWorkDeferred || context.newTileBuildWasDeferred() ||
-            terrainCoverPending || centerElevationSettling || terrainSettling,
+            terrainCoverPending || centerElevationSettling || terrainSettling ||
+            (orchestrator.getRenderTerrain() && orchestrator.getRenderTerrain()->hasDeferredUpgrades()),
         renderTreeParameters.placementChanged,
         context.threadSafeCopyRenderingStats());
 

@@ -63,6 +63,7 @@ RenderingStats& RenderingStats::operator+=(const RenderingStats& r) {
     stencilClears += r.stencilClears;
     stencilUpdates += r.stencilUpdates;
     numDrapeTargetsRendered += r.numDrapeTargetsRendered;
+    numDrapeEmptyBakes += r.numDrapeEmptyBakes;
     numTerrainMeshBuilds += r.numTerrainMeshBuilds;
     numDrapeCoverageScans += r.numDrapeCoverageScans;
     terrainUpdateTime += r.terrainUpdateTime;

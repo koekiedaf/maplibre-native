@@ -296,6 +296,8 @@ void Map::Impl::onDidFinishRenderingFrame(RenderMode renderMode,
     }
     drapeRenderCount.store(static_cast<std::uint64_t>(std::max(0, stats.numDrapeTargetsRendered)),
                            std::memory_order_relaxed);
+    drapeEmptyBakeCount.store(static_cast<std::uint64_t>(std::max(0, stats.numDrapeEmptyBakes)),
+                              std::memory_order_relaxed);
     terrainMeshBuildCount.store(static_cast<std::uint64_t>(std::max(0, stats.numTerrainMeshBuilds)),
                                 std::memory_order_relaxed);
     textureMemoryBytes.store(static_cast<std::uint64_t>(std::max<int64_t>(0, stats.memTextures)),

@@ -156,6 +156,7 @@ public:
     std::atomic<bool> frameTimingEnabled{false};
     /// Copies of the last frame's cumulative counters (Map::getDrapeRenderCount and friends).
     std::atomic<std::uint64_t> drapeRenderCount{0};
+    std::atomic<std::uint64_t> drapeEmptyBakeCount{0};
     std::atomic<std::uint64_t> terrainMeshBuildCount{0};
     std::atomic<std::uint64_t> textureMemoryBytes{0};
 

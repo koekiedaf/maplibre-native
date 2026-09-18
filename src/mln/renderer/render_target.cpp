@@ -442,6 +442,9 @@ RenderTarget::RenderResult RenderTarget::render(RenderOrchestrator& orchestrator
         // this frame, with its content count and whether the target had content before, for
         // the per-frame trace.
         gDrapeBakeTrace.push_back({*drapeTileID, coverage.groupsWithContent, hasRenderedContent});
+        if (coverage.groupsWithContent == 0) {
+            context.renderingStats().numDrapeEmptyBakes++;
+        }
 
         bakedCoverage = coverage;
         bakedSignature = targetSignature;

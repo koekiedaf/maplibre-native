@@ -745,6 +745,8 @@ MLN_EXPORT
 
 /** Cumulative count of drape targets rendered (re-baked) since launch; a rate is a difference. */
 @property (nonatomic, readonly) unsigned long long terrainDrapeRenderCount;
+/** Round 8: cumulative drape targets baked with no draped content at all (a paper tile). */
+@property (nonatomic, readonly) unsigned long long terrainDrapeEmptyBakeCount;
 
 /** Cumulative count of terrain mesh drawables built since launch; a rate is a difference. */
 @property (nonatomic, readonly) unsigned long long terrainMeshBuildCount;

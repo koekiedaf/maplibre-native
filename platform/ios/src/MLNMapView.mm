@@ -3723,6 +3723,10 @@ static NSDictionary<NSString *, NSNumber *> *MLNFrameTimingStatsToDictionary(
   return _mbglMap->getDrapeRenderCount();
 }
 
+- (unsigned long long)terrainDrapeEmptyBakeCount {
+  return _mbglMap->getDrapeEmptyBakeCount();
+}
+
 - (unsigned long long)terrainMeshBuildCount {
   return _mbglMap->getTerrainMeshBuildCount();
 }

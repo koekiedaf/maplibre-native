@@ -92,6 +92,9 @@ struct RenderingStats {
     /// Number of terrain drape targets actually re-rendered this frame (cache
     /// misses); panning a static terrain scene should keep this at 0
     int numDrapeTargetsRendered = 0;
+    /// Round 8: drape targets baked with no draped content at all this frame (paper), cumulative
+    /// through Map::getDrapeEmptyBakeCount like numDrapeTargetsRendered.
+    int numDrapeEmptyBakes = 0;
 
     /// Number of terrain drape targets that ran the full per-target coverage scan
     /// this frame (i.e. did not hit the global-signature fast path). Should be ~0

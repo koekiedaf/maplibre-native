@@ -326,6 +326,8 @@ public:
     /// renders, cumulative terrain mesh drawable builds, and the texture memory the context
     /// currently accounts for, in bytes. Rates are differences between two readings.
     std::uint64_t getDrapeRenderCount() const;
+    /// Round 8: cumulative drape targets baked with no draped content (paper).
+    std::uint64_t getDrapeEmptyBakeCount() const;
     std::uint64_t getTerrainMeshBuildCount() const;
     std::uint64_t getTextureMemoryBytes() const;
 

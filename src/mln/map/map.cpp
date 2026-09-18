@@ -756,6 +756,10 @@ std::uint64_t Map::getDrapeRenderCount() const {
     return impl->drapeRenderCount.load(std::memory_order_relaxed);
 }
 
+std::uint64_t Map::getDrapeEmptyBakeCount() const {
+    return impl->drapeEmptyBakeCount.load(std::memory_order_relaxed);
+}
+
 std::uint64_t Map::getTerrainMeshBuildCount() const {
     return impl->terrainMeshBuildCount.load(std::memory_order_relaxed);
 }

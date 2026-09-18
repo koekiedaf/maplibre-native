@@ -7378,7 +7378,13 @@ static NSDictionary<NSString *, NSNumber *> *MLNFrameTimingStatsToDictionary(
 }
 
 - (void)mapViewDidBecomeIdle {
-  [self applyRenderScale:1.0]; // round 4: full resolution at rest
+  // Round 4: full resolution at rest. Round 5 (David: "50 percent, no change while moving"):
+  // the map reports idle after every fully rendered frame while the fingers hold still
+  // mid-gesture too, and this reset then ran with the fingers still down, so the moving
+  // scale lasted one frame. Only when no gesture is in progress.
+  if (_changeDelimiterSuppressionDepth == 0) {
+    [self applyRenderScale:1.0];
+  }
   if (!_mbglMap) {
     return;
   }

@@ -230,17 +230,27 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
 
     const TransformState& state = renderTreeParameters.transformParams.state;
     const EdgeInsets& frustumOffset = state.getFrustumOffset();
+    // Round 5, 18 September 2026: the framebuffer is smaller than points x pixelRatio while
+    // the moving render scale is in effect (dial 5), so anything placed in FRAMEBUFFER pixels
+    // from a point measure uses this frame's real ratio, not the device's. The sky's horizon
+    // was placed with the device ratio and sat below the smaller drawable - David's white
+    // horizon with two fingers down (ff1f88a1, 5a134ead). The global UBO's pixel_ratio is
+    // left alone on purpose: the drape passes copy it, and a re-bake mid-gesture must not
+    // draw its lines at a different width from one baked at rest.
+    const float framebufferRatio = (state.getSize().width > 0)
+                                       ? static_cast<float>(renderableSize.width) / static_cast<float>(state.getSize().width)
+                                       : pixelRatio;
     const gfx::ScissorRect scissorRect = {
-        .x = static_cast<int32_t>(frustumOffset.left() * pixelRatio),
+        .x = static_cast<int32_t>(frustumOffset.left() * framebufferRatio),
 #if MLN_RENDER_BACKEND_OPENGL
-        .y = static_cast<int32_t>(frustumOffset.bottom() * pixelRatio),
+        .y = static_cast<int32_t>(frustumOffset.bottom() * framebufferRatio),
 #else
-        .y = static_cast<int32_t>(frustumOffset.top() * pixelRatio),
+        .y = static_cast<int32_t>(frustumOffset.top() * framebufferRatio),
 #endif
         .width = renderableSize.width -
-                 static_cast<uint32_t>((frustumOffset.left() + frustumOffset.right()) * pixelRatio),
+                 static_cast<uint32_t>((frustumOffset.left() + frustumOffset.right()) * framebufferRatio),
         .height = renderableSize.height -
-                  static_cast<uint32_t>((frustumOffset.top() + frustumOffset.bottom()) * pixelRatio),
+                  static_cast<uint32_t>((frustumOffset.top() + frustumOffset.bottom()) * framebufferRatio),
     };
 
     PaintParameters parameters{
@@ -795,7 +805,11 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         const double i = std::sin(roll);
 
         const Size& size = state.getSize(); // CSS pixels, matching gl-js's transform.width/height
-        const float n = parameters.pixelRatio;
+        // This frame's framebuffer pixels per point (see framebufferRatio above): the sky is
+        // placed in framebuffer pixels, and the framebuffer shrinks while moving.
+        const float n = (size.height > 0)
+                            ? static_cast<float>(parameters.renderableSize.height) / static_cast<float>(size.height)
+                            : parameters.pixelRatio;
 
         const float horizonX = static_cast<float>((static_cast<double>(size.width) / 2.0 - horizonOffset * i) * n);
         const float horizonY = static_cast<float>((static_cast<double>(size.height) / 2.0 + horizonOffset * r) * n);
@@ -1281,8 +1295,16 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         if (centerRayHit && lastReportedCenterRayHit) {
             const auto& a = *centerRayHit;
             const auto& b = *lastReportedCenterRayHit;
+            // Round 5, 18 September 2026 (David's 47437c84: "zoomed out, released, started a
+            // turn, it zoomed in again by itself" - zoom 16.3 snapping back to exactly 17.782):
+            // a pinch with the pitch held leaves the hit's position and altitude where they
+            // were and changes only the DISTANCE from the camera to it, and the distance was
+            // not compared, so the map thread kept the pre-pinch radius and the next rotate or
+            // tilt orbited at it (Task E solves zoom and pitch to reproduce the captured
+            // radius). The same stale radius put 79900a60's tilt pivot above the ground.
             rayMoved = std::abs(a.altitudeMeters - b.altitudeMeters) > 0.5 ||
-                       std::abs(a.longitude - b.longitude) > 1.0e-5 || std::abs(a.latitude - b.latitude) > 1.0e-5;
+                       std::abs(a.longitude - b.longitude) > 1.0e-5 || std::abs(a.latitude - b.latitude) > 1.0e-5 ||
+                       std::abs(a.distanceMeters - b.distanceMeters) > 0.5;
         }
         if (rayValidityChanged || rayMoved) {
             lastReportedCenterRayHit = centerRayHit;

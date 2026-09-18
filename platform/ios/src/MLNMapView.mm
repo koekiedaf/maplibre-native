@@ -1,4 +1,5 @@
 #import "MLNMapView+Impl.h"
+#import <QuartzCore/CAMetalLayer.h>
 #import "MLNMapView_Private.h"
 
 #include <mln/annotation/annotation.hpp>
@@ -523,6 +524,10 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   double _renderScaleInEffect; // round 4: 0 means 1
   BOOL _twoFingerSequenceSeen; // round 4: a pan must not follow a two-finger release
   BOOL _debugRenderScaleHeld; // round 5 bench: debugApplyRenderScale holds through idle
+  CADisplayLink *_debugSpinLink; // round 6 bench: scripted rotation through the gesture path
+  CFTimeInterval _debugSpinStart, _debugSpinEnd, _debugSpinLast;
+  double _debugSpinDegreesPerSecond;
+  void (^_debugSpinProgress)(double);
   std::unique_ptr<mln::Map> _mbglMap;
   std::unique_ptr<MLNMapViewImpl> _mbglView;
   std::unique_ptr<MLNRenderFrontend> _rendererFrontend;
@@ -2274,6 +2279,58 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
 - (void)debugApplyRenderScale:(double)scale {
   _debugRenderScaleHeld = scale != 1.0;
   [self applyRenderScale:scale];
+}
+
+- (CGSize)presentedDrawableSize {
+  if (!_mbglView) return CGSizeZero;
+  UIView* view = _mbglView->getView();
+  if ([view.layer isKindOfClass:[CAMetalLayer class]]) {
+    return ((CAMetalLayer*)view.layer).drawableSize;
+  }
+  return CGSizeZero;
+}
+
+- (CGFloat)presentedContentsScale {
+  if (!_mbglView) return 0;
+  return _mbglView->getView().layer.contentsScale;
+}
+
+- (void)debugSpinForSeconds:(NSTimeInterval)seconds
+           degreesPerSecond:(double)degreesPerSecond
+                   progress:(void (^)(double))progress {
+  if (_debugSpinLink || seconds <= 0) return;
+  _debugSpinStart = CACurrentMediaTime();
+  _debugSpinEnd = _debugSpinStart + seconds;
+  _debugSpinLast = _debugSpinStart;
+  _debugSpinDegreesPerSecond = degreesPerSecond;
+  _debugSpinProgress = [progress copy];
+  [self notifyGestureDidBegin];
+  _debugSpinLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(debugSpinTick:)];
+  [_debugSpinLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+}
+
+- (void)debugSpinTick:(CADisplayLink*)link {
+  const CFTimeInterval now = link.timestamp;
+  const double dt = now - _debugSpinLast;
+  _debugSpinLast = now;
+  if (now >= _debugSpinEnd || !_mbglMap) {
+    [link invalidate];
+    _debugSpinLink = nil;
+    [self notifyGestureDidEndWithDrift:NO];
+    [self setNeedsRerender];
+    if (_debugSpinProgress) _debugSpinProgress(1.0);
+    _debugSpinProgress = nil;
+    return;
+  }
+  const double bearing = self.direction + _debugSpinDegreesPerSecond * dt;
+  const CGPoint centerPoint = self.contentCenter; // the screen centre, as a two-finger twist about it
+  self.mbglMap.jumpTo(mln::CameraOptions()
+                          .withBearing(bearing)
+                          .withAnchor(mln::ScreenCoordinate{centerPoint.x, centerPoint.y}));
+  [self cameraIsChanging];
+  if (_debugSpinProgress) {
+    _debugSpinProgress((now - _debugSpinStart) / (_debugSpinEnd - _debugSpinStart));
+  }
 }
 
 - (double)renderScaleInEffect {

@@ -538,6 +538,17 @@ MLN_EXPORT
 /// Round 5 (bench only): applies a render scale right now, gesture or not, so a harness can
 /// measure the drawable switch on a still map. The next gesture end or idle restores 1.
 - (void)debugApplyRenderScale:(double)scale;
+/// Round 6: the drawable the renderer actually presents, in pixels, and its layer's
+/// contentsScale, read from the Metal layer itself (the recorder logs both every second).
+@property (nonatomic, readonly) CGSize presentedDrawableSize;
+@property (nonatomic, readonly) CGFloat presentedContentsScale;
+/// Round 6 (bench): a scripted rotation that goes through the real gesture path
+/// (notifyGestureDidBegin, a bearing step per display-link tick, notifyGestureDidEnd), so a
+/// device run can hold a sustained gesture without a finger. `progress` is called on each
+/// tick with the elapsed fraction (0..1) and once with 1 at the end.
+- (void)debugSpinForSeconds:(NSTimeInterval)seconds
+           degreesPerSecond:(double)degreesPerSecond
+                   progress:(void (^_Nullable)(double fraction))progress;
 
 /**
  Camera based tile level of detail controls

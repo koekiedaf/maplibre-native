@@ -495,7 +495,7 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         const bool terrainOn = renderTerrain && renderTerrain->isEnabled();
         const bool isDemSource = terrainOn && sourceImpl->id == renderTerrain->getSourceID();
         tileParameters.requiredTiles = isDemSource ? &renderTerrain->getDemRequestCover()
-                                       : terrainOn ? &renderTerrain->getLastFrameMeshCover()
+                                       : terrainOn ? &renderTerrain->getDrapedRequestCover()
                                                    : nullptr;
         // Round 8: the draped sources load the mesh cover (one ring past the view) ahead of
         // the drape bakes - see TileParameters::requiredTilesAreMeshCover.

@@ -132,6 +132,27 @@ public:
         demRequestCover = cover;
         demRequestCover.insert(lastFrameRawMeshCover.begin(), lastFrameRawMeshCover.end());
         demRequestCover.insert(cameraGroundRing.begin(), cameraGroundRing.end()); // round 4
+        // Round 8 (David: "pieces of terrain flash white during a turn"): one more ring. The
+        // cover's own dilation is DRAWN, so a tile it admits is requested the frame it is
+        // drawn and is paper until its DEM and vector tiles arrive (1 to 3 frames on the
+        // 13 mini). Every source is asked for the 8-neighbours of every cover tile as well,
+        // at the tile's own zoom, so the ground a turn brings in is loading a ring early.
+        for (const auto& id : lastFrameMeshCover) {
+            const int64_t dim = int64_t{1} << id.canonical.z;
+            const int64_t gx = static_cast<int64_t>(id.wrap) * dim + id.canonical.x;
+            for (int64_t dy = -1; dy <= 1; ++dy) {
+                const int64_t y = static_cast<int64_t>(id.canonical.y) + dy;
+                if (y < 0 || y >= dim) continue;
+                for (int64_t dx = -1; dx <= 1; ++dx) {
+                    if (dx == 0 && dy == 0) continue;
+                    prefetchRing.insert(UnwrappedTileID(id.canonical.z, gx + dx, y));
+                }
+            }
+        }
+        demRequestCover.insert(prefetchRing.begin(), prefetchRing.end());
+        drapedRequestCover = lastFrameMeshCover;
+        drapedRequestCover.insert(prefetchRing.begin(), prefetchRing.end());
+        prefetchRing.clear();
         frameMeshCover = std::move(cover);
     }
 
@@ -153,6 +174,9 @@ public:
     /// this; keyed on the final cover alone, a budget-coarsened cover dropped the DEM under
     /// its own fine tiles, the LOD lost them, and the cover flipped every frame.
     const std::set<UnwrappedTileID>& getDemRequestCover() const { return demRequestCover; }
+    /// Round 8: what the DRAPED sources are asked for - the cover plus one ring (see
+    /// setFrameMeshCover), folded in at each source's own zooms by TilePyramid.
+    const std::set<UnwrappedTileID>& getDrapedRequestCover() const { return drapedRequestCover; }
     const std::set<UnwrappedTileID>& getCameraGroundRing() const { return cameraGroundRing; }
     /// Round 8 diagnosis: the camera-only (pre-budget) cover of the last frame, and the DEM zoom a
     /// mesh tile's drawable is bound to (-1 placeholder; nullopt when it has no drawable).
@@ -680,6 +704,8 @@ private:
     /// camera crosses a tile edge mid-gesture (see computeMeshCover).
     mutable std::set<UnwrappedTileID> cameraGroundRing;
     std::set<UnwrappedTileID> demRequestCover;
+    std::set<UnwrappedTileID> drapedRequestCover;
+    std::set<UnwrappedTileID> prefetchRing;
 
     // DEM decode vector for the source's encoding (default: Mapbox Terrain-RGB)
     std::array<float, 4> demUnpackVector = {{6553.6f, 25.6f, 0.1f, 10000.0f}};

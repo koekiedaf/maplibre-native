@@ -524,10 +524,26 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   double _renderScaleInEffect; // round 4: 0 means 1
   BOOL _twoFingerSequenceSeen; // round 4: a pan must not follow a two-finger release
   BOOL _debugRenderScaleHeld; // round 5 bench: debugApplyRenderScale holds through idle
+  // Round 9: movement smoothing (dial, 0 to 10). Input filtering of the gesture deltas and a
+  // decelerating glide after release, both through the real gesture path (the gesture stays
+  // "in progress" for the glide, so the held pivot, the held altitude, the anticipation climb
+  // and the floors all apply exactly as under a finger).
+  double _movementSmoothing;
+  CGPoint _smoothPanVelocity;        // points per second, filtered
+  double _smoothRotateVelocity;      // degrees per second, filtered (map bearing sign)
+  double _smoothPitchVelocity;       // degrees per second, filtered
+  CFTimeInterval _smoothPanTime, _smoothRotateTime, _smoothPitchTime;
+  double _rotateRawDegreesPrev;      // the recognizer's absolute bearing last event
+  double _pitchRawPrev;              // the recognizer's absolute pitch last event
+  BOOL _rotateRawValid, _pitchRawValid;
+  CADisplayLink *_glideLink;
+  CFTimeInterval _glideLastTime;
+  NSUInteger _glidePendingEnds;      // notifyGestureDidEnd calls owed when the glide stops
   CADisplayLink *_debugSpinLink; // round 6 bench: scripted rotation through the gesture path
   CFTimeInterval _debugSpinStart, _debugSpinEnd, _debugSpinLast;
   double _debugSpinDegreesPerSecond;
   double _debugPanPointsPerSecond;
+  double _debugTiltDegreesPerSecond;
   void (^_debugSpinProgress)(double);
   std::unique_ptr<mln::Map> _mbglMap;
   std::unique_ptr<MLNMapViewImpl> _mbglView;
@@ -2277,6 +2293,151 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   [self setNeedsRerender];
 }
 
+// MARK: - Round 9: movement smoothing
+
+- (void)setMovementSmoothing:(double)value {
+  _movementSmoothing = MIN(10.0, MAX(0.0, value));
+  if (_movementSmoothing == 0) {
+    [self cancelGlide];
+  }
+}
+
+- (double)movementSmoothing {
+  return _movementSmoothing;
+}
+
+/// Input filter time constant: 10 ms per dial step (50 ms at 5, 100 ms at 10).
+- (double)smoothingFilterSeconds {
+  return _movementSmoothing * 0.010;
+}
+
+/// Glide time constant after release: 60 ms per dial step (0.3 s at 5, 0.6 s at 10).
+- (double)smoothingGlideSeconds {
+  return _movementSmoothing * 0.060;
+}
+
+static double MLNSmoothAlpha(double dt, double tau) {
+  if (tau <= 0) return 1.0;
+  return 1.0 - exp(-dt / tau);
+}
+
+- (void)applyPanInput:(CGPoint)rawDelta now:(CFTimeInterval)now {
+  const double dt = (_smoothPanTime > 0) ? MAX(1.0 / 240.0, now - _smoothPanTime) : 1.0 / 60.0;
+  _smoothPanTime = now;
+  const double a = MLNSmoothAlpha(dt, [self smoothingFilterSeconds]);
+  _smoothPanVelocity.x += (rawDelta.x / dt - _smoothPanVelocity.x) * a;
+  _smoothPanVelocity.y += (rawDelta.y / dt - _smoothPanVelocity.y) * a;
+  const CGPoint step = CGPointMake(_smoothPanVelocity.x * dt, _smoothPanVelocity.y * dt);
+  switch (self.panScrollingMode) {
+    case MLNPanScrollingModeVertical: self.mbglMap.moveBy({0, step.y}); break;
+    case MLNPanScrollingModeHorizontal: self.mbglMap.moveBy({step.x, 0}); break;
+    default: self.mbglMap.moveBy({step.x, step.y});
+  }
+}
+
+- (void)applyRotateInput:(double)rawDeltaDegrees anchor:(CGPoint)anchor now:(CFTimeInterval)now {
+  const double dt = (_smoothRotateTime > 0) ? MAX(1.0 / 240.0, now - _smoothRotateTime) : 1.0 / 60.0;
+  _smoothRotateTime = now;
+  const double a = MLNSmoothAlpha(dt, [self smoothingFilterSeconds]);
+  _smoothRotateVelocity += (rawDeltaDegrees / dt - _smoothRotateVelocity) * a;
+  const double bearing = self.direction + _smoothRotateVelocity * dt;
+  self.mbglMap.jumpTo(mln::CameraOptions()
+                          .withBearing(bearing)
+                          .withAnchor(mln::ScreenCoordinate{anchor.x, anchor.y}));
+}
+
+- (void)applyPitchInput:(double)rawDeltaDegrees now:(CFTimeInterval)now {
+  const double dt = (_smoothPitchTime > 0) ? MAX(1.0 / 240.0, now - _smoothPitchTime) : 1.0 / 60.0;
+  _smoothPitchTime = now;
+  const double a = MLNSmoothAlpha(dt, [self smoothingFilterSeconds]);
+  _smoothPitchVelocity += (rawDeltaDegrees / dt - _smoothPitchVelocity) * a;
+  const double pitch = *self.mbglMap.getCameraOptions().pitch + _smoothPitchVelocity * dt;
+  const CGPoint c = self.contentCenter;
+  self.mbglMap.jumpTo(mln::CameraOptions().withPitch(pitch).withAnchor(mln::ScreenCoordinate{c.x, c.y}));
+}
+
+/// A recognizer ended with smoothing on: the filtered velocity glides on through the gesture
+/// path (gesture still in progress: pivot, altitude and floors held), decaying exponentially,
+/// and the owed notifyGestureDidEnd runs when the glide has stopped. Below the thresholds the
+/// end runs at once, so a still release moves nothing.
+- (void)endInputWithGlide {
+  const double panSpeed = hypot(_smoothPanVelocity.x, _smoothPanVelocity.y);
+  const bool moving = panSpeed > 20.0 || fabs(_smoothRotateVelocity) > 2.0 || fabs(_smoothPitchVelocity) > 2.0;
+  if (!moving || _movementSmoothing <= 0) {
+    [self notifyGestureDidEndWithDrift:NO];
+    [self unrotateIfNeededForGesture];
+    return;
+  }
+  _glidePendingEnds++;
+  if (!_glideLink) {
+    _glideLastTime = CACurrentMediaTime();
+    _glideLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(glideTick:)];
+    [_glideLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+  }
+}
+
+- (void)glideTick:(CADisplayLink *)link {
+  const CFTimeInterval now = link.timestamp;
+  const double dt = MAX(1.0 / 240.0, now - _glideLastTime);
+  _glideLastTime = now;
+  const double k = exp(-dt / MAX(0.01, [self smoothingGlideSeconds]));
+  _smoothPanVelocity.x *= k;
+  _smoothPanVelocity.y *= k;
+  _smoothRotateVelocity *= k;
+  _smoothPitchVelocity *= k;
+  const CGPoint c = self.contentCenter;
+  bool any = false;
+  if (hypot(_smoothPanVelocity.x, _smoothPanVelocity.y) > 4.0) {
+    self.mbglMap.moveBy({_smoothPanVelocity.x * dt, _smoothPanVelocity.y * dt});
+    any = true;
+  } else {
+    _smoothPanVelocity = CGPointZero;
+  }
+  if (fabs(_smoothRotateVelocity) > 0.5) {
+    self.mbglMap.jumpTo(mln::CameraOptions()
+                            .withBearing(self.direction + _smoothRotateVelocity * dt)
+                            .withAnchor(mln::ScreenCoordinate{c.x, c.y}));
+    any = true;
+  } else {
+    _smoothRotateVelocity = 0;
+  }
+  if (fabs(_smoothPitchVelocity) > 0.5) {
+    self.mbglMap.jumpTo(mln::CameraOptions()
+                            .withPitch(*self.mbglMap.getCameraOptions().pitch + _smoothPitchVelocity * dt)
+                            .withAnchor(mln::ScreenCoordinate{c.x, c.y}));
+    any = true;
+  } else {
+    _smoothPitchVelocity = 0;
+  }
+  [self cameraIsChanging];
+  if (!any) {
+    [self finishGlide];
+  }
+}
+
+- (void)finishGlide {
+  if (_glideLink) {
+    [_glideLink invalidate];
+    _glideLink = nil;
+  }
+  while (_glidePendingEnds > 0) {
+    _glidePendingEnds--;
+    [self notifyGestureDidEndWithDrift:NO];
+  }
+  [self unrotateIfNeededForGesture];
+  [self setNeedsRerender];
+}
+
+/// A new touch during a glide takes over at once: the glide stops and its owed ends run.
+- (void)cancelGlide {
+  if (_glideLink || _glidePendingEnds) {
+    _smoothPanVelocity = CGPointZero;
+    _smoothRotateVelocity = 0;
+    _smoothPitchVelocity = 0;
+    [self finishGlide];
+  }
+}
+
 - (void)debugApplyRenderScale:(double)scale {
   _debugRenderScaleHeld = scale != 1.0;
   [self applyRenderScale:scale];
@@ -2305,6 +2466,9 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   _debugSpinLast = _debugSpinStart;
   _debugSpinDegreesPerSecond = degreesPerSecond;
   _debugPanPointsPerSecond = 0;
+  _debugTiltDegreesPerSecond = 0;
+  [self cancelGlide];
+  _smoothRotateVelocity = 0; _smoothRotateTime = 0;
   _debugSpinProgress = [progress copy];
   [self notifyGestureDidBegin];
   _debugSpinLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(debugSpinTick:)];
@@ -2320,6 +2484,27 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   _debugSpinLast = _debugSpinStart;
   _debugSpinDegreesPerSecond = 0;
   _debugPanPointsPerSecond = pointsPerSecond;
+  _debugTiltDegreesPerSecond = 0;
+  [self cancelGlide];
+  _smoothPanVelocity = CGPointZero; _smoothPanTime = 0;
+  _debugSpinProgress = [progress copy];
+  [self notifyGestureDidBegin];
+  _debugSpinLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(debugSpinTick:)];
+  [_debugSpinLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+}
+
+- (void)debugTiltForSeconds:(NSTimeInterval)seconds
+           degreesPerSecond:(double)degreesPerSecond
+                   progress:(void (^)(double))progress {
+  if (_debugSpinLink || seconds <= 0) return;
+  _debugSpinStart = CACurrentMediaTime();
+  _debugSpinEnd = _debugSpinStart + seconds;
+  _debugSpinLast = _debugSpinStart;
+  _debugSpinDegreesPerSecond = 0;
+  _debugPanPointsPerSecond = 0;
+  _debugTiltDegreesPerSecond = degreesPerSecond;
+  [self cancelGlide];
+  _smoothPitchVelocity = 0; _smoothPitchTime = 0;
   _debugSpinProgress = [progress copy];
   [self notifyGestureDidBegin];
   _debugSpinLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(debugSpinTick:)];
@@ -2333,21 +2518,42 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   if (now >= _debugSpinEnd || !_mbglMap) {
     [link invalidate];
     _debugSpinLink = nil;
-    [self notifyGestureDidEndWithDrift:NO];
+    if (_movementSmoothing > 0) {
+      [self endInputWithGlide]; // the release, exactly as a finger's
+    } else {
+      [self notifyGestureDidEndWithDrift:NO];
+    }
     [self setNeedsRerender];
     if (_debugSpinProgress) _debugSpinProgress(1.0);
     _debugSpinProgress = nil;
     return;
   }
-  if (_debugPanPointsPerSecond != 0) {
+  if (_debugTiltDegreesPerSecond != 0) {
+    if (_movementSmoothing > 0) {
+      [self applyPitchInput:_debugTiltDegreesPerSecond * dt now:now];
+    } else {
+      const CGPoint c = self.contentCenter;
+      self.mbglMap.jumpTo(mln::CameraOptions()
+                              .withPitch(*self.mbglMap.getCameraOptions().pitch + _debugTiltDegreesPerSecond * dt)
+                              .withAnchor(mln::ScreenCoordinate{c.x, c.y}));
+    }
+  } else if (_debugPanPointsPerSecond != 0) {
     // A finger dragging down the screen brings the ground ahead towards the viewer.
-    self.mbglMap.moveBy({0, _debugPanPointsPerSecond * dt});
+    if (_movementSmoothing > 0) {
+      [self applyPanInput:CGPointMake(0, _debugPanPointsPerSecond * dt) now:now];
+    } else {
+      self.mbglMap.moveBy({0, _debugPanPointsPerSecond * dt});
+    }
   } else {
-    const double bearing = self.direction + _debugSpinDegreesPerSecond * dt;
     const CGPoint centerPoint = self.contentCenter; // the screen centre, as a two-finger twist about it
-    self.mbglMap.jumpTo(mln::CameraOptions()
-                            .withBearing(bearing)
-                            .withAnchor(mln::ScreenCoordinate{centerPoint.x, centerPoint.y}));
+    if (_movementSmoothing > 0) {
+      [self applyRotateInput:_debugSpinDegreesPerSecond * dt anchor:centerPoint now:now];
+    } else {
+      const double bearing = self.direction + _debugSpinDegreesPerSecond * dt;
+      self.mbglMap.jumpTo(mln::CameraOptions()
+                              .withBearing(bearing)
+                              .withAnchor(mln::ScreenCoordinate{centerPoint.x, centerPoint.y}));
+    }
   }
   [self cameraIsChanging];
   if (_debugSpinProgress) {
@@ -2408,6 +2614,9 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   if (pan.state == UIGestureRecognizerStateBegan) {
     self.userTrackingMode = MLNUserTrackingModeNone;
 
+    [self cancelGlide];
+    _smoothPanVelocity = CGPointZero;
+    _smoothPanTime = 0;
     [self notifyGestureDidBegin];
   } else if (pan.state == UIGestureRecognizerStateChanged) {
     CGPoint delta = [pan translationInView:pan.view];
@@ -2416,6 +2625,14 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
     // one-finger pan for a few points. A touch sequence that was ever two-finger never pans.
     if (_twoFingerSequenceSeen) {
       [pan setTranslation:CGPointZero inView:pan.view];
+      return;
+    }
+    if (_movementSmoothing > 0) {
+      // Round 9: the filtered path (see applyPanInput); the recognizer's own drift below
+      // is replaced by the glide.
+      [self applyPanInput:delta now:CACurrentMediaTime()];
+      [pan setTranslation:CGPointZero inView:pan.view];
+      [self cameraIsChanging];
       return;
     }
     MLNMapCamera *toCamera = [self cameraByPanningWithTranslation:delta panGesture:pan];
@@ -2439,11 +2656,14 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   } else if (pan.state == UIGestureRecognizerStateEnded ||
              pan.state == UIGestureRecognizerStateCancelled) {
     CGPoint velocity = [pan velocityInView:pan.view];
-    if (self.decelerationRate == MLNMapViewDecelerationRateImmediate ||
-        sqrtf(velocity.x * velocity.x + velocity.y * velocity.y) < 100) {
-      // Not enough velocity to overcome friction
-      velocity = CGPointZero;
+    // Round 9: the built-in drift is gone. At smoothing 0 a release moves nothing (round 4's
+    // proof); above 0 the glide (endInputWithGlide) carries the FILTERED velocity on through
+    // the gesture path.
+    if (_movementSmoothing > 0) {
+      [self endInputWithGlide];
+      return;
     }
+    velocity = CGPointZero;
 
     BOOL drift = !CGPointEqualToPoint(velocity, CGPointZero);
     if (drift) {
@@ -2635,6 +2855,10 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
     }
 
     self.shouldTriggerHapticFeedbackForCompass = NO;
+    [self cancelGlide];
+    _smoothRotateVelocity = 0;
+    _smoothRotateTime = 0;
+    _rotateRawValid = NO;
     [self notifyGestureDidBegin];
   }
   if (rotate.state == UIGestureRecognizerStateChanged) {
@@ -2645,6 +2869,15 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
     if (!self.isRotationAllowed && std::abs(self.pinch.scale) < 10) {
       newDegrees = fminf(newDegrees, 30);
       newDegrees = fmaxf(newDegrees, -30);
+    }
+    if (_movementSmoothing > 0) {
+      // Round 9: the recognizer's absolute bearing becomes a delta into the filter.
+      const double rawDelta = _rotateRawValid ? newDegrees - _rotateRawDegreesPrev : 0.0;
+      _rotateRawDegreesPrev = newDegrees;
+      _rotateRawValid = YES;
+      [self applyRotateInput:rawDelta anchor:centerPoint now:CACurrentMediaTime()];
+      [self cameraIsChanging];
+      return;
     }
 
     MLNMapCamera *toCamera = [self cameraByRotatingToDirection:newDegrees
@@ -2679,9 +2912,14 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
     }
     self.isRotating = NO;
 
+    if (_movementSmoothing > 0) {
+      [self endInputWithGlide];
+      return;
+    }
     CGFloat velocity = rotate.velocity;
     CGFloat decelerationRate = self.decelerationRate;
-    if (decelerationRate != MLNMapViewDecelerationRateImmediate && fabs(velocity) > 3) {
+    // Round 9: no built-in drift at smoothing 0 (a release moves nothing).
+    if (false && decelerationRate != MLNMapViewDecelerationRateImmediate && fabs(velocity) > 3) {
       CGFloat radians = self.angle + rotate.rotation;
       CGFloat newRadians = radians + velocity * decelerationRate * 0.1;
       CGFloat newDegrees = MLNDegreesFromRadians(newRadians) * -1;
@@ -2918,6 +3156,10 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
     // making the gesture avoid the delay
     self.dragGestureMiddlePoint = CGPointMake(midPoint.x, midPoint.y - 1);
     initialPitch = *self.mbglMap.getCameraOptions().pitch;
+    [self cancelGlide];
+    _smoothPitchVelocity = 0;
+    _smoothPitchTime = 0;
+    _pitchRawValid = NO;
     [self notifyGestureDidBegin];
   }
 
@@ -2967,6 +3209,16 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
         centerPoint = [self contentCenter];
       }
 
+      if (_movementSmoothing > 0) {
+        // Round 9: the recognizer's absolute pitch becomes a delta into the filter.
+        const double rawDelta = _pitchRawValid ? pitchNew - _pitchRawPrev : 0.0;
+        _pitchRawPrev = pitchNew;
+        _pitchRawValid = YES;
+        [self applyPitchInput:rawDelta now:CACurrentMediaTime()];
+        [self cameraIsChanging];
+        return;
+      }
+
       MLNMapCamera *oldCamera = self.camera;
       MLNMapCamera *toCamera = [self cameraByTiltingToPitch:pitchNew];
 
@@ -2980,9 +3232,13 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
 
   } else if (twoFingerDrag.state == UIGestureRecognizerStateEnded ||
              twoFingerDrag.state == UIGestureRecognizerStateCancelled) {
+    self.dragGestureMiddlePoint = CGPointZero;
+    if (_movementSmoothing > 0) {
+      [self endInputWithGlide];
+      return;
+    }
     [self notifyGestureDidEndWithDrift:NO];
     [self unrotateIfNeededForGesture];
-    self.dragGestureMiddlePoint = CGPointZero;
   }
 }
 

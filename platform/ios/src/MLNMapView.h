@@ -554,6 +554,15 @@ MLN_EXPORT
 - (void)debugPanForSeconds:(NSTimeInterval)seconds
            pointsPerSecond:(double)pointsPerSecond
                   progress:(void (^_Nullable)(double fraction))progress;
+/// Round 9 (bench): the same through the tilt path, `degreesPerSecond` of pitch (positive tilts up).
+- (void)debugTiltForSeconds:(NSTimeInterval)seconds
+           degreesPerSecond:(double)degreesPerSecond
+                   progress:(void (^_Nullable)(double fraction))progress;
+/// Round 9: movement smoothing, 0 (raw input, nothing moves after a release) to 10. Filters the
+/// drag, rotate and tilt deltas (10 ms of time constant per step) and glides after release
+/// (60 ms per step), all through the gesture path: pivot, altitude hold and floors as under a
+/// finger. Default 0 here; the app's dial applies 5.
+@property (nonatomic) double movementSmoothing;
 
 /**
  Camera based tile level of detail controls

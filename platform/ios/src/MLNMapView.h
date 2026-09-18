@@ -549,6 +549,11 @@ MLN_EXPORT
 - (void)debugSpinForSeconds:(NSTimeInterval)seconds
            degreesPerSecond:(double)degreesPerSecond
                    progress:(void (^_Nullable)(double fraction))progress;
+/// Round 7 (bench): the same through the one-finger pan path, dragging the map towards the
+/// viewer (a forward pan) at `pointsPerSecond`.
+- (void)debugPanForSeconds:(NSTimeInterval)seconds
+           pointsPerSecond:(double)pointsPerSecond
+                  progress:(void (^_Nullable)(double fraction))progress;
 
 /**
  Camera based tile level of detail controls

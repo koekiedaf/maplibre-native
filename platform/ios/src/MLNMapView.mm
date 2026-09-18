@@ -527,6 +527,7 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   CADisplayLink *_debugSpinLink; // round 6 bench: scripted rotation through the gesture path
   CFTimeInterval _debugSpinStart, _debugSpinEnd, _debugSpinLast;
   double _debugSpinDegreesPerSecond;
+  double _debugPanPointsPerSecond;
   void (^_debugSpinProgress)(double);
   std::unique_ptr<mln::Map> _mbglMap;
   std::unique_ptr<MLNMapViewImpl> _mbglView;
@@ -2303,6 +2304,22 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   _debugSpinEnd = _debugSpinStart + seconds;
   _debugSpinLast = _debugSpinStart;
   _debugSpinDegreesPerSecond = degreesPerSecond;
+  _debugPanPointsPerSecond = 0;
+  _debugSpinProgress = [progress copy];
+  [self notifyGestureDidBegin];
+  _debugSpinLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(debugSpinTick:)];
+  [_debugSpinLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+}
+
+- (void)debugPanForSeconds:(NSTimeInterval)seconds
+           pointsPerSecond:(double)pointsPerSecond
+                  progress:(void (^)(double))progress {
+  if (_debugSpinLink || seconds <= 0) return;
+  _debugSpinStart = CACurrentMediaTime();
+  _debugSpinEnd = _debugSpinStart + seconds;
+  _debugSpinLast = _debugSpinStart;
+  _debugSpinDegreesPerSecond = 0;
+  _debugPanPointsPerSecond = pointsPerSecond;
   _debugSpinProgress = [progress copy];
   [self notifyGestureDidBegin];
   _debugSpinLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(debugSpinTick:)];
@@ -2322,11 +2339,16 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
     _debugSpinProgress = nil;
     return;
   }
-  const double bearing = self.direction + _debugSpinDegreesPerSecond * dt;
-  const CGPoint centerPoint = self.contentCenter; // the screen centre, as a two-finger twist about it
-  self.mbglMap.jumpTo(mln::CameraOptions()
-                          .withBearing(bearing)
-                          .withAnchor(mln::ScreenCoordinate{centerPoint.x, centerPoint.y}));
+  if (_debugPanPointsPerSecond != 0) {
+    // A finger dragging down the screen brings the ground ahead towards the viewer.
+    self.mbglMap.moveBy({0, _debugPanPointsPerSecond * dt});
+  } else {
+    const double bearing = self.direction + _debugSpinDegreesPerSecond * dt;
+    const CGPoint centerPoint = self.contentCenter; // the screen centre, as a two-finger twist about it
+    self.mbglMap.jumpTo(mln::CameraOptions()
+                            .withBearing(bearing)
+                            .withAnchor(mln::ScreenCoordinate{centerPoint.x, centerPoint.y}));
+  }
   [self cameraIsChanging];
   if (_debugSpinProgress) {
     _debugSpinProgress((now - _debugSpinStart) / (_debugSpinEnd - _debugSpinStart));

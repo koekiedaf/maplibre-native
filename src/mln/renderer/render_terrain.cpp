@@ -1777,7 +1777,7 @@ void RenderTerrain::generateMesh(gfx::Context& /*context*/) {
 }
 
 RenderTerrain::TerrainMesh RenderTerrain::buildMesh(size_t gridSize) const {
-    if (gridSize < MESH_SIZE) {
+    if (gridSize >= 2 && gridSize < MESH_SIZE && MESH_SIZE % gridSize == 0) {
         return buildCoarseMeshWithFineEdges(gridSize);
     }
     // A regular grid mesh (reused for every tile, displaced by the DEM in the

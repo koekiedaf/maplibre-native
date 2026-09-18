@@ -1720,6 +1720,17 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             // overlapping-pair counts - see RenderTerrain::debugDrainMeshCoverDilationTraceJSON's
             // comment. Drained the same way, once per frame, right alongside the other two.
             os << ",\"meshCoverDilation\":" << RenderTerrain::debugDrainMeshCoverDilationTraceJSON();
+            if (traceTerrain) {
+                // Round 4: the camera-ground DEM ring and what the DEM source is asked for.
+                os << ",\"cameraRing\":[";
+                bool first = true;
+                for (const auto& id : traceTerrain->getCameraGroundRing()) {
+                    os << (first ? "" : ",") << "\"" << static_cast<int>(id.canonical.z) << "/" << id.canonical.x << "/"
+                       << id.canonical.y << "\"";
+                    first = false;
+                }
+                os << "],\"demRequestCount\":" << traceTerrain->getDemRequestCover().size();
+            }
             // Band-aid audit item 6: this frame's settle-bound-given-up value (see the
             // combined report built above, and RendererObserver::onSettleBoundGivenUp's own
             // comment), unlike the property MLNMapView exposes this is drained every frame

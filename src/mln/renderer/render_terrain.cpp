@@ -303,8 +303,13 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
     // the cover snapped back - the hitch at release. With the ring resident ahead of the
     // camera, the sample stays exact across a tile boundary.
     {
+        // One level finer than the cover's ideal zoom, capped at what the DEM source serves:
+        // the near tiles under a tilted camera cover at idealZoom + 1 and the ground sample
+        // walks to the finest DEM loaded, so a ring at idealZoom alone still left the sample
+        // one level coarse across the edge (measured: cover 90 to 124 for two frames).
+        const int32_t ringZoom = std::min<int32_t>(idealZoom + 1, demSource->getMaxZoom());
         const LatLng cam = state.getCameraLatLng();
-        const double n = std::exp2(static_cast<double>(idealZoom));
+        const double n = std::exp2(static_cast<double>(ringZoom));
         const double fx = (cam.longitude() / 360.0 + 0.5) * n;
         const double latRad = util::deg2rad(util::clamp(cam.latitude(), -util::LATITUDE_MAX, util::LATITUDE_MAX));
         const double fy = (0.5 - std::log(std::tan(M_PI / 4.0 + latRad / 2.0)) / (2.0 * M_PI)) * n;
@@ -316,7 +321,7 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
             const int64_t y = ty + dy;
             if (y < 0 || y >= dim) continue;
             for (int64_t dx = -1; dx <= 1; ++dx) {
-                cameraGroundRing.insert(UnwrappedTileID(static_cast<uint8_t>(idealZoom), tx + dx, y));
+                cameraGroundRing.insert(UnwrappedTileID(static_cast<uint8_t>(ringZoom), tx + dx, y));
             }
         }
     }

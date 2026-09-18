@@ -153,6 +153,10 @@ public:
     /// this; keyed on the final cover alone, a budget-coarsened cover dropped the DEM under
     /// its own fine tiles, the LOD lost them, and the cover flipped every frame.
     const std::set<UnwrappedTileID>& getDemRequestCover() const { return demRequestCover; }
+    const std::set<UnwrappedTileID>& getCameraGroundRing() const { return cameraGroundRing; }
+    /// Round 4: true when the last update left DEM upgrades waiting on dial 4's budget (during
+    /// a gesture or the frames right after it); the renderer asks for a follow-up frame.
+    bool hasDeferredUpgrades() const { return upgradesDeferred; }
 
     /**
      * @brief DuckMaps fork only, task M1: a hash of everything about the terrain that decides
@@ -566,7 +570,6 @@ private:
     /// True when the last update left DEM upgrades waiting on that budget: the renderer asks
     /// for a follow-up frame so they drain at rest.
     bool upgradesDeferred = false;
-    bool hasDeferredUpgrades() const { return upgradesDeferred; }
 
     /**
      * @brief Activate or deactivate the layer group

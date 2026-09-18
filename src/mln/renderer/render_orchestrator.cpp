@@ -494,12 +494,15 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         // null for every other source in this loop so nothing else is affected.
         const bool terrainOn = renderTerrain && renderTerrain->isEnabled();
         const bool isDemSource = terrainOn && sourceImpl->id == renderTerrain->getSourceID();
-        tileParameters.requiredTiles = isDemSource ? &renderTerrain->getDemRequestCover()
-                                       : terrainOn ? &renderTerrain->getDrapedRequestCover()
-                                                   : nullptr;
         // Round 8: the draped sources load the mesh cover (one ring past the view) ahead of
-        // the drape bakes - see TileParameters::requiredTilesAreMeshCover.
-        tileParameters.requiredTilesAreMeshCover = terrainOn && !isDemSource;
+        // the drape bakes - see TileParameters::requiredTilesAreMeshCover. NOT the other
+        // raster-dem sources (the style carries five, one per quality; only the terrain's own
+        // is drawn): asking them too cost the 13 mini 1.1 GB and a third of its frame (measured).
+        const bool drapedSource = terrainOn && !isDemSource && sourceImpl->type != style::SourceType::RasterDEM;
+        tileParameters.requiredTiles = isDemSource ? &renderTerrain->getDemRequestCover()
+                                       : drapedSource ? &renderTerrain->getDrapedRequestCover()
+                                                      : nullptr;
+        tileParameters.requiredTilesAreMeshCover = drapedSource;
 
         tileParameters.isUpdateSynchronous = sourceImpl->isUpdateSynchronous();
         source->update(sourceImpl, filteredLayersForSource, sourceNeedsRendering, sourceNeedsRelayout, tileParameters);

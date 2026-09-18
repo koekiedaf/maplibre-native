@@ -654,7 +654,7 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
         const auto demTiles = demSource->getRawRenderTiles();
         const auto hasDem = [&](const UnwrappedTileID& id) {
             for (const auto& rt : *demTiles) {
-                const UnwrappedTileID u = rt.id.toUnwrapped();
+                const UnwrappedTileID u = rt.id;
                 if (u == id || id.isChildOf(u)) return true;
             }
             return false;

@@ -1752,6 +1752,7 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             // overlapping-pair counts - see RenderTerrain::debugDrainMeshCoverDilationTraceJSON's
             // comment. Drained the same way, once per frame, right alongside the other two.
             os << ",\"meshCoverDilation\":" << RenderTerrain::debugDrainMeshCoverDilationTraceJSON();
+            os << ",\"drapeBakes\":" << RenderTarget::debugDrainDrapeBakeTraceJSON();
             if (traceTerrain) {
                 // Round 4: the camera-ground DEM ring and what the DEM source is asked for.
                 os << ",\"cameraRing\":[";

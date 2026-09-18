@@ -11,6 +11,7 @@
 #include <optional>
 #include <ranges>
 #include <string>
+#include <vector>
 
 namespace mln {
 
@@ -177,6 +178,15 @@ protected:
 
 public:
     void setRenderOnce(bool value) { renderOnce = value; }
+    /// Round 8 diagnosis: the drape bakes of the frame so far (tile, groups with content,
+    /// whether the target held content before), drained by the per-frame trace.
+    struct BakeTraceEntry {
+        UnwrappedTileID id;
+        std::size_t groupsWithContent;
+        bool hadContent;
+    };
+    static std::vector<BakeTraceEntry> gDrapeBakeTrace;
+    static std::string debugDrainDrapeBakeTraceJSON();
 
     /// Debug-only, for the DUCKMAPS_ELEVATION_TRACE diagnosis: what this target
     /// last actually baked, as a JSON object. Nothing reads it unless the trace

@@ -322,6 +322,22 @@ std::string RenderTarget::debugBakedCoverageJSON() const {
     return os.str();
 }
 
+std::vector<RenderTarget::BakeTraceEntry> RenderTarget::gDrapeBakeTrace;
+
+std::string RenderTarget::debugDrainDrapeBakeTraceJSON() {
+    std::string out = "[";
+    bool first = true;
+    for (const auto& e : gDrapeBakeTrace) {
+        if (!first) out += ",";
+        first = false;
+        out += "{\"t\":\"" + std::to_string(static_cast<int>(e.id.canonical.z)) + "/" + std::to_string(e.id.canonical.x) +
+               "/" + std::to_string(e.id.canonical.y) + "\",\"groups\":" + std::to_string(e.groupsWithContent) +
+               ",\"had\":" + (e.hadContent ? "true" : "false") + "}";
+    }
+    gDrapeBakeTrace.clear();
+    return out + "]";
+}
+
 RenderTarget::RenderResult RenderTarget::render(RenderOrchestrator& orchestrator,
                                                 const RenderTree& renderTree,
                                                 PaintParameters& parameters,
@@ -414,6 +430,11 @@ RenderTarget::RenderResult RenderTarget::render(RenderOrchestrator& orchestrator
         if (!canRerender && hasRenderedContent && !bakedEmpty) {
             return RenderResult::Deferred;
         }
+
+        // Round 8 diagnosis (David: "pieces of terrain flash white during a turn"): every bake
+        // this frame, with its content count and whether the target had content before, for
+        // the per-frame trace.
+        gDrapeBakeTrace.push_back({*drapeTileID, coverage.groupsWithContent, hasRenderedContent});
 
         bakedCoverage = coverage;
         bakedSignature = targetSignature;

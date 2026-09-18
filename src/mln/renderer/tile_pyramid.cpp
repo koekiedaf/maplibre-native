@@ -217,9 +217,30 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
                 }
             }
         };
-        std::erase_if(idealTiles, beneathCoarseMesh);
-        std::erase_if(panTiles, beneathCoarseMesh);
+        if (!parameters.requiredTilesAreMeshCover) {
+            std::erase_if(idealTiles, beneathCoarseMesh);
+            std::erase_if(panTiles, beneathCoarseMesh);
+        }
         for (const auto& required : *parameters.requiredTiles) {
+            if (parameters.requiredTilesAreMeshCover) {
+                // A draped source (round 8): the ids its own cover would produce for this
+                // ground. Finer than this source's ideal zoom: the ideal-zoom tile (overscaled
+                // exactly as util::tileCover overscales, so it is the same Tile). Coarser: the
+                // tile itself, if this source serves that zoom.
+                const int32_t z = required.canonical.z;
+                if (z > tileZoom) {
+                    const int32_t idealZ = std::min<int32_t>(tileZoom, zoomRange.max);
+                    if (idealZ < zoomRange.min) continue;
+                    const OverscaledTileID id{static_cast<uint8_t>(tileZoom), required.wrap,
+                                              required.canonical.scaledTo(static_cast<uint8_t>(idealZ))};
+                    if (std::find(idealTiles.begin(), idealTiles.end(), id) == idealTiles.end()) idealTiles.push_back(id);
+                } else {
+                    if (z < zoomRange.min || z > zoomRange.max) continue;
+                    const OverscaledTileID id{static_cast<uint8_t>(z), required.wrap, required.canonical};
+                    if (std::find(idealTiles.begin(), idealTiles.end(), id) == idealTiles.end()) idealTiles.push_back(id);
+                }
+                continue;
+            }
             const uint8_t requiredZoom = required.canonical.z;
             const uint8_t ancestorZoom = std::min(requiredZoom, zoomRange.max);
             if (ancestorZoom < zoomRange.min) {

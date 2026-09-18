@@ -430,6 +430,13 @@ RenderTarget::RenderResult RenderTarget::render(RenderOrchestrator& orchestrator
         if (!canRerender && hasRenderedContent && !bakedEmpty) {
             return RenderResult::Deferred;
         }
+        // Round 8: a target that holds real content never bakes an EMPTY coverage over it
+        // (the covering tiles of a turn-in area can be momentarily absent while they reload);
+        // it keeps what it has and re-evaluates next frame. A never-rendered target still
+        // bakes (paper) rather than showing a recycled texture's stale picture.
+        if (coverage.groupsWithContent == 0 && hasRenderedContent && !bakedEmpty) {
+            return RenderResult::Skipped;
+        }
 
         // Round 8 diagnosis (David: "pieces of terrain flash white during a turn"): every bake
         // this frame, with its content count and whether the target had content before, for

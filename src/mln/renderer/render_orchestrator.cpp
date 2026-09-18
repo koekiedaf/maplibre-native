@@ -492,10 +492,14 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         // server down to z8) is never requested, so it falls back to a coarse ancestor or
         // the flat placeholder. Only set for the terrain's own DEM source; cleared to
         // null for every other source in this loop so nothing else is affected.
-        tileParameters.requiredTiles =
-            (renderTerrain && renderTerrain->isEnabled() && sourceImpl->id == renderTerrain->getSourceID())
-                ? &renderTerrain->getDemRequestCover()
-                : nullptr;
+        const bool terrainOn = renderTerrain && renderTerrain->isEnabled();
+        const bool isDemSource = terrainOn && sourceImpl->id == renderTerrain->getSourceID();
+        tileParameters.requiredTiles = isDemSource ? &renderTerrain->getDemRequestCover()
+                                       : terrainOn ? &renderTerrain->getLastFrameMeshCover()
+                                                   : nullptr;
+        // Round 8: the draped sources load the mesh cover (one ring past the view) ahead of
+        // the drape bakes - see TileParameters::requiredTilesAreMeshCover.
+        tileParameters.requiredTilesAreMeshCover = terrainOn && !isDemSource;
 
         tileParameters.isUpdateSynchronous = sourceImpl->isUpdateSynchronous();
         source->update(sourceImpl, filteredLayersForSource, sourceNeedsRendering, sourceNeedsRelayout, tileParameters);

@@ -55,6 +55,15 @@ public:
     /// terrain mesh's previous frame's cover (RenderTerrain::getLastFrameMeshCover), and
     /// consumed by TilePyramid::update to fold into idealTiles.
     const std::set<UnwrappedTileID>* requiredTiles = nullptr;
+    /// Round 8 (David: "pieces of terrain flash white during a turn"): for the DRAPED sources
+    /// (every source but the terrain's DEM), `requiredTiles` is the terrain mesh cover and is
+    /// folded in at this source's own zooms - a mesh tile finer than the source's ideal zoom
+    /// asks for the ideal-zoom tile (the very id the source's own cover would use, so no
+    /// duplicate overzoomed parse), a coarser one asks for itself. The mesh cover reaches
+    /// one tile ring past the view, so the ground a turn brings in has its draped tiles
+    /// already loading before its drape target bakes; measured on the 13 mini, a target
+    /// baked empty (paper) for 1 to 3 frames, 70 to 400 ms, until the vector tiles arrived.
+    bool requiredTilesAreMeshCover = false;
 };
 
 } // namespace mln

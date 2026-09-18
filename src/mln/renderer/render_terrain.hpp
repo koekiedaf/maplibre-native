@@ -141,16 +141,16 @@ public:
             // Coarse tiles only: the flashes measured were z5 to z10 (the ground a turn
             // sweeps in fastest); a full ring at z12+ near the camera cost the 13 mini a
             // third of its frame rate and 150 MB (measured, first try of this ring).
-            if (id.canonical.z > 11) continue;
+            // z9 to z11 and the four edge neighbours only: the full 8-ring down to z8 cost
+            // 150 to 400 MB of DEM, hillshade and drape copies at David's cameras (measured).
+            if (id.canonical.z > 11 || id.canonical.z < 9) continue;
             const int64_t dim = int64_t{1} << id.canonical.z;
             const int64_t gx = static_cast<int64_t>(id.wrap) * dim + id.canonical.x;
-            for (int64_t dy = -1; dy <= 1; ++dy) {
-                const int64_t y = static_cast<int64_t>(id.canonical.y) + dy;
+            const int64_t gy = static_cast<int64_t>(id.canonical.y);
+            for (const auto [dx, dy] : {std::pair<int64_t, int64_t>{-1, 0}, {1, 0}, {0, -1}, {0, 1}}) {
+                const int64_t y = gy + dy;
                 if (y < 0 || y >= dim) continue;
-                for (int64_t dx = -1; dx <= 1; ++dx) {
-                    if (dx == 0 && dy == 0) continue;
-                    prefetchRing.insert(UnwrappedTileID(id.canonical.z, gx + dx, y));
-                }
+                prefetchRing.insert(UnwrappedTileID(id.canonical.z, gx + dx, y));
             }
         }
         demRequestCover.insert(prefetchRing.begin(), prefetchRing.end());

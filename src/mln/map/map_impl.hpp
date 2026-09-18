@@ -133,6 +133,7 @@ public:
     std::size_t terrainMeshTileBudget = 0;
     std::size_t terrainFarMeshGrid = 128;
     std::size_t drapeRerenderBudget = 4;
+    double hazeLevel = 5.0;
     double tileLodScale = 1;
     double tileLodPitchThreshold = (60.0 / 180.0) * std::numbers::pi;
     double tileLodZoomShift = 0;

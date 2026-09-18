@@ -14,6 +14,8 @@
 
 #include <mln/renderer/layers/hillshade_layer_tweaker.hpp>
 #include <mln/renderer/layers/hillshade_prepare_layer_tweaker.hpp>
+#include <mln/renderer/render_terrain.hpp>
+#include <cstdlib>
 #include <mln/renderer/layer_group.hpp>
 #include <mln/renderer/render_target.hpp>
 #include <mln/renderer/update_parameters.hpp>
@@ -305,12 +307,24 @@ void RenderHillshadeLayer::update(gfx::ShaderRegistry& shaders,
             hillshadePrepareBuilder->setSegments(
                 gfx::Triangles(), staticDataIndices.vector(), staticDataSegments.data(), staticDataSegments.size());
 
-            std::shared_ptr<gfx::Texture2D> texture = context.createTexture2D();
-            texture->setImage(bucket.getDEMData().getImagePtr());
-            // Use Nearest filtering to match GL JS behavior - the Sobel kernel samples exact pixel values
-            texture->setSamplerConfiguration({.filter = gfx::TextureFilterType::Nearest,
-                                              .wrapU = gfx::TextureWrapType::Clamp,
-                                              .wrapV = gfx::TextureWrapType::Clamp});
+            // Round 10: one DEM texture per tile, shared with the terrain mesh (see
+            // RenderTerrain::sharedDEMTexture).
+            RenderTerrain* sharedTerrain = paintParameters.terrain;
+#ifndef NDEBUG
+            if (std::getenv("DUCKMAPS_NO_SHARED_DEM")) sharedTerrain = nullptr; // bench: the old two-copy path
+#endif
+            std::shared_ptr<gfx::Texture2D> texture = sharedTerrain ? sharedTerrain->sharedDEMTexture(tileID.toUnwrapped()) : nullptr;
+            if (!texture) {
+                texture = context.createTexture2D();
+                texture->setImage(bucket.getDEMData().getImagePtr());
+                // Use Nearest filtering to match GL JS behavior - the Sobel kernel samples exact pixel values
+                texture->setSamplerConfiguration({.filter = gfx::TextureFilterType::Nearest,
+                                                  .wrapU = gfx::TextureWrapType::Clamp,
+                                                  .wrapV = gfx::TextureWrapType::Clamp});
+                if (sharedTerrain) {
+                    sharedTerrain->registerDEMTexture(tileID.toUnwrapped(), texture, bucket.getDEMData().dim);
+                }
+            }
             hillshadePrepareBuilder->setTexture(texture, idHillshadeImageTexture);
 
             hillshadePrepareBuilder->flush(context);

@@ -149,6 +149,11 @@ public:
     /// the result exactly as `matrixFor`/`calculatePosMatrix` do for the view-projection matrix
     /// (see TerrainLayerTweaker::execute).
     void getFogMatrix(mat4& matrix) const;
+    /// Round 10: the main projection's far plane distance (z units = centre pixels), for the
+    /// terrain fog's linear depth.
+    double getFarZ() const;
+    /// Round 10: the web's fog near plane, max(cameraToCenter / 2, cameraToSeaLevel).
+    double getFogNearZ() const;
 
     // Dimensions
     Size getSize() const;

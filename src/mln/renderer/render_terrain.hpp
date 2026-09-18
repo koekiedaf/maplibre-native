@@ -143,10 +143,25 @@ public:
             // third of its frame rate and 150 MB (measured, first try of this ring).
             // z9 to z11 and the four edge neighbours only: the full 8-ring down to z8 cost
             // 150 to 400 MB of DEM, hillshade and drape copies at David's cameras (measured).
-            if (id.canonical.z > 11 || id.canonical.z < 9) continue;
+            if (id.canonical.z > 11 || id.canonical.z < 3) continue;
             const int64_t dim = int64_t{1} << id.canonical.z;
             const int64_t gx = static_cast<int64_t>(id.wrap) * dim + id.canonical.x;
             const int64_t gy = static_cast<int64_t>(id.canonical.y);
+            if (id.canonical.z <= 8) {
+                // The horizon band (round 10): two full rings for the DRAPED sources only -
+                // these tiles are a few hundred KB each and there are a handful, and a z4
+                // tile still baked paper twice per spin with one ring of edge neighbours
+                // (measured at C3). The DEM (minzoom 8) takes its usual single ring below.
+                for (int64_t dy = -2; dy <= 2; ++dy) {
+                    const int64_t y = gy + dy;
+                    if (y < 0 || y >= dim) continue;
+                    for (int64_t dx = -2; dx <= 2; ++dx) {
+                        if (dx == 0 && dy == 0) continue;
+                        bandRing.insert(UnwrappedTileID(id.canonical.z, gx + dx, y));
+                    }
+                }
+                if (id.canonical.z < 8) continue;
+            }
             for (const auto [dx, dy] : {std::pair<int64_t, int64_t>{-1, 0}, {1, 0}, {0, -1}, {0, 1}}) {
                 const int64_t y = gy + dy;
                 if (y < 0 || y >= dim) continue;
@@ -156,7 +171,9 @@ public:
         demRequestCover.insert(prefetchRing.begin(), prefetchRing.end());
         drapedRequestCover = lastFrameMeshCover;
         drapedRequestCover.insert(prefetchRing.begin(), prefetchRing.end());
+        drapedRequestCover.insert(bandRing.begin(), bandRing.end());
         prefetchRing.clear();
+        bandRing.clear();
         frameMeshCover = std::move(cover);
     }
 
@@ -710,6 +727,7 @@ private:
     std::set<UnwrappedTileID> demRequestCover;
     std::set<UnwrappedTileID> drapedRequestCover;
     std::set<UnwrappedTileID> prefetchRing;
+    std::set<UnwrappedTileID> bandRing;
 
     // DEM decode vector for the source's encoding (default: Mapbox Terrain-RGB)
     std::array<float, 4> demUnpackVector = {{6553.6f, 25.6f, 0.1f, 10000.0f}};
@@ -725,6 +743,27 @@ private:
         uint64_t lastUsed = 0;
     };
     std::map<UnwrappedTileID, DEMTextureEntry> demTextures;
+
+public:
+    /// Round 10 (build 20), the shared DEM copy: the hillshade prepare pass and the terrain
+    /// mesh sample the same 514x514 Terrain-RGB image and used to upload it twice (measured on
+    /// the 13 mini at a61787e7: about 100 MB of the 425 MB of textures). The hillshade layer,
+    /// which updates first in a frame, asks for the tile's texture here and registers the one it
+    /// creates; RenderTerrain::update then finds it in demTextures and uploads nothing. Same
+    /// sampler (Nearest, Clamp) on both sides; the LRU still governs the entry, and the hillshade
+    /// drawable's own shared_ptr keeps a departed tile's texture alive for as long as it draws.
+    std::shared_ptr<gfx::Texture2D> sharedDEMTexture(const UnwrappedTileID& id) {
+        const auto it = demTextures.find(id);
+        if (it == demTextures.end()) return nullptr;
+        it->second.lastUsed = demUpdateCounter;
+        return it->second.texture;
+    }
+    void registerDEMTexture(const UnwrappedTileID& id, std::shared_ptr<gfx::Texture2D> texture, int32_t dim) {
+        if (!texture || demTextures.contains(id)) return;
+        demTextures[id] = {std::move(texture), dim, demUpdateCounter};
+    }
+
+private:
     // Retention cap for demTextures (~1MB per 514x514 DEM texture); entries not
     // used in the current frame are evicted least-recently-used first beyond
     // this, preventing unbounded growth while browsing (previously reached 2GB+)

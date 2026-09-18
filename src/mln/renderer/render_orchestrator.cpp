@@ -264,6 +264,7 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
     // deactivate/create dance like RenderTerrain's above, since sky owns no GPU resources and
     // drives no tile source (see the comment on RenderOrchestrator::sky in the header).
     sky = updateParameters->sky;
+    hazeLevel = updateParameters->hazeLevel;
 
     const bool terrainEnabled = renderTerrain && renderTerrain->isEnabled();
     const DEMElevationProvider elevationProvider{
@@ -498,12 +499,13 @@ std::unique_ptr<RenderTree> RenderOrchestrator::createRenderTree(
         // the drape bakes - see TileParameters::requiredTilesAreMeshCover. NOT the other
         // raster-dem sources (the style carries five, one per quality; only the terrain's own
         // is drawn): asking them too cost the 13 mini 1.1 GB and a third of its frame (measured).
-        // Measured on the 13 mini, the vector prefetch of the mesh cover cost 300 to 700 MB
-        // of parsed tiles at David's cameras (650 MB became 1.0 to 1.7 GB, the back-off fired,
-        // runs were killed) and is OFF; only the DEM's own ring stays (1 MB tiles, cheap). A
-        // tile entering the cover then has its relief a ring early and bakes with the hillshade
-        // (shaded ground, colours a frame or two behind) instead of flat paper.
-        const bool drapedSource = false && terrainOn && !isDemSource && sourceImpl->type != style::SourceType::RasterDEM;
+        // Round 8 measured the vector prefetch of the WHOLE mesh cover at 300 to 700 MB of parsed
+        // tiles on the 13 mini (the regional z9 to z14 tiles) and turned it off. Round 10 turns
+        // it back on for the horizon band only - the tiles at z8 and below, beyond the DEM's
+        // minzoom, where the last white first bakes were (13 and 10 per spin at C2 and C3): those
+        // tiles are the world set at 150 to 220 KB and the regional set at a few bytes
+        // (measured), and TilePyramid folds in nothing finer than z8 for a draped source.
+        const bool drapedSource = terrainOn && !isDemSource && sourceImpl->type != style::SourceType::RasterDEM;
         tileParameters.requiredTiles = isDemSource ? &renderTerrain->getDemRequestCover()
                                        : drapedSource ? &renderTerrain->getDrapedRequestCover()
                                                       : nullptr;

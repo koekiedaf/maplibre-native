@@ -53,8 +53,8 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
     /*  0 */ std::array<float, 4> unpack; // DEM unpack vector for the source's encoding
     /* 16 */ float exaggeration;
     /* 20 */ float elevation_offset;
-    /* 24 */ float pad1;
-    /* 28 */ float pad2;
+    /* 24 */ float fog_near; // round 10: eye-space depth where the ground fog starts (centre distance)
+    /* 28 */ float fog_far;  // round 10: the far plane; fog depth = (w - near) / (far - near)
     // DuckMaps fork only: maplibre-gl-js's own terrain ground fog uniforms (search the bundle
     // for `u_fog_ground_blend_opacity:`). Read by both stages, so - unlike fog_matrix above -
     // these belong in this UBO: idTerrainEvaluatedPropsUBO is drawableReservedUBOCount, bound to

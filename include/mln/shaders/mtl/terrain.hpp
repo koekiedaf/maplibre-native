@@ -38,8 +38,8 @@ struct alignas(16) TerrainEvaluatedPropsUBO {
     /*  0 */ float4 unpack; // DEM unpack vector for the source's encoding
     /* 16 */ float exaggeration;
     /* 20 */ float elevation_offset;
-    /* 24 */ float pad1;
-    /* 28 */ float pad2;
+    /* 24 */ float fog_near;
+    /* 28 */ float fog_far;
     // DuckMaps fork only: see terrain_layer_ubo.hpp's own comment. Read by both stages.
     /* 32 */ float4 fog_color;
     /* 48 */ float4 horizon_color;
@@ -117,8 +117,19 @@ FragmentStage vertex vertexMain(thread const VertexStage vertx [[stage_in]],
     // `drawable.matrix` above. The `* 0.5 + 0.5` below is therefore exactly the web's own
     // `v_fog_depth = pos.z / pos.w * 0.5 + 0.5`, not a Metal-specific conversion - do NOT "fix"
     // it to match Metal's clip-space convention, and do NOT clamp or nudge the result.
-    const float4 fog_pos = drawable.fog_matrix * float4(pos.x, pos.y, elevation, 1.0);
-    const float fog_depth = fog_pos.z / fog_pos.w * 0.5 + 0.5;
+    // Round 10 (build 20): the web's fog depth, computed analytically. gl-js projects the
+    // surface point with a second matrix whose near plane is the camera-to-sea-level distance
+    // and reads `pos.z / pos.w * 0.5 + 0.5`; the verbatim matrix port above never fogged a
+    // fragment on Metal (measured: a forced magenta fog with blend 0 and opacity 1 changed
+    // nothing - the depth came out 0 everywhere), so the same number is formed here from the
+    // drawn position's own w (the eye-space depth) and the two planes the tweaker passes:
+    //   z_ndc = (f + n) / (f - n) - 2 f n / ((f - n) w),  depth = z_ndc * 0.5 + 0.5
+    // which is 0 at w = n, 0.5 at w = 2n, 0.9 at w = 10n: the web's own compression, so the
+    // style's fog-ground-blend 0.15 means what it means on the web.
+    const float4 surface_clip = drawable.matrix * float4(pos.x, pos.y, elevation, 1.0);
+    const float fn = props.fog_near, ff = props.fog_far, fw = max(surface_clip.w, 1.0);
+    const float z_ndc = (ff + fn) / (ff - fn) - 2.0 * ff * fn / ((ff - fn) * fw);
+    const float fog_depth = clamp(z_ndc * 0.5 + 0.5, 0.0, 1.0);
 
     return {
         .position  = position,

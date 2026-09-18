@@ -181,6 +181,9 @@ public:
     // dedicated Render* class - the evaluated Impl is just carried through to
     // Renderer::Impl::render's sky pass as-is.
     const std::optional<Immutable<style::Sky::Impl>>& getSky() const { return sky; }
+    /// Round 10: the Haze dial in force this frame (0 to 10, 5 = the style's fog as written).
+    double getHazeLevel() const { return hazeLevel; }
+    double hazeLevel = 5.0;
 
 private:
     bool isLoaded() const;

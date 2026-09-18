@@ -18,6 +18,7 @@
 #include <mln/util/logging.hpp>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cmath>
 
 namespace mln {
@@ -59,6 +60,7 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
     float fogGroundBlend = 1.0f;
     float fogGroundBlendOpacity = 0.0f;
     float horizonFogBlend = 1.0f;
+    double fogNear = parameters.state.getFogNearZ();
     if (sky) {
         fogColor = (*sky)->fogColor;
         horizonColor = (*sky)->horizonColor;
@@ -69,7 +71,24 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
         // TransformState::getPitch() is radians, hence the conversion here.
         const double pitchDegrees = util::rad2deg(parameters.state.getPitch());
         fogGroundBlendOpacity = style::Sky::calculateFogBlendOpacity(pitchDegrees);
+        // Round 10 (build 20), the Haze dial: strength s = level / 5. The style's values are s = 1.
+        // fog-ground-blend is where the ground stops being fogged (1 = nowhere): 1 - (1 - base) * s,
+        // so 0 is no fog and 10 pulls the haze to the camera; horizon-fog-blend scales with s.
+        const double s = std::clamp(orchestrator->getHazeLevel() / 5.0, 0.0, 2.0);
+        fogGroundBlend = static_cast<float>(std::clamp(1.0 - (1.0 - fogGroundBlend) * s, 0.0, 1.0));
+        horizonFogBlend = static_cast<float>(std::clamp(horizonFogBlend * s, 0.0, 1.0));
+        if (s <= 0.0) {
+            fogGroundBlendOpacity = 0.0f;
+        }
+        // Above 5 the fog's near plane itself comes forward, from the web's camera-to-sea-level
+        // distance (measured at Gavarnie z12.4 pitch 80: 1.6 times the centre distance, so the
+        // web's fog only touches the horizon band) to a quarter of the centre distance at 10.
+        if (s > 1.0) {
+            const double c2c = parameters.state.getCameraToCenterDistance();
+            fogNear = fogNear + (c2c * 0.25 - fogNear) * (s - 1.0);
+        }
     }
+
 
     // DuckMaps fork only: the base (tile-independent) fog matrix for this frame -
     // TransformState::getFogMatrix, multiplied per-tile below exactly as
@@ -84,8 +103,8 @@ void TerrainLayerTweaker::execute(LayerGroupBase& layerGroup, const PaintParamet
     const TerrainEvaluatedPropsUBO propsUBO = {.unpack = terrain->getDEMUnpackVector(),
                                                .exaggeration = exaggeration,
                                                .elevation_offset = elevationOffset,
-                                               .pad1 = 0.0f,
-                                               .pad2 = 0.0f,
+                                               .fog_near = static_cast<float>(fogNear),
+                                               .fog_far = static_cast<float>(parameters.state.getFarZ()),
                                                .fog_color = fogColor,
                                                .horizon_color = horizonColor,
                                                .fog_ground_blend = fogGroundBlend,

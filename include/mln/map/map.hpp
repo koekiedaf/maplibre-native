@@ -219,6 +219,9 @@ public:
     /// Phase 2 dial 4: drape re-renders per frame (0 = the load mode's own budget).
     void setDrapeRerenderBudget(std::size_t perFrame);
     std::size_t getDrapeRerenderBudget() const;
+    /// Round 10: the Haze dial, 0 to 10 (5 = the style's fog as written).
+    void setHazeLevel(double level);
+    double getHazeLevel() const;
     double getDrapeDistanceCurve() const;
     double getDrapeFarSizeFactor() const;
     double getDrapeTexelsPerPixel() const;

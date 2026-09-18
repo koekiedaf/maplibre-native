@@ -92,6 +92,10 @@ public:
     /// Phase 2 dial 4: drape re-renders per frame, overriding the load mode's own budget when
     /// non-zero (0 = the mode's; Quality is unlimited). Never-rendered targets always render.
     std::size_t drapeRerenderBudget = 4;
+    /// Round 10 (build 20): the Haze dial, 0 to 10. 5 renders the style's own fog keys exactly;
+    /// 0 turns the ground fog off; 10 doubles its reach (fog-ground-blend towards 0,
+    /// horizon-fog-blend doubled). See TerrainLayerTweaker.
+    double hazeLevel = 5.0;
     // Debug: when set, RenderTerrain logs the camera eye's clearance over the terrain
     // (ABOVE-GROUND ...). Off by default; the per-frame elevation sampling is skipped entirely
     // when off, so it has no cost unless explicitly enabled (Map::setDebugAboveGroundLog).

@@ -523,6 +523,8 @@ MLN_EXPORT
 @property (nonatomic, assign) NSUInteger terrainFarMeshGrid;
 /** Phase 2 dial 4: drape re-renders per frame; 0 (default) is the load mode's own budget, unlimited in Quality. */
 @property (nonatomic, assign) NSUInteger drapeRerenderBudget;
+/** Round 10: the Haze dial, 0 to 10; 5 renders the style's fog keys exactly, 0 no ground fog, 10 twice the reach. */
+@property (nonatomic, assign) double hazeLevel;
 
 /**
  Round 4 (18 September 2026), the render-resolution dial: while a gesture is in progress, and

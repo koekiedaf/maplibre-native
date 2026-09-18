@@ -228,6 +228,7 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
                 // exactly as util::tileCover overscales, so it is the same Tile). Coarser: the
                 // tile itself, if this source serves that zoom.
                 const int32_t z = required.canonical.z;
+                if (z > 8) continue; // round 10: the horizon band only (see RenderOrchestrator)
                 if (z > tileZoom) {
                     const int32_t idealZ = std::min<int32_t>(tileZoom, zoomRange.max);
                     if (idealZ < zoomRange.min) continue;
@@ -238,7 +239,7 @@ void TilePyramid::update(const std::vector<Immutable<style::LayerProperties>>& l
                     // Not below z9: a z5 to z8 tile of a planet-scale vector set is tens of MB
                     // parsed, and the ring around the horizon tiles asked for eight of them
                     // (measured on the 13 mini: 650 MB became 1.7 GB and the back-off fired).
-                    if (z < 9 || z < zoomRange.min || z > zoomRange.max) continue;
+                    if (z < zoomRange.min || z > zoomRange.max) continue;
                     const OverscaledTileID id{static_cast<uint8_t>(z), required.wrap, required.canonical};
                     if (std::find(idealTiles.begin(), idealTiles.end(), id) == idealTiles.end()) idealTiles.push_back(id);
                 }

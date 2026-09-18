@@ -149,6 +149,27 @@ void TransformState::getFogMatrix(mat4& fogMatrix) const {
     getProjMatrixImpl(fogMatrix, fogNearZ, /*aligned=*/false);
 }
 
+double TransformState::getFarZ() const {
+    // The main projection's far plane, the same arithmetic as getProjMatrixImpl below.
+    if (size.isEmpty()) return 1.0;
+    const double cameraToCenterDistance = getCameraToCenterDistance();
+    const ScreenCoordinate offset = getCenterOffset();
+    const double limitedPitch = util::clamp(getPitch(), 0.0, maxMercatorHorizonAngle);
+    const double cameraToSeaLevelDistance = cameraToCenterDistance + std::abs(z) / std::cos(limitedPitch);
+    const double tanFovAboveCenter = (0.5 + (offset.y - frustumOffset.top()) / size.height) * 2.0 *
+                                     std::tan(fov / 2.0) *
+                                     (std::abs(std::cos(roll)) + std::abs(std::sin(roll)) * size.width / size.height);
+    const double tanMultiple = util::clamp(tanFovAboveCenter * std::tan(limitedPitch), 0.0, 0.99);
+    return cameraToSeaLevelDistance / (1 - tanMultiple) * 1.01;
+}
+
+double TransformState::getFogNearZ() const {
+    const double cameraToCenterDistance = getCameraToCenterDistance();
+    const double limitedPitch = util::clamp(getPitch(), 0.0, maxMercatorHorizonAngle);
+    const double cameraToSeaLevelDistance = cameraToCenterDistance + std::abs(z) / std::cos(limitedPitch);
+    return std::max(cameraToCenterDistance / 2.0, cameraToSeaLevelDistance);
+}
+
 void TransformState::getProjMatrixImpl(mat4& projMatrix, double nearZ, bool aligned) const {
     if (size.isEmpty()) {
         return;

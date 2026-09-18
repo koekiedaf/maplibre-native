@@ -2,6 +2,7 @@
 #include <mln/layermanager/layer_manager.hpp>
 #include <mln/map/camera.hpp>
 #include <mln/map/map.hpp>
+#include <algorithm>
 #include <mln/map/map_impl.hpp>
 #include <mln/map/transform.hpp>
 #include <mln/math/angles.hpp>
@@ -609,6 +610,15 @@ void Map::setDrapeRerenderBudget(std::size_t perFrame) {
 
 std::size_t Map::getDrapeRerenderBudget() const {
     return impl->drapeRerenderBudget;
+}
+
+void Map::setHazeLevel(double level) {
+    impl->hazeLevel = std::clamp(level, 0.0, 10.0);
+    impl->onUpdate();
+}
+
+double Map::getHazeLevel() const {
+    return impl->hazeLevel;
 }
 
 double Map::getDrapeTexelsPerPixel() const {

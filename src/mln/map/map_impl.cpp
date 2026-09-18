@@ -162,6 +162,7 @@ void Map::Impl::onUpdate() {
                                .terrainMeshTileBudget = terrainMeshTileBudget,
                                .terrainFarMeshGrid = terrainFarMeshGrid,
                                .drapeRerenderBudget = drapeRerenderBudget,
+                               .hazeLevel = hazeLevel,
                                .debugAboveGroundLog = debugAboveGroundLog};
 
     rendererFrontend.update(std::make_shared<UpdateParameters>(std::move(params)));

@@ -3804,6 +3804,14 @@ static void *windowScreenContext = &windowScreenContext;
   return static_cast<NSUInteger>(_mbglMap->getDrapeRerenderBudget());
 }
 
+- (void)setHazeLevel:(double)level {
+  _mbglMap->setHazeLevel(level);
+}
+
+- (double)hazeLevel {
+  return _mbglMap->getHazeLevel();
+}
+
 - (void)setTerrainMeshTileBudget:(NSUInteger)tiles {
   _mbglMap->setTerrainMeshTileBudget(tiles);
 }

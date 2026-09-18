@@ -324,7 +324,8 @@ std::string RenderTarget::debugBakedCoverageJSON() const {
 
 std::vector<RenderTarget::BakeTraceEntry> RenderTarget::gDrapeBakeTrace;
 
-std::string RenderTarget::debugDrainDrapeBakeTraceJSON() {
+std::string RenderTarget::debugDrainDrapeBakeTraceJSON(
+    const std::function<std::string(const BakeTraceEntry&)>& extra) {
     std::string out = "[";
     bool first = true;
     for (const auto& e : gDrapeBakeTrace) {
@@ -332,7 +333,7 @@ std::string RenderTarget::debugDrainDrapeBakeTraceJSON() {
         first = false;
         out += "{\"t\":\"" + std::to_string(static_cast<int>(e.id.canonical.z)) + "/" + std::to_string(e.id.canonical.x) +
                "/" + std::to_string(e.id.canonical.y) + "\",\"groups\":" + std::to_string(e.groupsWithContent) +
-               ",\"had\":" + (e.hadContent ? "true" : "false") + "}";
+               ",\"had\":" + (e.hadContent ? "true" : "false") + (extra ? extra(e) : "") + "}";
     }
     gDrapeBakeTrace.clear();
     return out + "]";

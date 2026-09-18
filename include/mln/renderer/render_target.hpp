@@ -186,7 +186,8 @@ public:
         bool hadContent;
     };
     static std::vector<BakeTraceEntry> gDrapeBakeTrace;
-    static std::string debugDrainDrapeBakeTraceJSON();
+    static std::string debugDrainDrapeBakeTraceJSON(
+        const std::function<std::string(const BakeTraceEntry&)>& extra = nullptr);
 
     /// Debug-only, for the DUCKMAPS_ELEVATION_TRACE diagnosis: what this target
     /// last actually baked, as a JSON object. Nothing reads it unless the trace

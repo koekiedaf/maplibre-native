@@ -154,6 +154,14 @@ public:
     /// its own fine tiles, the LOD lost them, and the cover flipped every frame.
     const std::set<UnwrappedTileID>& getDemRequestCover() const { return demRequestCover; }
     const std::set<UnwrappedTileID>& getCameraGroundRing() const { return cameraGroundRing; }
+    /// Round 8 diagnosis: the camera-only (pre-budget) cover of the last frame, and the DEM zoom a
+    /// mesh tile's drawable is bound to (-1 placeholder; nullopt when it has no drawable).
+    const std::set<UnwrappedTileID>& getLastFrameRawMeshCover() const { return lastFrameRawMeshCover; }
+    std::optional<int> getDrawableDemZoom(const UnwrappedTileID& id) const {
+        const OverscaledTileID tileID(id.canonical.z, id.wrap, id.canonical);
+        const auto it = tilesWithDrawables.find(tileID);
+        return it == tilesWithDrawables.end() ? std::nullopt : std::optional<int>(static_cast<int>(it->second));
+    }
     /// Round 4: true when the last update left DEM upgrades waiting on dial 4's budget (during
     /// a gesture or the frames right after it); the renderer asks for a follow-up frame.
     bool hasDeferredUpgrades() const { return upgradesDeferred; }

@@ -642,6 +642,39 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
         out = std::set<UnwrappedTileID>(sorted.begin(), sorted.begin() + static_cast<std::ptrdiff_t>(maxMeshTiles));
     }
 
+    // Round 8, 18 September 2026 (David on build 17: "pieces of terrain flash white during a
+    // turn, mid distance and towards the horizon"). Measured on his 13 mini with every drape
+    // bake traced: the white pieces are tiles that ENTER the cover with no DEM at any zoom (the
+    // flat placeholder) and no draped content, baked paper, filled 1 to 3 frames later - and
+    // the visible ones are mostly a coarse tile replacing ground that finer tiles were already
+    // drawing (10/511/378 arriving over a cover that lay wholly inside it). A tile the DEM
+    // source has nothing for, whose ground the last frame drew with finer tiles, keeps those
+    // finer tiles this frame instead: the picture never coarsens onto nothing.
+    if (demSource) {
+        const auto demTiles = demSource->getRawRenderTiles();
+        const auto hasDem = [&](const UnwrappedTileID& id) {
+            for (const auto& rt : *demTiles) {
+                const UnwrappedTileID u = rt.id.toUnwrapped();
+                if (u == id || id.isChildOf(u)) return true;
+            }
+            return false;
+        };
+        std::set<UnwrappedTileID> kept;
+        std::set<UnwrappedTileID> dropped;
+        for (const auto& id : out) {
+            if (hasDem(id)) continue;
+            std::vector<UnwrappedTileID> finer;
+            for (const auto& prev : lastFrameMeshCover) {
+                if (prev.isChildOf(id)) finer.push_back(prev);
+            }
+            if (finer.empty()) continue;
+            dropped.insert(id);
+            kept.insert(finer.begin(), finer.end());
+        }
+        for (const auto& id : dropped) out.erase(id);
+        out.insert(kept.begin(), kept.end());
+    }
+
     // DuckMaps fork only: trace point 3/3 - the final cover this frame will mesh, drape and
     // draw contours over. Written once here rather than incrementally, so a frame that returns
     // early above (no DEM source, zoom below range) leaves the slot cleared instead of holding

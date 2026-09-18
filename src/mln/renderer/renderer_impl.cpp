@@ -1752,7 +1752,24 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
             // overlapping-pair counts - see RenderTerrain::debugDrainMeshCoverDilationTraceJSON's
             // comment. Drained the same way, once per frame, right alongside the other two.
             os << ",\"meshCoverDilation\":" << RenderTerrain::debugDrainMeshCoverDilationTraceJSON();
-            os << ",\"drapeBakes\":" << RenderTarget::debugDrainDrapeBakeTraceJSON();
+            os << ",\"drapeBakes\":"
+               << RenderTarget::debugDrainDrapeBakeTraceJSON([&](const RenderTarget::BakeTraceEntry& e) {
+                      std::string x;
+                      if (traceTerrain) {
+                          x += std::string(",\"raw\":") +
+                               (traceTerrain->getLastFrameRawMeshCover().contains(e.id) ? "true" : "false");
+                          const auto dz = traceTerrain->getDrawableDemZoom(e.id);
+                          x += ",\"demZ\":" + (dz ? std::to_string(*dz) : std::string("null"));
+                      }
+                      std::optional<UnwrappedTileID> anc;
+                      const auto rt = texturePool.getRenderTargetAncestorOrDescendant(e.id, anc);
+                      x += ",\"anc\":" + (anc && rt && anc->canonical.z < e.id.canonical.z
+                                              ? "\"" + std::to_string(static_cast<int>(anc->canonical.z)) + "/" +
+                                                    std::to_string(anc->canonical.x) + "/" + std::to_string(anc->canonical.y) +
+                                                    "\""
+                                              : std::string("null"));
+                      return x;
+                  });
             if (traceTerrain) {
                 // Round 4: the camera-ground DEM ring and what the DEM source is asked for.
                 os << ",\"cameraRing\":[";

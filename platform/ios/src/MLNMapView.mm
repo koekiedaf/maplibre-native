@@ -2247,7 +2247,9 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
 
 - (void)setMovingRenderScale:(double)scale {
   _movingRenderScale = MIN(1.0, MAX(0.25, scale));
-  if (_renderScaleInEffect != 1.0) {
+  // Only while a reduced scale is in effect (mid-gesture) does a dial change apply at once;
+  // at rest (_renderScaleInEffect 0 or 1) the picture stays at full resolution.
+  if (_renderScaleInEffect != 0 && _renderScaleInEffect != 1.0) {
     [self applyRenderScale:_movingRenderScale];
   }
 }

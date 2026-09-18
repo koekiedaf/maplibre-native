@@ -923,10 +923,12 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
     context.bindGlobalUniformBuffers(*parameters.renderPass);
     // DuckMaps fork only, task T3: right after the main pass is created and bound, before any
     // layer group draws into it - see skyPass's own comment above for why.
+    const auto mainPassStart = util::MonotonicTimer::now().count();
     skyPass();
     drawableOpaquePass();
     drawableTranslucentPass();
     drawableDebugOverlays();
+    traceMainPassSeconds = util::MonotonicTimer::now().count() - mainPassStart;
 
     // Give the layers a chance to do cleanup
     orchestrator.visitLayerGroups([&](LayerGroupBase& layerGroup) { layerGroup.postRender(orchestrator, parameters); });
@@ -1800,7 +1802,10 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
                    << ",\"placement\":" << st.placementTime * 1000.0
                    << ",\"terrainDepth\":" << st.terrainDepthTime * 1000.0
                    << ",\"encoding\":" << st.encodingTime * 1000.0
-                   << ",\"rendering\":" << st.renderingTime * 1000.0 << "}";
+                   << ",\"rendering\":" << st.renderingTime * 1000.0
+                   << ",\"treeBuild\":" << traceTreeBuildSeconds * 1000.0
+                   << ",\"mainPass\":" << traceMainPassSeconds * 1000.0
+                   << ",\"frameTotal\":" << traceFrameTotalSeconds * 1000.0 << "}";
             }
             os << "}\n";
 

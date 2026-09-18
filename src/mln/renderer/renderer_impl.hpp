@@ -78,6 +78,11 @@ private:
     std::unique_ptr<RenderStaticData> staticData;
     gfx::DynamicTextureAtlasPtr dynamicTextureAtlas;
     bool styleLoaded = false;
+    // Round 7: wall times for the per-frame trace (seconds): the render tree build, the main
+    // (on-screen) pass encoding, and the whole Renderer::render call.
+    double traceTreeBuildSeconds = 0.0;
+    double traceMainPassSeconds = 0.0;
+    double traceFrameTotalSeconds = 0.0;
 
     // Previous frame's frame-global draped-content signature, to detect when the terrain
     // drape content changed and the draped tweakers/targets must re-run (see render()).

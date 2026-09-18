@@ -6,6 +6,7 @@
 #include <mln/gfx/renderer_backend.hpp>
 #include <mln/layermanager/layer_manager.hpp>
 #include <mln/renderer/renderer_impl.hpp>
+#include <mln/util/monotonic_timer.hpp>
 #include <mln/renderer/render_static_data.hpp>
 #include <mln/renderer/render_tree.hpp>
 #include <mln/renderer/update_parameters.hpp>
@@ -47,10 +48,15 @@ void Renderer::render(const std::shared_ptr<UpdateParameters>& updateParameters)
         auto& context = impl->backend.getContext();
         impl->dynamicTextureAtlas = std::make_unique<gfx::DynamicTextureAtlas>(context);
     }
+    // Round 7 (phone section table): the tree build (source/tile/layer updates, the terrain
+    // cover and mesh update) and the whole render, wall time, for the per-frame trace.
+    const auto frameStart = util::MonotonicTimer::now().count();
     if (auto renderTree = impl->orchestrator.createRenderTree(updateParameters, impl->dynamicTextureAtlas)) {
+        impl->traceTreeBuildSeconds = util::MonotonicTimer::now().count() - frameStart;
         renderTree->prepare();
         impl->render(*renderTree, updateParameters);
     }
+    impl->traceFrameTotalSeconds = util::MonotonicTimer::now().count() - frameStart;
 }
 
 std::vector<Feature> Renderer::queryRenderedFeatures(const ScreenLineString& geometry,

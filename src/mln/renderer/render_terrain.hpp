@@ -131,6 +131,7 @@ public:
         lastFrameMeshCover = cover;
         demRequestCover = cover;
         demRequestCover.insert(lastFrameRawMeshCover.begin(), lastFrameRawMeshCover.end());
+        demRequestCover.insert(cameraGroundRing.begin(), cameraGroundRing.end()); // round 4
         frameMeshCover = std::move(cover);
     }
 
@@ -663,6 +664,10 @@ private:
     /// states every frame; relaxed one level at a time only when the raw cover fits.
     mutable std::optional<uint8_t> meshCoarsenCeiling;
     mutable std::set<UnwrappedTileID> lastFrameRawMeshCover;
+    /// Round 4: the 3x3 DEM tiles around the camera's ground point at the cover's ideal zoom,
+    /// always requested so the ground sample never falls back to a coarse ancestor when the
+    /// camera crosses a tile edge mid-gesture (see computeMeshCover).
+    mutable std::set<UnwrappedTileID> cameraGroundRing;
     std::set<UnwrappedTileID> demRequestCover;
 
     // DEM decode vector for the source's encoding (default: Mapbox Terrain-RGB)

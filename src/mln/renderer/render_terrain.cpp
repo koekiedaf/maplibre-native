@@ -294,6 +294,33 @@ std::set<UnwrappedTileID> RenderTerrain::computeMeshCover(
 
     lastFrameRawMeshCover = out; // round 3: see getDemRequestCover
 
+    // Round 4, 18 September 2026: the DEM under the camera, and its eight neighbours at the
+    // cover's ideal zoom, are always asked for. Measured at David's 551a0a95 camera (trace
+    // r4-bud4b, frame 46): the last step of a turn carried the camera's ground point into a
+    // z15 tile that was not resident, the ground sample fell back to z12 for one frame, the
+    // elevation-aware cover re-solved against that wrong ground (51 tiles to 91, z16 to z19)
+    // and 45 drapes plus 46 meshes were baked for a single frame before the tile arrived and
+    // the cover snapped back - the hitch at release. With the ring resident ahead of the
+    // camera, the sample stays exact across a tile boundary.
+    {
+        const LatLng cam = state.getCameraLatLng();
+        const double n = std::exp2(static_cast<double>(idealZoom));
+        const double fx = (cam.longitude() / 360.0 + 0.5) * n;
+        const double latRad = util::deg2rad(util::clamp(cam.latitude(), -util::LATITUDE_MAX, util::LATITUDE_MAX));
+        const double fy = (0.5 - std::log(std::tan(M_PI / 4.0 + latRad / 2.0)) / (2.0 * M_PI)) * n;
+        const int64_t dim = static_cast<int64_t>(n);
+        const int64_t tx = static_cast<int64_t>(std::floor(fx));
+        const int64_t ty = static_cast<int64_t>(std::floor(fy));
+        cameraGroundRing.clear();
+        for (int64_t dy = -1; dy <= 1; ++dy) {
+            const int64_t y = ty + dy;
+            if (y < 0 || y >= dim) continue;
+            for (int64_t dx = -1; dx <= 1; ++dx) {
+                cameraGroundRing.insert(UnwrappedTileID(static_cast<uint8_t>(idealZoom), tx + dx, y));
+            }
+        }
+    }
+
     // DuckMaps fork only: trace point 1/3 - util::tileCover's own raw output, before this
     // function touches it at all. Whether THIS set already contains overlapping pairs is a
     // separate question from the dilation fix below (tileCover is a disjoint quadtree DFS, so

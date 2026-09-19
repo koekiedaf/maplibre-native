@@ -1010,7 +1010,8 @@ void Renderer::Impl::render(const RenderTree& renderTree, const std::shared_ptr<
         auto* terrain = orchestrator.getRenderTerrain();
         const double centerElevation =
             terrain ? terrain->getElevationForLatLng(updateParameters->transformState.getLatLng()) : 0.0;
-        const bool centerChanged = std::abs(centerElevation - lastReportedCenterElevation) > 0.25;
+        const bool centerChanged = std::abs(centerElevation - lastReportedCenterElevation) > 0.25 ||
+                                   updateParameters->forceCenterElevationResend;
         if (centerChanged) {
             lastReportedCenterElevation = centerElevation;
             observer->onTerrainCenterElevationChanged(centerElevation);

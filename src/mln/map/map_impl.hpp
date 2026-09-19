@@ -141,6 +141,11 @@ public:
     TerrainLoadMode terrainLoadMode = TerrainLoadMode::Quality;
     TerrainSkirtLength terrainSkirtLength = TerrainSkirtLength::Auto;
     bool centerClampedToGround = true;
+    void forgetHeldGroundForProgrammaticMove(const CameraOptions& camera);
+    /// Round 11: set by forgetHeldGroundForProgrammaticMove; the renderer's 0.25 m send gate is
+    /// bypassed once so a new place whose ground happens to read like the old one is still
+    /// established (carried to the renderer through UpdateParameters).
+    bool forceCenterElevationResend = false;
     bool debugAboveGroundLog = false;
     /// Band-aid audit item 6: the render side's last report of which settle bound(s), if
     /// any, gave up rather than genuinely resolved on the most recently rendered frame - see

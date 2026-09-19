@@ -163,6 +163,7 @@ void Map::Impl::onUpdate() {
                                .terrainFarMeshGrid = terrainFarMeshGrid,
                                .drapeRerenderBudget = drapeRerenderBudget,
                                .hazeLevel = hazeLevel,
+                               .forceCenterElevationResend = forceCenterElevationResend,
                                .debugAboveGroundLog = debugAboveGroundLog};
 
     rendererFrontend.update(std::make_shared<UpdateParameters>(std::move(params)));
@@ -406,6 +407,7 @@ void Map::Impl::onTerrainCenterElevationChanged(double elevationMeters) {
     // following, and the trace shows it as the single 2003 -> 3854 m step when terrain loads.
     const bool establishing = !transform.getGroundUnderCentre().has_value();
     transform.setGroundUnderCentre(elevationMeters);
+    forceCenterElevationResend = false; // round 11: the one forced report has arrived
     if (establishing) {
         transform.jumpTo(CameraOptions().withCenterAltitude(elevationMeters));
     }
@@ -497,8 +499,26 @@ void Map::Impl::onSettleBoundGivenUp(const std::optional<std::string>& boundName
 
 void Map::Impl::jumpTo(const CameraOptions& camera) {
     cameraMutated = true;
+    forgetHeldGroundForProgrammaticMove(camera);
     transform.jumpTo(camera);
     onUpdate();
+}
+
+// Round 11, 19 September 2026 (David at Roca after Gavarnie: "tilt is around camera
+// position", "moving barely moves"). Task C7 holds the camera's altitude and follows the
+// ground only through the clamps; the one time the ground under the centre is WRITTEN into
+// the camera is the first sample after launch ("establishing"). A programmatic move to a new
+// centre - the place picker's flight, a harness link, any jumpTo/easeTo/flyTo with a centre
+// while no finger is down - kept the altitude held at the old place: from Gavarnie's 2337 m
+// to the Sintra coast at z17, the camera stayed 2.3 km up over a sea at 0 m (measured,
+// traces/r11-gav-then-roca.jsonl: centre DEM 0.0 m, hit exact, camera altitude 2795 m). The
+// hold is forgotten here, so the next centre sample establishes the altitude again exactly as
+// at launch. A gesture never comes through here with a centre it did not already hold.
+void Map::Impl::forgetHeldGroundForProgrammaticMove(const CameraOptions& camera) {
+    if (camera.center && !transform.getState().isGestureInProgress()) {
+        transform.setGroundUnderCentre(std::nullopt);
+        forceCenterElevationResend = true;
+    }
 }
 
 bool Map::Impl::isRenderingStatsViewEnabled() const {

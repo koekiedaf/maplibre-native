@@ -560,6 +560,11 @@ MLN_EXPORT
 - (void)debugTiltForSeconds:(NSTimeInterval)seconds
            degreesPerSecond:(double)degreesPerSecond
                    progress:(void (^_Nullable)(double fraction))progress;
+/// Round 11 (bench): the same through the pinch path, `zoomPerSecond` of zoom about the screen
+/// centre for the first half and back out for the second half.
+- (void)debugPinchForSeconds:(NSTimeInterval)seconds
+               zoomPerSecond:(double)zoomPerSecond
+                    progress:(void (^_Nullable)(double fraction))progress;
 /// Round 9: movement smoothing, 0 (raw input, nothing moves after a release) to 10. Filters the
 /// drag, rotate and tilt deltas (10 ms of time constant per step) and glides after release
 /// (60 ms per step), all through the gesture path: pivot, altitude hold and floors as under a

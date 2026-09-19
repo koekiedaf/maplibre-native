@@ -154,12 +154,14 @@ void Map::jumpTo(const CameraOptions& camera) {
 
 void Map::easeTo(const CameraOptions& camera, const AnimationOptions& animation) {
     impl->cameraMutated = true;
+    impl->forgetHeldGroundForProgrammaticMove(camera);
     impl->transform.easeTo(camera, animation);
     impl->onUpdate();
 }
 
 void Map::flyTo(const CameraOptions& camera, const AnimationOptions& animation) {
     impl->cameraMutated = true;
+    impl->forgetHeldGroundForProgrammaticMove(camera);
     impl->transform.flyTo(camera, animation);
     impl->onUpdate();
 }

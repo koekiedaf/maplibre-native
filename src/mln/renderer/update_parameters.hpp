@@ -96,6 +96,9 @@ public:
     /// 0 turns the ground fog off; 10 doubles its reach (fog-ground-blend towards 0,
     /// horizon-fog-blend doubled). See TerrainLayerTweaker.
     double hazeLevel = 5.0;
+    /// Round 11: the map thread forgot its held ground (a programmatic move to a new centre);
+    /// the renderer reports the centre elevation this frame whatever its last sent value.
+    bool forceCenterElevationResend = false;
     // Debug: when set, RenderTerrain logs the camera eye's clearance over the terrain
     // (ABOVE-GROUND ...). Off by default; the per-frame elevation sampling is skipped entirely
     // when off, so it has no cost unless explicitly enabled (Map::setDebugAboveGroundLog).

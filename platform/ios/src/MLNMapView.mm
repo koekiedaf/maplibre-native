@@ -544,6 +544,7 @@ static_assert(static_cast<uint8_t>(MLNTerrainSkirtLengthNone) ==
   double _debugSpinDegreesPerSecond;
   double _debugPanPointsPerSecond;
   double _debugTiltDegreesPerSecond;
+  double _debugPinchZoomPerSecond; // round 11: scripted pinch (zoom in, then back out)
   void (^_debugSpinProgress)(double);
   std::unique_ptr<mln::Map> _mbglMap;
   std::unique_ptr<MLNMapViewImpl> _mbglView;
@@ -2467,6 +2468,7 @@ static double MLNSmoothAlpha(double dt, double tau) {
   _debugSpinDegreesPerSecond = degreesPerSecond;
   _debugPanPointsPerSecond = 0;
   _debugTiltDegreesPerSecond = 0;
+  _debugPinchZoomPerSecond = 0;
   [self cancelGlide];
   _smoothRotateVelocity = 0; _smoothRotateTime = 0;
   _debugSpinProgress = [progress copy];
@@ -2485,6 +2487,7 @@ static double MLNSmoothAlpha(double dt, double tau) {
   _debugSpinDegreesPerSecond = 0;
   _debugPanPointsPerSecond = pointsPerSecond;
   _debugTiltDegreesPerSecond = 0;
+  _debugPinchZoomPerSecond = 0;
   [self cancelGlide];
   _smoothPanVelocity = CGPointZero; _smoothPanTime = 0;
   _debugSpinProgress = [progress copy];
@@ -2503,8 +2506,27 @@ static double MLNSmoothAlpha(double dt, double tau) {
   _debugSpinDegreesPerSecond = 0;
   _debugPanPointsPerSecond = 0;
   _debugTiltDegreesPerSecond = degreesPerSecond;
+  _debugPinchZoomPerSecond = 0;
   [self cancelGlide];
   _smoothPitchVelocity = 0; _smoothPitchTime = 0;
+  _debugSpinProgress = [progress copy];
+  [self notifyGestureDidBegin];
+  _debugSpinLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(debugSpinTick:)];
+  [_debugSpinLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+}
+
+- (void)debugPinchForSeconds:(NSTimeInterval)seconds
+               zoomPerSecond:(double)zoomPerSecond
+                    progress:(void (^)(double))progress {
+  if (_debugSpinLink || seconds <= 0) return;
+  _debugSpinStart = CACurrentMediaTime();
+  _debugSpinEnd = _debugSpinStart + seconds;
+  _debugSpinLast = _debugSpinStart;
+  _debugSpinDegreesPerSecond = 0;
+  _debugPanPointsPerSecond = 0;
+  _debugTiltDegreesPerSecond = 0;
+  _debugPinchZoomPerSecond = zoomPerSecond;
+  [self cancelGlide];
   _debugSpinProgress = [progress copy];
   [self notifyGestureDidBegin];
   _debugSpinLink = [CADisplayLink displayLinkWithTarget:self selector:@selector(debugSpinTick:)];
@@ -2528,7 +2550,16 @@ static double MLNSmoothAlpha(double dt, double tau) {
     _debugSpinProgress = nil;
     return;
   }
-  if (_debugTiltDegreesPerSecond != 0) {
+  if (_debugPinchZoomPerSecond != 0) {
+    // Round 11: exactly what handlePinchGesture does per change, a zoom step about the
+    // screen centre; the first half zooms one way, the second half back.
+    const double half = _debugSpinStart + (_debugSpinEnd - _debugSpinStart) * 0.5;
+    const double sign = now < half ? 1.0 : -1.0;
+    const CGPoint c = self.contentCenter;
+    self.mbglMap.jumpTo(mln::CameraOptions()
+                            .withZoom(*self.mbglMap.getCameraOptions().zoom + sign * _debugPinchZoomPerSecond * dt)
+                            .withAnchor(mln::ScreenCoordinate{c.x, c.y}));
+  } else if (_debugTiltDegreesPerSecond != 0) {
     if (_movementSmoothing > 0) {
       [self applyPitchInput:_debugTiltDegreesPerSecond * dt now:now];
     } else {
